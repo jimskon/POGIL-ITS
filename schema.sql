@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
-    role ENUM('root', 'creator', 'instructor', 'student', 'grader') NOT NULL,
+    role ENUM('root', 'creator', 'instructor', 'student', 'grader') NOT NULL DEFAULT 'student',,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
