@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -29,11 +30,14 @@ export default function LoginPage() {
   };
 
   return (
+   <div>
+    <h1>Login</h1>
     <form onSubmit={handleSubmit}>
-      <h1>Login</h1>
       <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="Email" /><br />
       <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" placeholder="Password" /><br />
       <button type="submit">Login</button>
     </form>
+       <p>Don't have an account? <Link to="/register">Register here</Link></p>
+   </div>
   );
 }
