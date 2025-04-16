@@ -1,16 +1,56 @@
-import React from 'react';
-import { Link } from 'react-router-dom';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 export default function RegisterPage() {
+  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const navigate = useNavigate();
+
+  const handleRegister = async (e) => {
+    e.preventDefault();
+
+    try {
+      const res = await fetch('http://138.28.162.128:4000/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, email, password }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        alert('Registration successful!');
+        navigate('/');
+      } else {
+        alert(data.error || 'Registration failed');
+      }
+    } catch (err) {
+      console.error('Registration failed:', err);
+    }
+  };
+
   return (
-    <div>
+    <form onSubmit={handleRegister}>
       <h1>Register</h1>
-      <form>
-        <input type="text" placeholder="Name" /><br />
-        <input type="email" placeholder="Email" /><br />
-        <input type="password" placeholder="Password" /><br />
-        <button type="submit">Register</button>
-      </form>
-    </div>
+      <input
+        type="text"
+        placeholder="Username"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
+      /><br />
+      <input
+        type="email"
+        placeholder="Email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+      /><br />
+      <input
+        type="password"
+        placeholder="Password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+      /><br />
+      <button type="submit">Register</button>
+    </form>
   );
 }
