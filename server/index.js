@@ -1,11 +1,21 @@
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
+const session = require('express-session');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+require('dotenv').config();
+
 const staticDir = path.join(__dirname, '../client/dist');
 app.use(express.json());
+
+app.use(session({
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false } // Set to true if using HTTPS
+}));
 
 console.log('Resolved staticDir:', staticDir);
 // Add debugging for each route import
@@ -17,7 +27,8 @@ console.log('COURSE GROUPS:', require('./groups/routes'));
 console.log('COURSE RESPONSES:', require('./responses/routes'));
 console.log('COURSE EVENT:', require('./events/routes'));
 
-
+// ✅ Serve frontend static assets
+app.use(express.static(staticDir));
 
 // API routes
 app.use('/auth', require('./auth/routes'));
