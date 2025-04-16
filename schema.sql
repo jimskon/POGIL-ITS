@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS course_enrollments (
     FOREIGN KEY (student_id) REFERENCES users(id)
 );
 
--- POGOL activity metadata
+-- POGIL activity metadata
 CREATE TABLE IF NOT EXISTS pogol_activities (
     name VARCHAR(191) PRIMARY KEY,  -- Unique activity ID
     title TEXT NOT NULL,
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS pogol_activities (
     FOREIGN KEY (created_by) REFERENCES users(id)
 );
 
--- Group instance of a POGOL activity
+-- Group instance of a POGIL activity
 CREATE TABLE IF NOT EXISTS activity_instances (
     id INT AUTO_INCREMENT PRIMARY KEY,
     activity_name VARCHAR(191),
