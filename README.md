@@ -30,3 +30,11 @@ GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_REDIRECT_URI=your-google-redirect-uri
 ```
+
+Rebuild:
+```
+cd POGIL-ITS/client
+npm run build
+cd ../server
+npm start
+```
