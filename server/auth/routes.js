@@ -36,16 +36,17 @@ router.post('/login', async (req, res) => {
     conn.release();
 
     if (rows.length === 0) {
-      return res.status(400).json({ error: 'Invalid username or password' });
-    }
+      return res.status(400).json({ error: 'Invalid username or password' });    }
 
     const user = rows[0];
     console.log('Password:',password,user.password_hash);
     const match = await bcrypt.compare(password, user.password_hash);
 
     if (match) {
-      // Implement session logic here
-      res.status(200).json({ message: 'Login successful' });
+      res.status(200).json({
+        username: user.name,  // or user.name
+        role: user.role
+      });
     } else {
       res.status(400).json({ error: 'Invalid username or password' });
     }
