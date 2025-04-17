@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
-    role ENUM('root', 'creator', 'instructor', 'student', 'grader') NOT NULL DEFAULT 'student',,
+    role ENUM('root', 'creator', 'instructor', 'student', 'grader') NOT NULL DEFAULT 'student',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -59,7 +59,6 @@ CREATE TABLE IF NOT EXISTS activity_instances (
     activity_name VARCHAR(191),
     course_id INT,
     group_number INT,
-    start_time TIMESTAMP,
     start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (activity_name) REFERENCES pogol_activities(name)
 );
