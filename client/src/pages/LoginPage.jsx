@@ -1,12 +1,12 @@
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useUser } from '../context/UserContext';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const { login } = useAuth();
+  const { setUser } = useUser();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -19,7 +19,8 @@ export default function LoginPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        login(data);
+        
+        setUser({ username: data.username, role: data.role });	
         navigate("/dashboard");
       } else {
         alert(data.error || "Login failed.");
