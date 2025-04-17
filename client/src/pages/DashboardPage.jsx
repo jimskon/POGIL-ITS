@@ -20,7 +20,7 @@ export default function DashboardPage({ user }) {
   return (
     <div>
       <h1>Dashboard</h1>
-      <p>Welcome, {user.username}!</p>
+      <p>Welcome, {user.name}!</p>
 
       {canManage && (
         <div>

@@ -29,26 +29,27 @@ router.post('/register', async (req, res) => {
 
 router.post('/login', async (req, res) => {
   console.log('Login user:', req.body);  // log inputs
-    const { email, username, password } = req.body;
+    const { email,  password } = req.body;
   try {
     const conn = await pool.getConnection();
     const rows = await conn.query('SELECT * FROM users WHERE email = ?', [email]);
     conn.release();
 
     if (rows.length === 0) {
-      return res.status(400).json({ error: 'Invalid username or password' });    }
+	return res.status(400).json({ error: 'Invalid email or password' });    }
 
     const user = rows[0];
-    console.log('Password:',password,user.password_hash);
+      console.log('Password:',password,user.password_hash,"ID: ",user.id);
     const match = await bcrypt.compare(password, user.password_hash);
 
     if (match) {
       res.status(200).json({
-        username: user.name,  // or user.name
-        role: user.role
+          name: user.name,  // or user.name
+	  id: user.id,
+          role: user.role
       });
     } else {
-      res.status(400).json({ error: 'Invalid username or password' });
+      res.status(400).json({ error: 'Invalid email or password' });
     }
   } catch (err) {
     res.status(500).json({ error: 'Login failed' });

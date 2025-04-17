@@ -18,9 +18,10 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password })
       });
       const data = await res.json();
+	console.log("Login: ",data);
       if (res.ok) {
         
-        setUser({ username: data.username, role: data.role });	
+          setUser({ name: data.name, role: data.role, userid: data.id });	
         navigate("/dashboard");
       } else {
         alert(data.error || "Login failed.");
