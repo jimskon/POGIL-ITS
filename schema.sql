@@ -8,6 +8,15 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Classes Table
+CREATE TABLE IF NOT EXISTS pogil_classes (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(191) UNIQUE NOT NULL, -- e.g., "Intro to Programming"
+    description TEXT,
+    created_by INT,
+    FOREIGN KEY (created_by) REFERENCES users(id)
+);
+
 -- Courses table
 CREATE TABLE IF NOT EXISTS courses (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -32,24 +41,27 @@ CREATE TABLE IF NOT EXISTS course_enrollments (
 );
 
 -- POGIL activity metadata
+-- Activities Table (Now linked to a Class)
 CREATE TABLE IF NOT EXISTS pogol_activities (
     name VARCHAR(191) PRIMARY KEY,  -- Unique activity ID
     title TEXT NOT NULL,
     sheet_url TEXT NOT NULL,
+    class_id INT NOT NULL,  -- New foreign key
     created_by INT,
     last_loaded TIMESTAMP,
+    FOREIGN KEY (class_id) REFERENCES pogil_classes(id),
     FOREIGN KEY (created_by) REFERENCES users(id)
 );
 
--- Group instance of a POGIL activity
+-- Activity Instances Table
 CREATE TABLE IF NOT EXISTS activity_instances (
     id INT AUTO_INCREMENT PRIMARY KEY,
     activity_name VARCHAR(191),
     course_id INT,
-    start_time TIMESTAMP,
     group_number INT,
-    FOREIGN KEY (activity_name) REFERENCES pogol_activities(name),
-    FOREIGN KEY (course_id) REFERENCES courses(id)
+    start_time TIMESTAMP,
+    start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (activity_name) REFERENCES pogol_activities(name)
 );
 
 -- Group roles per activity instance
