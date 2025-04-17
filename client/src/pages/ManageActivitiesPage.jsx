@@ -49,15 +49,24 @@ export default function ManageActivitiesPage() {
     }
   };
 
-  const handleUpdate = async (activity) => {
-    const res = await fetch(`/activities/${activity.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(activity)
-    });
+const handleUpdate = async (activity) => {
+  const res = await fetch(`/activities/${activity.name}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      title: activity.title,
+      sheet_url: activity.sheet_url
+    })
+  });
+
+  if (res.ok) {
     const updated = await res.json();
-    setActivities(activities.map(a => a.id === updated.id ? updated : a));
-  };
+    setActivities(activities.map(a => a.name === updated.name ? updated : a));
+  } else {
+    alert("Update failed.");
+  }
+};
+
 
   return (
     <div>
@@ -75,10 +84,21 @@ export default function ManageActivitiesPage() {
         <h3>Current Activities</h3>
         {activities.map(activity => (
           <div key={activity.id} style={{ border: '1px solid #ccc', padding: '10px', marginTop: '10px' }}>
-            <input value={activity.name} onChange={(e) => handleUpdate({ ...activity, name: e.target.value })} />
-            <input value={activity.title} onChange={(e) => handleUpdate({ ...activity, title: e.target.value })} />
-            <input value={activity.sheet_url} onChange={(e) => handleUpdate({ ...activity, sheet_url: e.target.value })} />
-            <button onClick={() => handleDelete(activity.name)}>Delete</button>
+              <input
+		  value={activity.name}
+		  onChange={(e) => setActivities(activities.map(a => a.name === activity.name ? { ...a, name: e.target.value } : a))}
+	      />
+	      <input
+		  value={activity.title}
+		  onChange={(e) => setActivities(activities.map(a => a.name === activity.name ? { ...a, title: e.target.value } : a))}
+	      />
+	      <input
+		  value={activity.sheet_url}
+		  onChange={(e) => setActivities(activities.map(a => a.name === activity.name ? { ...a, sheet_url: e.target.value } : a))}
+	      />
+	      <button onClick={() => handleUpdate(activity)}>Update</button>
+	      <button onClick={() => handleDelete(activity.name)}>Delete</button>
+
           </div>
         ))}
       </div>

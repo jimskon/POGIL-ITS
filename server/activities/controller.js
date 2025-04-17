@@ -12,7 +12,12 @@ exports.createActivity = async (req, res) => {
       'INSERT INTO pogol_activities (name, title, sheet_url, created_by) VALUES (?, ?, ?, ?)',
       [name, title, sheet_url, createdBy]
     );
-    res.status(201).json({ message: 'Activity created.' });
+      res.status(201).json({
+	  name,
+	  title,
+	  sheet_url,
+	  created_by: createdBy
+      });
   } catch (err) {
     console.error('Create activity error:', err);
     res.status(500).json({ error: 'Error creating activity.' });
