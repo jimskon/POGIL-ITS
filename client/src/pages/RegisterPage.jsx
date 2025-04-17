@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 export default function RegisterPage() {
-  const [username, setUsername] = useState('');
+  const [name, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const navigate = useNavigate();
@@ -14,7 +14,7 @@ export default function RegisterPage() {
       const res = await fetch('http://138.28.162.128:4000/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, email, password }),
+          body: JSON.stringify({ name, email, password }),
       });
 
       const data = await res.json();
@@ -35,7 +35,7 @@ export default function RegisterPage() {
       <input
         type="text"
         placeholder="Username"
-        value={username}
+        value={name}
         onChange={(e) => setUsername(e.target.value)}
       /><br />
       <input

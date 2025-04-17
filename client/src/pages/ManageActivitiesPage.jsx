@@ -5,7 +5,7 @@ import { useUser } from '../context/UserContext';
 
 export default function ManageActivitiesPage() {
   const navigate = useNavigate();
-  const { user } = useUser();
+  const { user, userid } = useUser();
   const [activities, setActivities] = useState([]);
   const [newActivity, setNewActivity] = useState({ name: '', title: '', sheet_url: '' });
 
@@ -15,9 +15,12 @@ export default function ManageActivitiesPage() {
     if (!canManage) {
       navigate('/dashboard');
     } else {
-      fetch('/activities')
-        .then(res => res.json())
-        .then(data => setActivities(data));
+	fetch('/activities')
+	    .then(res => res.json())
+	    .then(data => {
+		console.log("Fetched activities:", data);
+		setActivities(data);
+	    });
     }
   }, [canManage, navigate]);
 
@@ -36,9 +39,14 @@ export default function ManageActivitiesPage() {
     setNewActivity({ name: '', title: '', sheet_url: '' });
   };
 
-  const handleDelete = async (id) => {
-    await fetch(`/activities/${id}`, { method: 'DELETE' });
-    setActivities(activities.filter(a => a.id !== id));
+  const handleDelete = async (name) => {
+    const res = await fetch(`/activities/${name}`, { method: 'DELETE' });
+
+    if (res.ok) {
+      setActivities(activities.filter(a => a.name !== name));
+    } else {
+      alert("Delete failed.");
+    }
   };
 
   const handleUpdate = async (activity) => {
@@ -70,7 +78,7 @@ export default function ManageActivitiesPage() {
             <input value={activity.name} onChange={(e) => handleUpdate({ ...activity, name: e.target.value })} />
             <input value={activity.title} onChange={(e) => handleUpdate({ ...activity, title: e.target.value })} />
             <input value={activity.sheet_url} onChange={(e) => handleUpdate({ ...activity, sheet_url: e.target.value })} />
-            <button onClick={() => handleDelete(activity.id)}>Delete</button>
+            <button onClick={() => handleDelete(activity.name)}>Delete</button>
           </div>
         ))}
       </div>
