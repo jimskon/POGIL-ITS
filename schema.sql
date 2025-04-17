@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS course_enrollments (
 CREATE TABLE IF NOT EXISTS pogol_activities (
     name VARCHAR(191) PRIMARY KEY,  -- Unique activity ID
     title TEXT NOT NULL,
-    google_sheet_url TEXT NOT NULL,
+    sheet_url TEXT NOT NULL,
     created_by INT,
     last_loaded TIMESTAMP,
     FOREIGN KEY (created_by) REFERENCES users(id)
