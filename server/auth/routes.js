@@ -6,7 +6,7 @@ const router = express.Router();
 router.post('/register', async (req, res) => {
   console.log('Registering user:', req.body);  // log inputs
 
-  const { username, email, password } = req.body;
+  const { name, email, password } = req.body;
 
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -14,7 +14,7 @@ router.post('/register', async (req, res) => {
 
     const result = await conn.query(
 	'INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)',
-      [username, email, hashedPassword]
+      [name, email, hashedPassword]
     );
 
     conn.release();
@@ -44,7 +44,7 @@ router.post('/login', async (req, res) => {
 
     if (match) {
       res.status(200).json({
-          name: user.name,  // or user.name
+          name: user.name, 
 	  id: user.id,
           role: user.role
       });

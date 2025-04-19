@@ -25,7 +25,7 @@ export default function DashboardPage({ user }) {
       {canManage && (
         <div>
           <h3>Admin Tools</h3>
-          <Link to="/manage-activities">Manage POG Activities</Link>
+          <Link to="/manage-classes">Manage POGIL Classes</Link><br />
         </div>
       )}
 

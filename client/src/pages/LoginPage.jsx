@@ -12,7 +12,8 @@ export default function LoginPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch("http://138.28.162.128:4000/auth/login", {
+//	const res = await fetch("http://138.28.162.128:4000/auth/login", {
+	const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password })
@@ -21,7 +22,7 @@ export default function LoginPage() {
 	console.log("Login: ",data);
       if (res.ok) {
         
-          setUser({ name: data.name, role: data.role, userid: data.id });	
+          setUser({ name: data.name, role: data.role, id: data.id });	
         navigate("/dashboard");
       } else {
         alert(data.error || "Login failed.");

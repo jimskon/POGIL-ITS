@@ -38,6 +38,8 @@ app.use('/activities', require('./activities/routes'));
 app.use('/groups', require('./groups/routes'));
 app.use('/responses', require('./responses/routes'));
 app.use('/events', require('./events/routes'));
+app.use('/classes', require('./classes/routes'));
+
 
 // Safe React SPA fallback
 console.log('Pre front end',staticDir,);

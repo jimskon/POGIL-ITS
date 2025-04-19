@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 export default function RegisterPage() {
+
   const [name, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -11,7 +12,9 @@ export default function RegisterPage() {
     e.preventDefault();
 
     try {
-      const res = await fetch('http://138.28.162.128:4000/auth/register', {
+	console.log("URL:",`${import.meta.env.VITE_API_BASE_URL}`);
+//      const res = await fetch(`http://138.28.162.128:4000/auth/register', {
+	const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ name, email, password }),

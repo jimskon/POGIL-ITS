@@ -6,6 +6,7 @@ import DashboardPage from '../pages/DashboardPage';
 import NavBar from '../components/NavBar';
 import { UserProvider, useUser } from '../context/UserContext';
 import ManageActivitiesPage from '../pages/ManageActivitiesPage';
+import ManageClassesPage from '../pages/ManageClassesPage';
 
 function AppRoutes() {
   const { user } = useUser();
@@ -18,6 +19,8 @@ function AppRoutes() {
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/dashboard" element={<DashboardPage user={user} />} />
 	<Route path="/manage-activities" element={<ManageActivitiesPage />} />  
+        <Route path="/manage-classes" element={<ManageClassesPage />} />
+
       </Routes>
     </>
   );
