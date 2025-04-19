@@ -59,7 +59,7 @@ Then inside the MariaDB prompt:
 
 ```sql
 CREATE DATABASE pogil_db CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
-CREATE USER 'pogil_user'@'localhost' IDENTIFIED BY 'KenyonPOGIL2025';
+CREATE USER 'pogil_user'@'localhost' IDENTIFIED BY 'secretxyz';
 GRANT ALL PRIVILEGES ON pogil_db.* TO 'pogil_user'@'localhost';
 FLUSH PRIVILEGES;
 EXIT;
@@ -107,7 +107,7 @@ Edit `.env`:
 DB_HOST=localhost
 DB_USER=pogiluser
 DB_PASS=securepassword
-DB_NAME=pogil_its
+DB_NAME=pogil_db
 PORT=4000
 SESSION_SECRET=your-secret-key
 ```
@@ -137,7 +137,7 @@ This creates the production frontend in `client/dist`.
 Create a new Apache site config:
 
 ```bash
-sudo nano /etc/apache2/sites-available/pogil.conf
+sudo emacs /etc/apache2/sites-available/pogil.conf
 ```
 
 Example config:
