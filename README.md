@@ -99,6 +99,9 @@ cd POGIL-ITS
 cd server
 cp .env.example .env  # or create a new .env
 npm install
+npm install express-session
+npm install bcrypt
+npm install mariadb
 ```
 
 Edit `.env`:
