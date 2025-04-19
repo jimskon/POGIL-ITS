@@ -58,9 +58,9 @@ sudo mariadb -u root -p
 Then inside the MariaDB prompt:
 
 ```sql
-CREATE DATABASE pogil_its CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
-CREATE USER 'pogiluser'@'localhost' IDENTIFIED BY 'securepassword';
-GRANT ALL PRIVILEGES ON pogil_its.* TO 'pogiluser'@'localhost';
+CREATE DATABASE pogil_db CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+CREATE USER 'pogil_user'@'localhost' IDENTIFIED BY 'KenyonPOGIL2025';
+GRANT ALL PRIVILEGES ON pogil_db.* TO 'pogil_user'@'localhost';
 FLUSH PRIVILEGES;
 EXIT;
 ```
