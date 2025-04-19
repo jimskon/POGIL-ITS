@@ -70,6 +70,15 @@ EXIT;
 sudo apt install phpmyadmin php-mbstring php-zip php-gd php-json php-curl -y
 sudo phpenmod mbstring
 sudo systemctl restart apache2
+
+udo apt install php libapache2-mod-php php-mysql -y
+
+sudo ln -s /etc/phpmyadmin/apache.conf /etc/apache2/conf-available/phpmyadmin.conf
+sudo a2enconf phpmyadmin
+sudo systemctl reload apache2
+
+systemctl reload apache2
+
 ``
 
 ---
