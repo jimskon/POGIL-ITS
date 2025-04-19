@@ -125,7 +125,7 @@ Edit `.env`:
 ```env
 DB_HOST=localhost
 DB_USER=pogiluser
-DB_PASS=securepassword
+DB_PASSWORD=securepassword
 DB_NAME=pogil_db
 PORT=4000
 SESSION_SECRET=your-secret-key
