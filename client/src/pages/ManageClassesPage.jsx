@@ -40,6 +40,12 @@ export default function ManageClassesPage() {
     setClasses(classes.filter(c => c.id !== id));
   };
 
+  const handleFieldChange = (id, field, value) => {
+    setClasses(classes.map(c =>
+      c.id === id ? { ...c, [field]: value } : c
+    ));
+  };
+
   const handleUpdate = async (updatedClass) => {
     const res = await fetch(`${API_BASE_URL}/classes/${updatedClass.id}`, {
       method: 'PUT',
@@ -64,8 +70,15 @@ export default function ManageClassesPage() {
         <h3>Existing Classes</h3>
         {classes.map(c => (
           <div key={c.id} style={{ border: '1px solid #ccc', padding: '10px', marginTop: '10px' }}>
-            <input value={c.name} onChange={e => handleUpdate({ ...c, name: e.target.value })} />
-            <input value={c.description} onChange={e => handleUpdate({ ...c, description: e.target.value })} />
+            <input
+              value={c.name}
+              onChange={e => handleFieldChange(c.id, 'name', e.target.value)}
+            />
+            <input
+              value={c.description}
+              onChange={e => handleFieldChange(c.id, 'description', e.target.value)}
+            />
+            <button onClick={() => handleUpdate(c)}>Update</button>
             <button onClick={() => navigate(`/class/${c.id}`)}>Manage Activities</button>
             <button onClick={() => handleDelete(c.id)}>Delete</button>
           </div>

@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS pogol_activities (
     title TEXT NOT NULL,
     sheet_url TEXT NOT NULL,
     class_id INT NOT NULL,  -- New foreign key
+    order_index INT NOT NULL DEFAULT 0;
     created_by INT,
     last_loaded TIMESTAMP,
     FOREIGN KEY (class_id) REFERENCES pogil_classes(id),

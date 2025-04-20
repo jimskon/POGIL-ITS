@@ -46,13 +46,31 @@ exports.createActivityForClass = async (req, res) => {
   const classId = req.params.id;
   const { name, title, sheet_url, order_index, createdBy } = req.body;
 
+  console.log("Received POST /classes/:id/activities", {
+    name, title, sheet_url, order_index, createdBy, classId
+  });
+
+  if (!name || !title || !sheet_url || order_index === undefined || createdBy === undefined) {
+    return res.status(400).json({
+      error: 'Missing required fields',
+      received: { name, title, sheet_url, order_index, createdBy }
+    });
+  }
+
   try {
-    await require('../db').query(
+    const result = await db.query(
       'INSERT INTO pogol_activities (name, title, sheet_url, order_index, class_id, created_by) VALUES (?, ?, ?, ?, ?, ?)',
       [name, title, sheet_url, order_index, classId, createdBy]
     );
 
-    res.status(201).json({ name, title, sheet_url, order_index, class_id: classId, created_by: createdBy });
+    res.status(201).json({
+      name,
+      title,
+      sheet_url,
+      order_index,
+      class_id: Number(classId),
+      created_by: createdBy
+    });
   } catch (err) {
     console.error('Error creating activity:', err);
     res.status(500).json({ error: 'Failed to create activity.' });

@@ -18,8 +18,8 @@ function AppRoutes() {
         <Route path="/" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/dashboard" element={<DashboardPage user={user} />} />
-	<Route path="/manage-activities" element={<ManageActivitiesPage />} />  
         <Route path="/manage-classes" element={<ManageClassesPage />} />
+        <Route path="/class/:id" element={<ManageActivitiesPage />} />
 
       </Routes>
     </>

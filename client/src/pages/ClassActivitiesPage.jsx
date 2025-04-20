@@ -31,7 +31,14 @@ export default function ClassActivitiesPage() {
     setNewActivity({ ...newActivity, [e.target.name]: e.target.value });
   };
 
-  const handleAdd = async () => {
+    const handleAdd = async () => {
+console.log("Sending activity to backend:", {
+  name: newActivity.name,
+  title: newActivity.title,
+  sheet_url: newActivity.sheet_url,
+  order_index: parseInt(newActivity.order_index) || 0,
+  createdBy: user.id
+});
     const res = await fetch(`${API_BASE_URL}/classes/${classId}/activities`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
