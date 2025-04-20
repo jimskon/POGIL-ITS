@@ -118,6 +118,7 @@ npm install
 npm install express-session
 npm install bcrypt
 npm install mariadb
+npm install googleapis
 ```
 
 Edit `.env`:
