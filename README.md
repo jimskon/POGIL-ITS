@@ -118,11 +118,12 @@ npm install
 npm install express-session
 npm install bcrypt
 npm install mariadb
+npm install googleapis
 ```
 
 Edit `.env`:
 
-```env
+```
 DB_HOST=localhost
 DB_USER=pogiluser
 DB_PASSWORD=securepassword
@@ -148,6 +149,11 @@ npm run build
 ```
 
 This creates the production frontend in `client/dist`.
+
+Create a `.env` file in `client/`
+```
+VITE_API_BASE_URL=http://this-ip-address:4000
+```
 
 ---
 
