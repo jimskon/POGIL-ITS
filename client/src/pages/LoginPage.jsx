@@ -22,7 +22,8 @@ export default function LoginPage() {
 	console.log("Login: ",data);
       if (res.ok) {
         
-          setUser({ name: data.name, role: data.role, id: data.id });	
+          setUser({ name: data.name, role: data.role, id: data.id });
+	  console.log("Set user:", { name: data.name, role: data.role, id: data.id });
         navigate("/dashboard");
       } else {
         alert(data.error || "Login failed.");
