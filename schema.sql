@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS course_enrollments (
 CREATE TABLE IF NOT EXISTS pogol_activities (
     name VARCHAR(191) PRIMARY KEY,  -- Unique activity ID
     title TEXT NOT NULL,
-    sheet_url TEXT NOT NULL,
+    sheet_url TEXT,
     class_id INT NOT NULL,  -- New foreign key
     order_index INT NOT NULL DEFAULT 0,
     created_by INT,
