@@ -1,4 +1,5 @@
-// ManageActivitiesPage.jsx
+// src/pages/ManageActivitiesPage.jsx
+
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
@@ -103,44 +104,50 @@ export default function ManageActivitiesPage() {
   };
 
   return (
-    <div>
+    <div className="container mt-4">
       <h2>Manage POGIL Activities for Class {classId}</h2>
 
-      <div>
-        <h3>Add Activity</h3>
-        <input name="name" placeholder="Name" value={newActivity.name} onChange={handleChange} />
-        <input name="title" placeholder="Title" value={newActivity.title} onChange={handleChange} />
-        <input name="sheet_url" placeholder="Google Sheet URL" value={newActivity.sheet_url} onChange={handleChange} />
-        <input name="order_index" type="number" placeholder="Order" value={newActivity.order_index} onChange={handleChange} />
-        <button onClick={handleAdd}>Add</button>
+      <div className="card p-3 mb-4">
+        <h4>Add Activity</h4>
+        <input className="form-control mb-2" name="name" placeholder="Name" value={newActivity.name} onChange={handleChange} />
+        <input className="form-control mb-2" name="title" placeholder="Title" value={newActivity.title} onChange={handleChange} />
+        <input className="form-control mb-2" name="sheet_url" placeholder="Google Doc URL" value={newActivity.sheet_url} onChange={handleChange} />
+        <input className="form-control mb-2" name="order_index" type="number" placeholder="Order" value={newActivity.order_index} onChange={handleChange} />
+        <button className="btn btn-primary" onClick={handleAdd}>Add</button>
       </div>
 
       <div>
-        <h3>Current Activities</h3>
+        <h4>Current Activities</h4>
         {activities.map(activity => (
-          <div key={activity.name} style={{ border: '1px solid #ccc', padding: '10px', marginTop: '10px' }}>
-            <input value={activity.name} readOnly />
+          <div key={activity.name} className="border rounded p-3 mb-3">
+            <input className="form-control mb-2" value={activity.name} readOnly />
             <input
+              className="form-control mb-2"
               value={activity.title}
               onChange={(e) =>
                 setActivities(activities.map(a => a.name === activity.name ? { ...a, title: e.target.value } : a))
               }
             />
             <input
+              className="form-control mb-2"
               value={activity.sheet_url}
               onChange={(e) =>
                 setActivities(activities.map(a => a.name === activity.name ? { ...a, sheet_url: e.target.value } : a))
               }
             />
             <input
+              className="form-control mb-2"
               type="number"
               value={activity.order_index}
               onChange={(e) =>
                 setActivities(activities.map(a => a.name === activity.name ? { ...a, order_index: parseInt(e.target.value, 10) } : a))
               }
             />
-            <button onClick={() => handleUpdate(activity)}>Update</button>
-            <button onClick={() => handleDelete(activity.name)}>Delete</button>
+            <div className="mt-2">
+              <button className="btn btn-success me-2" onClick={() => handleUpdate(activity)}>Update</button>
+              <button className="btn btn-danger me-2" onClick={() => handleDelete(activity.name)}>Delete</button>
+              <button className="btn btn-secondary" onClick={() => navigate(`/preview/${activity.name}`)}>Preview</button>
+            </div>
           </div>
         ))}
       </div>
