@@ -18,14 +18,6 @@ app.use(session({
 }));
 
 console.log('Resolved staticDir:', staticDir);
-// Add debugging for each route import
-console.log('AUTH ROUTES:', require('./auth/routes'));
-console.log('USER ROUTES:', require('./users/routes'));
-console.log('COURSE ROUTES:', require('./courses/routes'));
-console.log('COURSE ACTIVITIES:', require('./activities/routes'));
-console.log('COURSE GROUPS:', require('./groups/routes'));
-console.log('COURSE RESPONSES:', require('./responses/routes'));
-console.log('COURSE EVENT:', require('./events/routes'));
 
 // ✅ Serve frontend static assets
 app.use(express.static(staticDir));
@@ -39,7 +31,7 @@ app.use('/groups', require('./groups/routes'));
 app.use('/responses', require('./responses/routes'));
 app.use('/events', require('./events/routes'));
 app.use('/classes', require('./classes/routes'));
-
+app.use('/users', require('./users/routes'));
 
 // Safe React SPA fallback
 console.log('Pre front end',staticDir,);

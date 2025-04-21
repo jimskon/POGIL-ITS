@@ -7,7 +7,8 @@ import NavBar from '../components/NavBar';
 import { UserProvider, useUser } from '../context/UserContext';
 import ManageActivitiesPage from '../pages/ManageActivitiesPage';
 import ManageClassesPage from '../pages/ManageClassesPage';
-import ActivityPreview from '../pages/ActivityPreview'; // ✅ Add this line
+import ActivityPreview from '../pages/ActivityPreview';
+import AdminUsersPage from '../pages/AdminUsersPage';
 
 function AppRoutes() {
   const { user } = useUser();
@@ -21,7 +22,9 @@ function AppRoutes() {
         <Route path="/dashboard" element={<DashboardPage user={user} />} />
         <Route path="/manage-classes" element={<ManageClassesPage />} />
         <Route path="/class/:id" element={<ManageActivitiesPage />} />
-        <Route path="/preview/:activityName" element={<ActivityPreview />} /> {/* ✅ Add this */}
+        <Route path="/preview/:activityName" element={<ActivityPreview />} />
+	<Route path="/admin/users" element={<AdminUsersPage />} />
+  
       </Routes>
     </>
   );
