@@ -1,7 +1,7 @@
 // DashboardPage.jsx
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Container, Card, Button, Alert } from 'react-bootstrap';
+import { Container, Card, Button, Alert, Row, Col } from 'react-bootstrap';
 
 export default function DashboardPage({ user }) {
   const navigate = useNavigate();
@@ -28,17 +28,28 @@ export default function DashboardPage({ user }) {
       <Card>
         <Card.Body>
           <Card.Title>Welcome, {user.name}!</Card.Title>
-          <Card.Subtitle className="mb-3 text-muted">Role: {user.role}</Card.Subtitle>
+          <Card.Subtitle className="mb-4 text-muted">Role: {user.role}</Card.Subtitle>
 
           {canManage ? (
             <>
-              <h5>Admin Tools</h5>
-              <Button as={Link} to="/manage-classes" variant="success">
-                Manage POGIL Classes
-              </Button>
+              <h5 className="mb-3">Admin Tools</h5>
+              <Row className="g-3 mb-4">
+                <Col xs="auto">
+                  <Button as={Link} to="/manage-classes" variant="success">
+                    Manage POGIL Classes
+                  </Button>
+                </Col>
+                {user.role === 'root' && (
+                  <Col xs="auto">
+                    <Button variant="outline-primary" onClick={() => navigate('/admin/users')}>
+                      Manage Users
+                    </Button>
+                  </Col>
+                )}
+              </Row>
             </>
           ) : (
-            <Alert variant="info" className="mt-3">
+            <Alert variant="info">
               You do not have permission to manage POGIL activities.
             </Alert>
           )}
