@@ -50,7 +50,7 @@ exports.createActivityForClass = async (req, res) => {
     name, title, sheet_url, order_index, createdBy, classId
   });
 
-  if (!name || !title || !sheet_url || order_index === undefined || createdBy === undefined) {
+  if (!name || !title || order_index === undefined || createdBy === undefined) {
     return res.status(400).json({
       error: 'Missing required fields',
       received: { name, title, sheet_url, order_index, createdBy }

@@ -68,13 +68,31 @@ router.get('/preview-doc', async (req, res) => {
   }
 });
 
+// DELETE /activities/:name
+router.delete('/:name', controller.deleteActivity);
+
+router.get('/check-access', async (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.json({ access: true });
+
+  try {
+    const auth = await authorize();
+    const docId = new URL(url).pathname.split('/')[3];
+    const docs = google.docs({ version: 'v1', auth });
+    await docs.documents.get({ documentId: docId });
+    res.json({ access: true });
+  } catch (err) {
+    console.error("Access check failed:", err.message);
+    res.json({ access: false });
+  }
+});
+
 // GET /activities/:name
 router.get('/:name', controller.getActivity);
 
 // POST /activities/:name/launch
 router.post('/:name/launch', controller.launchActivityInstance);
 
-// DELETE /activities/:name
-router.delete('/:name', controller.deleteActivity);
+
 
 module.exports = router;

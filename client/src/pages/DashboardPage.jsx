@@ -1,6 +1,7 @@
 // DashboardPage.jsx
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { Container, Card, Button, Alert } from 'react-bootstrap';
 
 export default function DashboardPage({ user }) {
   const navigate = useNavigate();
@@ -8,30 +9,41 @@ export default function DashboardPage({ user }) {
 
   if (!user) {
     return (
-      <div>
-        <h1>Dashboard</h1>
-        <p>You must log in to view this page.</p>
-      </div>
+      <Container className="mt-5">
+        <Card className="text-center">
+          <Card.Body>
+            <Card.Title>Dashboard</Card.Title>
+            <Card.Text>You must log in to view this page.</Card.Text>
+            <Button variant="primary" onClick={() => navigate('/')}>Login</Button>
+          </Card.Body>
+        </Card>
+      </Container>
     );
   }
 
   const canManage = user.role === 'root' || user.role === 'creator';
 
   return (
-    <div>
-      <h1>Dashboard</h1>
-      <p>Welcome, {user.name}!</p>
+    <Container className="mt-5">
+      <Card>
+        <Card.Body>
+          <Card.Title>Welcome, {user.name}!</Card.Title>
+          <Card.Subtitle className="mb-3 text-muted">Role: {user.role}</Card.Subtitle>
 
-      {canManage && (
-        <div>
-          <h3>Admin Tools</h3>
-          <Link to="/manage-classes">Manage POGIL Classes</Link><br />
-        </div>
-      )}
-
-      {!canManage && (
-        <p>You do not have permission to manage POG activities.</p>
-      )}
-    </div>
+          {canManage ? (
+            <>
+              <h5>Admin Tools</h5>
+              <Button as={Link} to="/manage-classes" variant="success">
+                Manage POGIL Classes
+              </Button>
+            </>
+          ) : (
+            <Alert variant="info" className="mt-3">
+              You do not have permission to manage POGIL activities.
+            </Alert>
+          )}
+        </Card.Body>
+      </Card>
+    </Container>
   );
 }
