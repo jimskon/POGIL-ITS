@@ -1,9 +1,9 @@
 // src/pages/ManageActivitiesPage.jsx
-
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
+import { Table, Button, Form, Container } from 'react-bootstrap';
 
 export default function ManageActivitiesPage() {
   const { id: classId } = useParams();
@@ -103,54 +103,99 @@ export default function ManageActivitiesPage() {
     }
   };
 
+  const handleFieldChange = (name, field, value) => {
+    setActivities(activities.map(a =>
+      a.name === name ? { ...a, [field]: value } : a
+    ));
+  };
+
   return (
-    <div className="container mt-4">
-      <h2>Manage POGIL Activities for Class {classId}</h2>
+    <Container>
+      <h2 className="mb-4">Manage POGIL Activities for Class {classId}</h2>
 
-      <div className="card p-3 mb-4">
-        <h4>Add Activity</h4>
-        <input className="form-control mb-2" name="name" placeholder="Name" value={newActivity.name} onChange={handleChange} />
-        <input className="form-control mb-2" name="title" placeholder="Title" value={newActivity.title} onChange={handleChange} />
-        <input className="form-control mb-2" name="sheet_url" placeholder="Google Doc URL" value={newActivity.sheet_url} onChange={handleChange} />
-        <input className="form-control mb-2" name="order_index" type="number" placeholder="Order" value={newActivity.order_index} onChange={handleChange} />
-        <button className="btn btn-primary" onClick={handleAdd}>Add</button>
-      </div>
+      <Form className="mb-4">
+        <h4>Add New Activity</h4>
+        <Form.Group className="mb-2">
+          <Form.Control
+            name="name"
+            placeholder="Activity ID"
+            value={newActivity.name}
+            onChange={handleChange}
+          />
+        </Form.Group>
+        <Form.Group className="mb-2">
+          <Form.Control
+            name="title"
+            placeholder="Title"
+            value={newActivity.title}
+            onChange={handleChange}
+          />
+        </Form.Group>
+        <Form.Group className="mb-2">
+          <Form.Control
+            name="sheet_url"
+            placeholder="Google Sheet or Doc URL"
+            value={newActivity.sheet_url}
+            onChange={handleChange}
+          />
+        </Form.Group>
+        <Form.Group className="mb-3">
+          <Form.Control
+            name="order_index"
+            type="number"
+            placeholder="Order Index"
+            value={newActivity.order_index}
+            onChange={handleChange}
+          />
+        </Form.Group>
+        <Button variant="primary" onClick={handleAdd}>Add Activity</Button>
+      </Form>
 
-      <div>
-        <h4>Current Activities</h4>
-        {activities.map(activity => (
-          <div key={activity.name} className="border rounded p-3 mb-3">
-            <input className="form-control mb-2" value={activity.name} readOnly />
-            <input
-              className="form-control mb-2"
-              value={activity.title}
-              onChange={(e) =>
-                setActivities(activities.map(a => a.name === activity.name ? { ...a, title: e.target.value } : a))
-              }
-            />
-            <input
-              className="form-control mb-2"
-              value={activity.sheet_url}
-              onChange={(e) =>
-                setActivities(activities.map(a => a.name === activity.name ? { ...a, sheet_url: e.target.value } : a))
-              }
-            />
-            <input
-              className="form-control mb-2"
-              type="number"
-              value={activity.order_index}
-              onChange={(e) =>
-                setActivities(activities.map(a => a.name === activity.name ? { ...a, order_index: parseInt(e.target.value, 10) } : a))
-              }
-            />
-            <div className="mt-2">
-              <button className="btn btn-success me-2" onClick={() => handleUpdate(activity)}>Update</button>
-              <button className="btn btn-danger me-2" onClick={() => handleDelete(activity.name)}>Delete</button>
-              <button className="btn btn-secondary" onClick={() => navigate(`/preview/${activity.name}`)}>Preview</button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+      <h4>Current Activities</h4>
+      <Table striped bordered hover responsive>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Title</th>
+            <th>Sheet URL</th>
+            <th>Order</th>
+            <th style={{ width: '30%' }}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {activities.map(activity => (
+            <tr key={activity.name}>
+              <td>
+                <Form.Control value={activity.name} readOnly />
+              </td>
+              <td>
+                <Form.Control
+                  value={activity.title}
+                  onChange={e => handleFieldChange(activity.name, 'title', e.target.value)}
+                />
+              </td>
+              <td>
+                <Form.Control
+                  value={activity.sheet_url}
+                  onChange={e => handleFieldChange(activity.name, 'sheet_url', e.target.value)}
+                />
+              </td>
+              <td>
+                <Form.Control
+                  type="number"
+                  value={activity.order_index}
+                  onChange={e => handleFieldChange(activity.name, 'order_index', parseInt(e.target.value, 10))}
+                />
+              </td>
+              <td>
+                <Button variant="success" size="sm" onClick={() => handleUpdate(activity)} className="me-2">Update</Button>
+                <Button variant="info" size="sm" onClick={() => navigate(`/preview/${activity.name}`)} className="me-2">Preview</Button>
+                <Button variant="danger" size="sm" onClick={() => handleDelete(activity.name)}>Delete</Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+    </Container>
   );
 }

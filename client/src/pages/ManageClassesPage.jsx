@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
+import { Table, Button, Form, Container } from 'react-bootstrap';
 
 export default function ManageClassesPage() {
   const { user } = useUser();
@@ -57,33 +58,69 @@ export default function ManageClassesPage() {
   };
 
   return (
-    <div>
-      <h2>Manage Classes</h2>
-      <div>
-        <h3>Add New Class</h3>
-        <input name="name" value={newClass.name} onChange={handleChange} placeholder="Class Name" />
-        <input name="description" value={newClass.description} onChange={handleChange} placeholder="Description" />
-        <button onClick={handleAdd}>Add Class</button>
-      </div>
+    <Container>
+      <h2 className="mb-4">Manage Classes</h2>
 
-      <div>
-        <h3>Existing Classes</h3>
-        {classes.map(c => (
-          <div key={c.id} style={{ border: '1px solid #ccc', padding: '10px', marginTop: '10px' }}>
-            <input
-              value={c.name}
-              onChange={e => handleFieldChange(c.id, 'name', e.target.value)}
-            />
-            <input
-              value={c.description}
-              onChange={e => handleFieldChange(c.id, 'description', e.target.value)}
-            />
-            <button onClick={() => handleUpdate(c)}>Update</button>
-            <button onClick={() => navigate(`/class/${c.id}`)}>Manage Activities</button>
-            <button onClick={() => handleDelete(c.id)}>Delete</button>
-          </div>
-        ))}
-      </div>
-    </div>
+      <Form className="mb-4">
+        <h4>Add New Class</h4>
+        <Form.Group className="mb-2" controlId="formClassName">
+          <Form.Label>Class Name</Form.Label>
+          <Form.Control
+            type="text"
+            placeholder="Enter class name"
+            name="name"
+            value={newClass.name}
+            onChange={handleChange}
+          />
+        </Form.Group>
+        <Form.Group className="mb-2" controlId="formDescription">
+          <Form.Label>Description</Form.Label>
+          <Form.Control
+            type="text"
+            placeholder="Enter description"
+            name="description"
+            value={newClass.description}
+            onChange={handleChange}
+          />
+        </Form.Group>
+        <Button variant="primary" onClick={handleAdd}>Add Class</Button>
+      </Form>
+
+      <h4>Existing Classes</h4>
+      <Table striped bordered hover>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Description</th>
+            <th style={{ width: '30%' }}>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {classes.map(c => (
+            <tr key={c.id}>
+              <td>
+                <Form.Control
+                  type="text"
+                  value={c.name}
+                  onChange={e => handleFieldChange(c.id, 'name', e.target.value)}
+                />
+              </td>
+              <td>
+                <Form.Control
+                  type="text"
+                  value={c.description}
+                  onChange={e => handleFieldChange(c.id, 'description', e.target.value)}
+                />
+              </td>
+              <td>
+                <Button variant="success" size="sm" onClick={() => handleUpdate(c)} className="me-2">Update</Button>
+                <Button variant="info" size="sm" onClick={() => navigate(`/class/${c.id}`)} className="me-2">Manage</Button>
+                <Button variant="danger" size="sm" onClick={() => handleDelete(c.id)}>Delete</Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+    </Container>
   );
 }
