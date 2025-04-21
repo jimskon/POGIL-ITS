@@ -242,10 +242,44 @@ GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_REDIRECT_URI=your-google-redirect-uri
 ```
 
-Rebuild:
+## Rebuild:
 ```
 cd POGIL-ITS/client
 npm run build
 cd ../server
 npm start
 ```
+
+# When moving to a new host:
+## You must create a `server/.env` and `client/.env1`
+server/.env
+```
+# Server
+PORT=4000
+
+# MariaDB
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=pogil_user
+DB_PASSWORD=ask for this
+DB_NAME=pogil_db
+SESSION_SECRET=ask for this
+
+# Google API
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=your-google-redirect-uri
+
+# OpenAI API
+OPENAI_API_KEY=APIKey ask for this
+```
+
+client/.env
+```
+VITE_API_BASE_URL=http://cs.kenyon.edu:4000
+VITE_SERVICE_ACCOUNT_EMAIL=pogil-sheets-reader@pogil-its.iam.gserviceaccount.com
+```
+
+## Service account for access to google docs:
+`server/utils/service-account.json`
+You must get this from Jim Skon
