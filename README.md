@@ -119,6 +119,8 @@ npm install express-session
 npm install bcrypt
 npm install mariadb
 npm install googleapis
+cd ../client
+npm install react-bootstrap bootstrap
 ```
 
 Edit `.env`:
