@@ -278,7 +278,7 @@ OPENAI_API_KEY=APIKey ask for this
 
 client/.env
 ```
-VITE_API_BASE_URL=http://cs.kenyon.edu:4000
+VITE_API_BASE_URL=http://YOURSEVERIPorDNS:4000
 VITE_SERVICE_ACCOUNT_EMAIL=pogil-sheets-reader@pogil-its.iam.gserviceaccount.com
 ```
 
