@@ -1,65 +1,123 @@
-// DashboardPage.jsx
-import React from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { Container, Card, Button, Alert, Row, Col } from 'react-bootstrap';
+import React, { useEffect, useState } from 'react';
+import { useUser } from '../context/UserContext';
+import { useNavigate } from 'react-router-dom';
+import { API_BASE_URL } from '../config';
+import { Table, Button, Form, Container, Alert, Row, Col } from 'react-bootstrap';
 
-export default function DashboardPage({ user }) {
+export default function DashboardPage() {
+  const { user } = useUser();
   const navigate = useNavigate();
-  console.log("User in dashboard:", user);
 
-  if (!user) {
-    return (
-      <Container className="mt-5">
-        <Card className="text-center">
-          <Card.Body>
-            <Card.Title>Dashboard</Card.Title>
-            <Card.Text>You must log in to view this page.</Card.Text>
-            <Button variant="primary" onClick={() => navigate('/')}>Login</Button>
-          </Card.Body>
-        </Card>
-      </Container>
-    );
-  }
+  const [enrolledClasses, setEnrolledClasses] = useState([]);
+  const [courseCode, setCourseCode] = useState('');
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
 
-  const canManage = user.role === 'root' || user.role === 'creator';
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const fetchEnrollments = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/classes/user/${user.id}/enrollments`);
+        const data = await res.json();
+        setEnrolledClasses(data);
+      } catch (err) {
+        console.error('Failed to fetch enrollments', err);
+        setError('Unable to load enrolled classes');
+      }
+    };
+
+    fetchEnrollments();
+  }, [user?.id]);
+
+  const handleJoinCourse = async () => {
+    setError('');
+    setSuccess('');
+    try {
+      const res = await fetch(`${API_BASE_URL}/classes/enroll-by-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, code: courseCode })
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setSuccess('Successfully enrolled!');
+        setCourseCode('');
+        setEnrolledClasses(prev => [...prev, data.newCourse]);
+      } else {
+        setError(data.error || 'Failed to enroll');
+      }
+    } catch (err) {
+      console.error('Enrollment error:', err);
+      setError('Failed to enroll in course');
+    }
+  };
+
+  const canManage = user?.role === 'root' || user?.role === 'creator';
 
   return (
-    <Container className="mt-5">
-      <Card>
-        <Card.Body>
-          <Card.Title>Welcome, {user.name}!</Card.Title>
-          <Card.Subtitle className="mb-4 text-muted">Role: {user.role}</Card.Subtitle>
+    <Container className="mt-4">
+      <h2>Welcome, {user?.name}</h2>
 
-          {canManage ? (
+      {canManage && (
+        <Row className="mt-4 mb-4">
+          <Col><Button variant="secondary" onClick={() => navigate('/manage-courses')}>Manage Courses</Button></Col>
+          <Col><Button variant="secondary" onClick={() => navigate('/manage-classes')}>Manage Classes</Button></Col>
+          {user.role === 'root' && (
+            <Col><Button variant="danger" onClick={() => navigate('/admin/users')}>Manage Users</Button></Col>
+          )}
+        </Row>
+      )}
+
+      {user?.id && (
+        <>
+          {enrolledClasses.length > 0 ? (
             <>
-              <h5 className="mb-3">Admin Tools</h5>
-              <Row className="g-3 mb-4">
-                <Col xs="auto">
-                  <Button as={Link} to="/manage-classes" variant="success">
-                    Manage POGIL Classes
-                  </Button>
-                </Col>
-<Col xs="auto">
-  <Button as={Link} to="/manage-courses" variant="warning">
-    Manage Courses
-  </Button>
-</Col>
-                  {user.role === 'root' && (
-                  <Col xs="auto">
-                    <Button variant="outline-primary" onClick={() => navigate('/admin/users')}>
-                      Manage Users
-                    </Button>
-                  </Col>
-                )}
-              </Row>
+              <h4>Your Enrolled Classes</h4>
+              <Table striped bordered hover>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Code</th>
+                    <th>Semester</th>
+                    <th>Year</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {enrolledClasses.map(course => (
+                    <tr key={course.id}>
+                      <td>{course.name}</td>
+                      <td>{course.code}</td>
+                      <td>{course.semester}</td>
+                      <td>{course.year}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </Table>
             </>
           ) : (
-            <Alert variant="info">
-              You do not have permission to manage POGIL activities.
-            </Alert>
+            <p>You are not enrolled in any classes yet.</p>
           )}
-        </Card.Body>
-      </Card>
+
+          <h5 className="mt-5">Join a Class by Code</h5>
+          <Form className="d-flex" onSubmit={(e) => { e.preventDefault(); handleJoinCourse(); }}>
+            <Form.Control
+              type="text"
+              placeholder="Enter Course Code"
+              value={courseCode}
+              onChange={(e) => setCourseCode(e.target.value)}
+            />
+            <Button className="ms-2" variant="primary" onClick={handleJoinCourse}>
+              Join
+            </Button>
+          </Form>
+
+          {error && <Alert variant="danger" className="mt-3">{error}</Alert>}
+          {success && <Alert variant="success" className="mt-3">{success}</Alert>}
+        </>
+      )}
     </Container>
   );
 }

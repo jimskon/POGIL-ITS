@@ -110,3 +110,73 @@ exports.deleteActivityFromClass = async (req, res) => {
   }
 };
 
+exports.getUserEnrollments = async function getUserEnrollments(req, res) {
+  const { userId } = req.params;
+  try {
+    const rows = await db.query(`
+      SELECT c.* FROM courses c
+      JOIN course_enrollments e ON c.id = e.course_id
+      WHERE e.student_id = ?
+    `, [userId]);
+
+      console.log("STUDENT ENROLLMENTS:",rows);
+    if (!rows) {
+      console.error(`⚠️ No enrollment data found for user ${userId}`);
+      return res.status(200).json([]); // return empty array if nothing
+    }
+
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ Error fetching enrollments:", err.message);
+    res.status(500).json({ error: "Error fetching enrolled classes" });
+  }
+};
+
+exports.enrollByCode = async function enrollByCode(req, res) {
+  const { userId, code } = req.body;
+
+  console.log("📨 enrollByCode called with", { userId, code });
+
+  try {
+    const result = await db.query(`SELECT * FROM courses WHERE code = ?`, [code]);
+    console.log("✅ DB query result:", result);
+    
+      if (!result || result.length == 0) {
+      console.warn(`⚠️ No course found with code "${code}"`);
+      return res.status(404).json({ error: "Course not found" });
+    }
+
+    const course = result[0];
+    console.log("✅ course object:", course);
+
+    if (!course || !course.id) {
+      console.error("🚨 Course object is invalid or missing ID:", course);
+      return res.status(500).json({ error: "Internal course structure error" });
+    }
+
+    const courseId = course.id;
+    console.log("✅ courseId extracted:", courseId);
+
+    const [existing] = await db.query(
+      `SELECT * FROM course_enrollments WHERE student_id = ? AND course_id = ?`,
+      [userId, courseId]
+    );
+      console.log("enrollments!!:",existing);
+    if (existing) {
+      return res.status(400).json({ error: "Already enrolled" });
+    }
+
+    await db.query(
+      `INSERT INTO course_enrollments (student_id, course_id) VALUES (?, ?)`,
+      [userId, courseId]
+    );
+
+    res.json({ success: true, newCourse: course });
+
+  } catch (err) {
+    console.error("❌ Enrollment error (outer catch):", err.message);
+    res.status(500).json({ error: "Enrollment failed" });
+  }
+};
+
+

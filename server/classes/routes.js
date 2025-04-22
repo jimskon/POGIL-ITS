@@ -10,6 +10,8 @@ router.get('/:id/activities', controller.getActivitiesByClass);
 router.post('/:id/activities', controller.createActivityForClass);
 router.put('/:id/activities/:activityName', controller.updateActivityForClass);
 router.delete('/:id/activities/:activityName', controller.deleteActivityFromClass);
+router.get('/user/:userId/enrollments', controller.getUserEnrollments);
+router.post('/enroll-by-code', controller.enrollByCode);
 
 
 module.exports = router;
