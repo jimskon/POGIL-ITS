@@ -17,7 +17,6 @@ CREATE TABLE IF NOT EXISTS pogil_classes (
     created_by INT,
     FOREIGN KEY (created_by) REFERENCES users(id)
 );
-
 -- Courses table
 CREATE TABLE IF NOT EXISTS courses (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -27,8 +26,10 @@ CREATE TABLE IF NOT EXISTS courses (
     semester ENUM('fall', 'spring', 'summer') NOT NULL,
     year INT NOT NULL,
     instructor_id INT,
+    class_id INT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (instructor_id) REFERENCES users(id)
+    FOREIGN KEY (instructor_id) REFERENCES users(id),
+    FOREIGN KEY (class_id) REFERENCES pogil_classes(id) ON DELETE SET NULL
 );
 
 -- Course enrollments
