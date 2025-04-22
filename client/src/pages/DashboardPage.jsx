@@ -39,7 +39,12 @@ export default function DashboardPage({ user }) {
                     Manage POGIL Classes
                   </Button>
                 </Col>
-                {user.role === 'root' && (
+<Col xs="auto">
+  <Button as={Link} to="/manage-courses" variant="warning">
+    Manage Courses
+  </Button>
+</Col>
+                  {user.role === 'root' && (
                   <Col xs="auto">
                     <Button variant="outline-primary" onClick={() => navigate('/admin/users')}>
                       Manage Users
