@@ -121,6 +121,8 @@ npm install mariadb
 npm install googleapis
 cd ../client
 npm install react-bootstrap bootstrap
+npm install prismjs
+
 ```
 
 Edit `.env`:
