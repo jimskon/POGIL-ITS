@@ -48,7 +48,7 @@ router.get('/preview', async (req, res) => {
 // GET /activities/preview-doc?docUrl=...
 router.get('/preview-doc', async (req, res) => {
   const { docUrl } = req.query;
-  console.log("Previewing doc:", docUrl);
+  //console.log("Previewing doc:", docUrl);
   try {
     const auth = await authorize();
     const docs = google.docs({ version: 'v1', auth });
@@ -58,7 +58,7 @@ router.get('/preview-doc', async (req, res) => {
 
     const lines = doc.data.body.content
       .flatMap(item => item.paragraph?.elements || [])
-      .map(e => e.textRun?.content?.trim())
+      .map(e => e.textRun?.content?.replace(/\r?\n$/, ''))  
       .filter(Boolean);
 
     res.json({ lines });

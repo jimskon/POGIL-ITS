@@ -13,10 +13,19 @@ export default function ManageCoursesPage() {
     code: '',
     section: '',
     semester: 'fall',
-    year: new Date().getFullYear()
+    year: new Date().getFullYear(),
+    class_id: ''
   });
+  const [classList, setClassList] = useState([]);
 
   const canManage = user?.role === 'root' || user?.role === 'creator';
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/classes`)
+      .then(res => res.json())
+      .then((rows) => setClassList(rows))
+      .catch(err => console.error("Failed to fetch classes:", err));
+  }, []);
 
   useEffect(() => {
     if (!canManage) navigate('/dashboard');
@@ -24,25 +33,24 @@ export default function ManageCoursesPage() {
   }, []);
 
   const fetchCourses = async () => {
-  try {
-    const res = await fetch(`${API_BASE_URL}/courses`);
-    if (!res.ok) {
-      throw new Error(`HTTP error ${res.status}`);
-    }
+    try {
+      const res = await fetch(`${API_BASE_URL}/courses`);
+      if (!res.ok) {
+        throw new Error(`HTTP error ${res.status}`);
+      }
 
-    const data = await res.json();
-    if (!Array.isArray(data)) {
-      console.error("❌ Expected array but got:", data);
-      setCourses([]); // fallback
-    } else {
-      setCourses(data);
+      const data = await res.json();
+      if (!Array.isArray(data)) {
+        console.error("❌ Expected array but got:", data);
+        setCourses([]); // fallback
+      } else {
+        setCourses(data);
+      }
+    } catch (err) {
+      console.error("❌ Failed to fetch courses:", err);
+      setCourses([]);
     }
-  } catch (err) {
-    console.error("❌ Failed to fetch courses:", err);
-    setCourses([]);
-  }
-};
-
+  };
 
   const handleChange = (field, value) => {
     setNewCourse((prev) => ({ ...prev, [field]: value }));
@@ -55,7 +63,7 @@ export default function ManageCoursesPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-    setNewCourse({ name: '', code: '', section: '', semester: 'fall', year: new Date().getFullYear() });
+    setNewCourse({ name: '', code: '', section: '', semester: 'fall', year: new Date().getFullYear(), class_id: '' });
     fetchCourses();
   };
 
@@ -77,6 +85,7 @@ export default function ManageCoursesPage() {
             <th>Semester</th>
             <th>Year</th>
             <th>Instructor</th>
+            <th>Class</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -89,6 +98,7 @@ export default function ManageCoursesPage() {
               <td>{course.semester}</td>
               <td>{course.year}</td>
               <td>{course.instructor_id}</td>
+              <td>{course.class_name || '—'}</td>
               <td>
                 <Button size="sm" variant="danger" onClick={() => handleDelete(course.id)}>Delete</Button>
               </td>
@@ -136,6 +146,22 @@ export default function ManageCoursesPage() {
                 value={newCourse.year}
                 onChange={(e) => handleChange('year', parseInt(e.target.value))}
               />
+            </Form.Group>
+          </Col>
+        </Row>
+        <Row className="mt-3">
+          <Col md={6}>
+            <Form.Group>
+              <Form.Label>Class</Form.Label>
+              <Form.Select
+                value={newCourse.class_id}
+                onChange={(e) => handleChange('class_id', parseInt(e.target.value))}
+              >
+                <option value="">Select a class</option>
+                {classList.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </Form.Select>
             </Form.Group>
           </Col>
         </Row>

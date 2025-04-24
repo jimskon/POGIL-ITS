@@ -4,7 +4,10 @@ const db = require('../db');
 async function getAllCourses(req, res) {
   try {
     const courses = await db.query(
-      `SELECT * FROM courses ORDER BY year DESC, semester ASC`
+	`SELECT c.*, pc.name AS class_name
+         FROM courses c
+         LEFT JOIN pogil_classes pc ON c.class_id = pc.id
+         ORDER BY year DESC, semester ASC`
     );
 
     // Ensure it's always an array (even if MySQL someday changes behavior)
@@ -22,17 +25,22 @@ async function getAllCourses(req, res) {
 
 // POST create a new course
 async function createCourse(req, res) {
-  const { name, code, section, semester, year, instructor_id } = req.body;
+  const {
+    name, code, section, semester, year,
+    instructor_id, class_id
+  } = req.body;
+
   try {
-    await db.query(
-      `INSERT INTO courses (name, code, section, semester, year, instructor_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [name, code, section, semester, year, instructor_id]
+    const [result] = await db.query(
+      `INSERT INTO courses
+       (name, code, section, semester, year, instructor_id, class_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [name, code, section, semester, year, instructor_id, class_id || null]
     );
-    res.json({ success: true });
+    res.status(201).json({ success: true, courseId: result.insertId });
   } catch (err) {
-    console.error('Error creating course:', err);
-    res.status(500).json({ error: 'Insert failed' });
+    console.error("❌ Error creating course:", err.message);
+    res.status(500).json({ error: "Failed to create course" });
   }
 }
 
