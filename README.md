@@ -201,6 +201,34 @@ sudo systemctl reload apache2
 
 ---
 
+## db-migrate
+```
+cd server
+npm install db-migrate --save-dev
+npm install db-migrate-mysql
+touch database.json
+emacs database.json 
+{
+  "dev": {
+    "driver": "pg",
+    "host": "localhost",
+    "database": "pogil_db",
+    "user": "pogil_user",
+    "password": "KenyonPOGIL2025""
+  },
+  "prod": {
+    "driver": "pg",
+    "host": "prod-db-host",
+    "database": "mydb_prod",
+    "user": "produser",
+    "password": "prodpassword"
+  }
+
+mkdir migrations
+cd migrations
+
+```
+
 ## Final Notes
 
 - Frontend served from: `http://yourdomain.com/`
