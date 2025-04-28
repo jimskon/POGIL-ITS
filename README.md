@@ -201,6 +201,36 @@ sudo systemctl reload apache2
 
 ---
 
+## db-migrate
+```
+cd server
+npm install db-migrate --save-dev
+npm install db-migrate-mysql
+npm install --save-dev db-migrate-pg
+touch database.json
+emacs database.json 
+{
+  "dev": {
+    "driver": "mysql",
+    "host": "localhost",
+    "database": "pogil_db",
+    "user": "pogil_user",
+    "password": "KenyonPOGIL2025""
+  },
+  "prod": {
+    "driver": "pg",
+    "host": "prod-db-host",
+    "database": "mydb_prod",
+    "user": "produser",
+    "password": "prodpassword"
+  }
+
+mkdir migrations
+cd migrations
+npx db-migrate create add-course-id-to-pogil-classes
+npx db-migrate up
+```
+
 ## Final Notes
 
 - Frontend served from: `http://yourdomain.com/`
