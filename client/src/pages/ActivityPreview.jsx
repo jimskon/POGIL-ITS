@@ -65,42 +65,84 @@ export default function ActivityPreview() {
     fetchActivityAndSheet();
   }, [activityName]);
 
+  useEffect(() => {
+    // Re-highlight whenever editing toggles                                                                
+    Prism.highlightAll();
+  }, [activeEditIndex]);
+
+
   const formatText = (text) =>
     text.replace(/\\textit\{([^}]+)\}/g, '<em>$1</em>')
         .replace(/\\textbf\{([^}]+)\}/g, '<strong>$1</strong>');
 
-  const createPythonBlock = (code, index) => (
-    <div key={`sk-${index}`} className="mb-3">
-      <Button variant="secondary" className="mb-2" onClick={() => runSkulpt(code, index)}>Run Python</Button>
-      <pre><code className="language-python">{code}</code></pre>
-      <pre id={`sk-output-${index}`} className="mt-2 bg-light p-2 border" />
+const createPythonBlock = (code, index) => {
+  const isEditing = activeEditIndex === index;
+  const outputId = `sk-output-${index}`;
+  const codeId = `sk-code-${index}`;
+
+  return (
+    <div key={`sk-${index}`} className="mb-4">
+      <Button
+        variant="secondary"
+        className="mb-2 me-2"
+        onClick={() => setActiveEditIndex(isEditing ? null : index)}
+      >
+        {isEditing ? "Done Editing" : "Edit Code"}
+      </Button>
+
+      <Button
+        variant="primary"
+        className="mb-2"
+        onClick={() => {
+          const userCode = document.getElementById(codeId)?.value || code;
+          const outputEl = document.getElementById(outputId);
+          if (!outputEl) return;
+
+          if (!window.Sk || !window.Sk.configure) {
+            alert("Skulpt is still loading...");
+            return;
+          }
+
+          outputEl.textContent = '';
+
+          Sk.configure({
+            output: (text) => (outputEl.textContent += text),
+            read: (file) => {
+              if (Sk.builtinFiles === undefined || Sk.builtinFiles["files"][file] === undefined) {
+                throw `File not found: '${file}'`;
+              }
+              return Sk.builtinFiles["files"][file];
+            },
+          });
+
+          Sk.misceval
+            .asyncToPromise(() => Sk.importMainWithBody("__main__", false, userCode, true))
+            .catch((err) => outputEl.textContent = err.toString());
+        }}
+      >
+        Run Python
+      </Button>
+
+      {isEditing ? (
+        <Form.Control
+          as="textarea"
+          id={codeId}
+          defaultValue={code}
+          rows={Math.max(6, code.split("\n").length)}
+          className="font-monospace bg-dark text-white mt-2"
+        />
+      ) : (
+        <pre className="mt-2">
+          <code id={codeId} className="language-python">
+            {code}
+          </code>
+        </pre>
+      )}
+
+      <pre id={outputId} className="mt-2 bg-light p-2 border" />
     </div>
   );
-
-  const runSkulpt = (code, index) => {
-    const outputEl = document.getElementById(`sk-output-${index}`);
-    if (!outputEl) return;
-
-    if (!window.Sk || !window.Sk.configure) {
-      alert("Skulpt is still loading...");
-      return;
-    }
-
-    outputEl.textContent = '';
-    Sk.configure({
-      output: (text) => (outputEl.textContent += text),
-      read: (file) => {
-        if (Sk.builtinFiles === undefined || Sk.builtinFiles["files"][file] === undefined) {
-          throw `File not found: '${file}'`;
-        }
-        return Sk.builtinFiles["files"][file];
-      },
-    });
-
-    Sk.misceval
-      .asyncToPromise(() => Sk.importMainWithBody("__main__", false, code, true))
-      .catch((err) => outputEl.textContent = err.toString());
-  };
+};
 
   let elements = [];
   let listStack = [];
