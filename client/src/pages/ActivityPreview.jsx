@@ -82,6 +82,76 @@ useEffect(() => {
     fetchActivityAndSheet();
   }, [activityName]);
 
+const createPythonBlock = (code, index) => {
+  const isEditing = activeEditIndex === index;
+  const outputId = `sk-output-${index}`;
+
+  return (
+    <div key={`sk-${index}`} className="mb-3">
+      <Button
+        variant="secondary"
+        className="mb-2"
+        onClick={() => setActiveEditIndex(isEditing ? null : index)}
+      >
+        {isEditing ? "Done Editing" : "Edit Code"}
+      </Button>
+
+      {isEditing ? (
+        <Form.Control
+          as="textarea"
+          rows={Math.max(6, code.split("\n").length)}
+          defaultValue={code}
+          className="mb-2 font-monospace bg-dark text-white"
+          id={`sk-code-${index}`}
+        />
+      ) : (
+        <pre className="m-0">
+          <code className="language-python">{code}</code>
+        </pre>
+      )}
+
+      <Button
+        variant="primary"
+        onClick={() => {
+          const userCode = document.getElementById(`sk-code-${index}`)?.value;
+          const outputEl = document.getElementById(outputId);
+          if (!userCode || !outputEl) return;
+
+          if (!window.Sk || !window.Sk.configure) {
+            alert("Skulpt is still loading...");
+            return;
+          }
+
+          outputEl.textContent = '';
+
+          Sk.configure({
+            output: (text) => (outputEl.textContent += text),
+            read: (file) => {
+              if (
+                Sk.builtinFiles === undefined ||
+                Sk.builtinFiles["files"][file] === undefined
+              ) {
+                throw `File not found: '${file}'`;
+              }
+              return Sk.builtinFiles["files"][file];
+            },
+          });
+
+          Sk.misceval
+            .asyncToPromise(() => Sk.importMainWithBody("__main__", false, userCode, true))
+            .catch((err) => {
+              outputEl.textContent = err.toString();
+            });
+        }}
+      >
+        Run Python
+      </Button>
+
+      <pre id={outputId} className="mt-2 bg-light p-2 border" />
+    </div>
+  );
+};
+
   const formatText = (text) =>
     text.replace(/\\textit\{([^}]+)\}/g, '<em>$1</em>')
         .replace(/\\textbf\{([^}]+)\}/g, '<strong>$1</strong>');
@@ -97,7 +167,7 @@ useEffect(() => {
     if (currentQuestion) {
       elements.push(
         <div key={currentQuestion.id} className="mb-4">
-          <h5>Question: {currentQuestion.text}</h5>
+          <p> {currentQuestion.text}</p>
           <Form.Control as="textarea" rows={currentQuestion.responseLines || 1} placeholder="Your response..." className="mb-2" />
           {currentQuestion.samples.length > 0 && <><h6>Sample Responses</h6><Table bordered size="sm"><tbody>{currentQuestion.samples.map((r, i) => <tr key={i}><td>{r}</td></tr>)}</tbody></Table></>}
           {currentQuestion.feedback.length > 0 && <><h6>Feedback Prompts</h6><Table bordered size="sm"><tbody>{currentQuestion.feedback.map((f, i) => <tr key={i}><td>{f}</td></tr>)}</tbody></Table></>}
@@ -176,7 +246,7 @@ useEffect(() => {
       pythonBlock = [];
     } else if (line.trim() === '\\endpython') {
       const code = pythonBlock.join("\n");
-      collectedCodeBlocks.push({ code, index: pythonBlockIndex });
+      elements.push(createPythonBlock(code, pythonBlockIndex));
       pythonBlock = null;
       pythonBlockIndex++;
     } else if (pythonBlock !== null) {
@@ -188,73 +258,11 @@ useEffect(() => {
 
   finalizeQuestionBlock();
   finalizeList();
+return (
+  <Container>
+    <h2>Preview: {activity?.title}</h2>
+    {elements}
+  </Container>
+);
 
-  return (
-    <Container>
-      <h2>Preview: {activity?.title}</h2>
-      {elements}
-      {collectedCodeBlocks.map(({ code, index }) => {
-        const isEditing = activeEditIndex === index;
-        const outputId = `sk-output-${index}`;
-        return (
-          <div key={`sk-${index}`} className="mb-3">
-            <Button variant="secondary" className="mb-2" onClick={() => setActiveEditIndex(isEditing ? null : index)}>
-              {isEditing ? "Done Editing" : "Edit Code"}
-            </Button>
-            {isEditing ? (
-              <Form.Control
-                as="textarea"
-                rows={Math.max(6, code.split("\n").length)}
-                defaultValue={code}
-                className="mb-2 font-monospace bg-dark text-white"
-                id={`sk-code-${index}`}
-              />
-            ) : (
-              <pre className="m-0">
-                <code className="language-python">{code}</code>
-              </pre>
-            )}
-            <Button
-              variant="primary"
-              onClick={() => {
-                const userCode = document.getElementById(`sk-code-${index}`)?.value;
-                const outputEl = document.getElementById(outputId);
-                if (!userCode || !outputEl) return;
-
-
-if (!window.Sk || !window.Sk.configure) {
-  alert("Skulpt is still loading...");
-  return;
-}
-
-                outputEl.textContent = '';
-
-                Sk.configure({
-                  output: (text) => (outputEl.textContent += text),
-                  read: (file) => {
-                    if (
-                      Sk.builtinFiles === undefined ||
-                      Sk.builtinFiles["files"][file] === undefined
-                    ) {
-                      throw `File not found: '${file}'`;
-                    }
-                    return Sk.builtinFiles["files"][file];
-                  },
-                });
-
-                Sk.misceval
-                  .asyncToPromise(() => Sk.importMainWithBody("__main__", false, userCode, true))
-                  .catch((err) => {
-                    outputEl.textContent = err.toString();
-                  });
-              }}
-            >
-              Run Python
-            </Button>
-            <pre id={outputId} className="mt-2 bg-light p-2 border" />
-          </div>
-        );
-      })}
-    </Container>
-  );
 }
