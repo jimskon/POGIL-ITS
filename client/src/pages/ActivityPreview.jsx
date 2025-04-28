@@ -1,8 +1,8 @@
-// ActivityPreview.jsx using Skulpt
+// FINAL corrected ActivityPreview.jsx
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { API_BASE_URL } from '../config';
-import { Container, Table, Form, Button } from 'react-bootstrap';
+import { Container, Table, Form, Button, Card } from 'react-bootstrap';
 import Prism from 'prismjs';
 import 'prismjs/themes/prism.css';
 import 'prismjs/components/prism-python';
@@ -12,58 +12,41 @@ export default function ActivityPreview() {
   const [activity, setActivity] = useState(null);
   const [sheetData, setSheetData] = useState([]);
   const [activeEditIndex, setActiveEditIndex] = useState(null);
-  const [codeBlocks, setCodeBlocks] = useState([]);
 
-useEffect(() => {
-  const loadScript = (src) =>
-    new Promise((resolve, reject) => {
+  let environment = null;
+  let environmentBuffer = [];
+  let currentQuestion = null;
+  let currentField = 'text';
+  let collectingSamples = false;
+  let collectingFeedback = false;
+  let collectingFollowups = false;
+  let pythonBlock = null;
+  let pythonBlockIndex = 0;
+
+  useEffect(() => {
+    const loadScript = (src) => new Promise((resolve, reject) => {
       const script = document.createElement('script');
       script.src = src;
       script.async = true;
-      script.onload = () => {
-        console.log(`✅ Loaded: ${src}`);
-        resolve();
-      };
-      script.onerror = (e) => {
-        console.error(`❌ Failed to load: ${src}`, e);
-        reject(e);
-      };
+      script.onload = resolve;
+      script.onerror = reject;
       document.body.appendChild(script);
     });
 
-  const loadSkulpt = async () => {
-    try {
-      await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js'); // ✅ correct path
-      await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js'); // ✅ correct path
-      console.log('✅ Skulpt fully loaded');
-    } catch (err) {
-      console.error('❌ Skulpt load error', err);
-    }
-  };
-
-  loadSkulpt();
-}, []);
-
-useEffect(() => {
-  const checkSkulptLoaded = setInterval(() => {
-    if (window.Sk && window.Sk.configure) {
-      console.log("✅ Skulpt loaded");
-      clearInterval(checkSkulptLoaded);
-    } else {
-      console.log("⏳ Waiting for Skulpt...");
-    }
-  }, 500);
-
-  return () => clearInterval(checkSkulptLoaded);
-}, []);
-    
- useEffect(() => {
-    if (sheetData.length > 0) Prism.highlightAll();
-  }, [sheetData]);
+    const loadSkulpt = async () => {
+      try {
+        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
+        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
+      } catch (err) {
+        console.error('Failed to load Skulpt', err);
+      }
+    };
+    loadSkulpt();
+  }, []);
 
   useEffect(() => {
-    Prism.highlightAll();
-  }, [activeEditIndex]);
+    if (sheetData.length > 0) Prism.highlightAll();
+  }, [sheetData]);
 
   useEffect(() => {
     const fetchActivityAndSheet = async () => {
@@ -82,92 +65,51 @@ useEffect(() => {
     fetchActivityAndSheet();
   }, [activityName]);
 
-const createPythonBlock = (code, index) => {
-  const isEditing = activeEditIndex === index;
-  const outputId = `sk-output-${index}`;
-
-  return (
-    <div key={`sk-${index}`} className="mb-3">
-      <Button
-        variant="secondary"
-        className="mb-2"
-        onClick={() => setActiveEditIndex(isEditing ? null : index)}
-      >
-        {isEditing ? "Done Editing" : "Edit Code"}
-      </Button>
-
-      {isEditing ? (
-        <Form.Control
-          as="textarea"
-          rows={Math.max(6, code.split("\n").length)}
-          defaultValue={code}
-          className="mb-2 font-monospace bg-dark text-white"
-          id={`sk-code-${index}`}
-        />
-      ) : (
-        <pre className="m-0">
-          <code className="language-python">{code}</code>
-        </pre>
-      )}
-
-      <Button
-        variant="primary"
-        onClick={() => {
-          const userCode = document.getElementById(`sk-code-${index}`)?.value;
-          const outputEl = document.getElementById(outputId);
-          if (!userCode || !outputEl) return;
-
-          if (!window.Sk || !window.Sk.configure) {
-            alert("Skulpt is still loading...");
-            return;
-          }
-
-          outputEl.textContent = '';
-
-          Sk.configure({
-            output: (text) => (outputEl.textContent += text),
-            read: (file) => {
-              if (
-                Sk.builtinFiles === undefined ||
-                Sk.builtinFiles["files"][file] === undefined
-              ) {
-                throw `File not found: '${file}'`;
-              }
-              return Sk.builtinFiles["files"][file];
-            },
-          });
-
-          Sk.misceval
-            .asyncToPromise(() => Sk.importMainWithBody("__main__", false, userCode, true))
-            .catch((err) => {
-              outputEl.textContent = err.toString();
-            });
-        }}
-      >
-        Run Python
-      </Button>
-
-      <pre id={outputId} className="mt-2 bg-light p-2 border" />
-    </div>
-  );
-};
-
   const formatText = (text) =>
     text.replace(/\\textit\{([^}]+)\}/g, '<em>$1</em>')
         .replace(/\\textbf\{([^}]+)\}/g, '<strong>$1</strong>');
 
-  let elements = [],
-      listStack = [],
-      currentQuestion = null,
-      pythonBlock = null,
-      pythonBlockIndex = 0,
-      collectedCodeBlocks = [];
+  const createPythonBlock = (code, index) => (
+    <div key={`sk-${index}`} className="mb-3">
+      <Button variant="secondary" className="mb-2" onClick={() => runSkulpt(code, index)}>Run Python</Button>
+      <pre><code className="language-python">{code}</code></pre>
+      <pre id={`sk-output-${index}`} className="mt-2 bg-light p-2 border" />
+    </div>
+  );
+
+  const runSkulpt = (code, index) => {
+    const outputEl = document.getElementById(`sk-output-${index}`);
+    if (!outputEl) return;
+
+    if (!window.Sk || !window.Sk.configure) {
+      alert("Skulpt is still loading...");
+      return;
+    }
+
+    outputEl.textContent = '';
+    Sk.configure({
+      output: (text) => (outputEl.textContent += text),
+      read: (file) => {
+        if (Sk.builtinFiles === undefined || Sk.builtinFiles["files"][file] === undefined) {
+          throw `File not found: '${file}'`;
+        }
+        return Sk.builtinFiles["files"][file];
+      },
+    });
+
+    Sk.misceval
+      .asyncToPromise(() => Sk.importMainWithBody("__main__", false, code, true))
+      .catch((err) => outputEl.textContent = err.toString());
+  };
+
+  let elements = [];
+  let listStack = [];
 
   const finalizeQuestionBlock = () => {
     if (currentQuestion) {
       elements.push(
         <div key={currentQuestion.id} className="mb-4">
-          <p> {currentQuestion.text}</p>
+          <p dangerouslySetInnerHTML={{ __html: currentQuestion.text }} />
           <Form.Control as="textarea" rows={currentQuestion.responseLines || 1} placeholder="Your response..." className="mb-2" />
           {currentQuestion.samples.length > 0 && <><h6>Sample Responses</h6><Table bordered size="sm"><tbody>{currentQuestion.samples.map((r, i) => <tr key={i}><td>{r}</td></tr>)}</tbody></Table></>}
           {currentQuestion.feedback.length > 0 && <><h6>Feedback Prompts</h6><Table bordered size="sm"><tbody>{currentQuestion.feedback.map((f, i) => <tr key={i}><td>{f}</td></tr>)}</tbody></Table></>}
@@ -177,6 +119,54 @@ const createPythonBlock = (code, index) => {
       currentQuestion = null;
     }
   };
+
+const finalizeEnvironment = () => {
+  if (environment) {
+    const envElements = [];
+    let envListStack = [];
+
+    environmentBuffer.forEach((line, idx) => {
+const trimmed = line.trim();
+if (trimmed === '\\begin{itemize}') {
+  envListStack.push({ tag: 'ul', items: [] });
+} else if (trimmed === '\\begin{enumerate}') {
+  envListStack.push({ tag: 'ol', items: [] });
+} else if (trimmed === '\\end{itemize}' || trimmed === '\\end{enumerate}') {
+  const { tag, items } = envListStack.pop();
+  if (items.length > 0) {
+    envElements.push(tag === 'ul'
+      ? <ul key={`env-ul-${idx}`}>{items}</ul>
+      : <ol key={`env-ol-${idx}`}>{items}</ol>);
+  }
+} else if (trimmed.startsWith('\\item')) {
+  const content = trimmed.replace(/^\\item\s*/, '');
+  if (envListStack.length === 0) {
+    envListStack.push({ tag: 'ul', items: [] });
+  }
+  envListStack[envListStack.length - 1].items.push(
+    <li key={`env-li-${idx}`}>{formatText(content)}</li>
+  );
+} else {
+  envElements.push(
+    <p key={`env-p-${idx}`} dangerouslySetInnerHTML={{ __html: formatText(line) }} />
+  );
+}
+	  
+    });
+
+    elements.push(
+      <Card className="mb-4" key={`env-${elements.length}`}>
+        <Card.Body>
+          <Card.Title>{environment.toUpperCase()}</Card.Title>
+          {envElements}
+        </Card.Body>
+      </Card>
+    );
+
+    environment = null;
+    environmentBuffer = [];
+  }
+};
 
   const pushListElement = (tag, content, index) => {
     if (listStack.length === 0 || listStack[listStack.length - 1].tag !== tag) listStack.push({ tag, items: [] });
@@ -191,19 +181,59 @@ const createPythonBlock = (code, index) => {
   };
 
   sheetData.forEach((line, i) => {
-    if (line.trim().startsWith('\\title{')) {
-      finalizeQuestionBlock(); finalizeList();
+    if (environment) {
+      if (line.trim() === `\\end{${environment}}`) {
+        finalizeEnvironment();
+      } else {
+        environmentBuffer.push(line);
+      }
+      return;
+    }
+
+    if (line.trim().match(/^\\begin\{(content|process|knowledge)\}$/)) {
+      environment = line.trim().match(/^\\begin\{(.*?)\}$/)[1];
+    } else if (line.startsWith('\\begin{question}')) {
+      const id = line.match(/\\begin\{question\}\{(.+?)\}/)?.[1];
+      currentQuestion = { id, text: '', samples: [], feedback: [], followups: [], responseLines: 1 };
+      currentField = 'text';
+    } else if (line.startsWith('\\textresponse')) {
+      const match = line.match(/\\textresponse\{.+?,(\d+)\}/);
+      if (match) {
+        currentQuestion.responseLines = parseInt(match[1]);
+      }
+    } else if (line.trim() === '\\sampleresponses') {
+      currentField = 'samples';
+    } else if (line.trim() === '\\endsampleresponses') {
+      currentField = 'text';
+    } else if (line.trim() === '\\feedbackprompt') {
+      currentField = 'feedback';
+    } else if (line.trim() === '\\endfeedbackprompt') {
+      currentField = 'text';
+    } else if (line.trim() === '\\followupprompt') {
+      currentField = 'followups';
+    } else if (line.trim() === '\\endfollowupprompt') {
+      currentField = 'text';
+    } else if (line.trim() === '\\end{question}') {
+      finalizeQuestionBlock();
+    } else if (currentQuestion) {
+      if (currentField === 'text') {
+        currentQuestion.text += (currentQuestion.text ? ' ' : '') + formatText(line);
+      } else {
+        currentQuestion[currentField].push(formatText(line));
+      }
+    } else if (line.startsWith('\\title{')) {
+      finalizeQuestionBlock(); finalizeList(); finalizeEnvironment();
       const title = line.match(/\\title\{(.+?)\}/)?.[1];
       elements.push(<h2 key={`title-${i}`}>{title}</h2>);
-    } else if (line.trim().startsWith('\\name{')) {
+    } else if (line.startsWith('\\name{')) {
       const name = line.match(/\\name\{(.+?)\}/)?.[1];
       elements.push(<h4 key={`name-${i}`}>Activity ID: {name}</h4>);
-    } else if (line.trim().startsWith('\\section{')) {
-      finalizeQuestionBlock(); finalizeList();
+    } else if (line.startsWith('\\section{')) {
+      finalizeQuestionBlock(); finalizeList(); finalizeEnvironment();
       const section = line.match(/\\section\{(.+?)\}/)?.[1];
       elements.push(<h3 key={`section-${i}`}>{section}</h3>);
     } else if (line === '\\roles') {
-      finalizeQuestionBlock(); finalizeList();
+      finalizeQuestionBlock(); finalizeList(); finalizeEnvironment();
       const roles = ['Spokesperson', 'Facilitator', 'Process Analyst', 'Quality Control'];
       elements.push(
         <div key="roles" className="mb-4">
@@ -216,22 +246,6 @@ const createPythonBlock = (code, index) => {
           ))}
         </div>
       );
-    } else if (line.startsWith('\\question{')) {
-      finalizeQuestionBlock(); finalizeList();
-      const id = line.match(/\\question\{(.+?)\}/)?.[1];
-      currentQuestion = { id, text: '', responseLines: 1, samples: [], feedback: [], followups: [] };
-    } else if (line.startsWith('\\textresponse')) {
-      const match = line.match(/\\textresponse\{.+?,(\d+)\}/);
-      if (currentQuestion) currentQuestion.responseLines = match ? parseInt(match[1]) : 1;
-    } else if (["\\sampleresponses", "\\feedbackprompt", "\\followupprompt"].includes(line)) {
-      // skip
-    } else if (currentQuestion) {
-      const prev = sheetData[i - 1];
-      if (prev === '\\sampleresponses') currentQuestion.samples.push(formatText(line));
-      else if (prev === '\\feedbackprompt') currentQuestion.feedback.push(formatText(line));
-      else if (prev === '\\followupprompt') currentQuestion.followups.push(formatText(line));
-      else if (currentQuestion.text === '') currentQuestion.text = formatText(line);
-      else currentQuestion.text += ' ' + formatText(line);
     } else if (line === '\\begin{itemize}') {
       listStack.push({ tag: 'ul', items: [] });
     } else if (line === '\\end{itemize}') {
@@ -258,11 +272,12 @@ const createPythonBlock = (code, index) => {
 
   finalizeQuestionBlock();
   finalizeList();
-return (
-  <Container>
-    <h2>Preview: {activity?.title}</h2>
-    {elements}
-  </Container>
-);
+  finalizeEnvironment();
 
+  return (
+    <Container>
+      <h2>Preview: {activity?.title}</h2>
+      {elements}
+    </Container>
+  );
 }
