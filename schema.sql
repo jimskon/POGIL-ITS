@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS course_enrollments (
 
 -- POGIL activity metadata
 -- Activities Table (Now linked to a Class)
-CREATE TABLE IF NOT EXISTS pogol_activities (
+CREATE TABLE IF NOT EXISTS pogil_activities (
     name VARCHAR(191) PRIMARY KEY,  -- Unique activity ID
     title TEXT NOT NULL,
     sheet_url TEXT,
