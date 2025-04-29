@@ -119,6 +119,7 @@ npm install express-session
 npm install bcrypt
 npm install mariadb
 npm install googleapis
+npm install mysql2
 cd ../client
 npm install react-bootstrap bootstrap
 npm install prismjs
