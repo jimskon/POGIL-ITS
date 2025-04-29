@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS pogil_classes (
     created_by INT,
     FOREIGN KEY (created_by) REFERENCES users(id)
 );
+
 -- Courses table
 CREATE TABLE IF NOT EXISTS courses (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -43,12 +44,12 @@ CREATE TABLE IF NOT EXISTS course_enrollments (
 );
 
 -- POGIL activity metadata
--- Activities Table (Now linked to a Class)
 CREATE TABLE IF NOT EXISTS pogil_activities (
-    name VARCHAR(191) PRIMARY KEY,  -- Unique activity ID
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(191) NOT NULL,
     title TEXT NOT NULL,
     sheet_url TEXT,
-    class_id INT NOT NULL,  -- New foreign key
+    class_id INT NOT NULL,
     order_index INT NOT NULL DEFAULT 0,
     created_by INT,
     last_loaded TIMESTAMP,
@@ -59,12 +60,12 @@ CREATE TABLE IF NOT EXISTS pogil_activities (
 -- Activity Instances Table
 CREATE TABLE IF NOT EXISTS activity_instances (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    activity_name VARCHAR(191),
+    activity_id INT,
     course_id INT,
     group_number INT,
     start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status ENUM('in_progress', 'completed') DEFAULT 'in_progress',
-    FOREIGN KEY (activity_name) REFERENCES pogil_activities(name),
+    FOREIGN KEY (activity_id) REFERENCES pogil_activities(id),
     FOREIGN KEY (course_id) REFERENCES courses(id)
 );
 
@@ -83,7 +84,7 @@ CREATE TABLE IF NOT EXISTS activity_groups (
     FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id)
 );
 
--- Group responses (not tied to specific student)
+-- Group responses
 CREATE TABLE IF NOT EXISTS responses (
     id INT AUTO_INCREMENT PRIMARY KEY,
     activity_instance_id INT,
