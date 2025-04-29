@@ -2,28 +2,31 @@ import React, { useEffect, useState } from 'react';
 import { useUser } from '../context/UserContext';
 import { useNavigate } from 'react-router-dom';
 import { API_BASE_URL } from '../config';
-import { Table, Button, Form, Container, Alert, Row, Col } from 'react-bootstrap';
+import { Table, Button, Form, Container, Alert, Row, Col, Spinner } from 'react-bootstrap';
 
 export default function DashboardPage() {
   const { user } = useUser();
   const navigate = useNavigate();
 
-  const [enrolledClasses, setEnrolledClasses] = useState([]);
+  const [enrolledCourses, setEnrolledCourses] = useState([]);
   const [courseCode, setCourseCode] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!user?.id) return;
 
     const fetchEnrollments = async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/classes/user/${user.id}/enrollments`);
+        const res = await fetch(`${API_BASE_URL}/api/courses/user/${user.id}/enrollments`);
         const data = await res.json();
-        setEnrolledClasses(data);
+        setEnrolledCourses(data);
       } catch (err) {
         console.error('Failed to fetch enrollments', err);
-        setError('Unable to load enrolled classes');
+        setError('Unable to load enrolled courses');
+      } finally {
+        setLoading(false);
       }
     };
 
@@ -34,7 +37,7 @@ export default function DashboardPage() {
     setError('');
     setSuccess('');
     try {
-      const res = await fetch(`${API_BASE_URL}/api/classes/enroll-by-code`, {
+      const res = await fetch(`${API_BASE_URL}/api/courses/enroll-by-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: user.id, code: courseCode })
@@ -45,7 +48,7 @@ export default function DashboardPage() {
       if (res.ok) {
         setSuccess('Successfully enrolled!');
         setCourseCode('');
-        setEnrolledClasses(prev => [...prev, data.newCourse]);
+        setEnrolledCourses(prev => [...prev, data.newCourse]);
       } else {
         setError(data.error || 'Failed to enroll');
       }
@@ -73,35 +76,46 @@ export default function DashboardPage() {
 
       {user?.id && (
         <>
-          {enrolledClasses.length > 0 ? (
+          {loading ? (
+            <Spinner animation="border" />
+          ) : enrolledCourses.length > 0 ? (
             <>
-              <h4>Your Enrolled Classes</h4>
+              <h4>Your Enrolled Courses</h4>
               <Table striped bordered hover>
                 <thead>
                   <tr>
-                    <th>Name</th>
-                    <th>Code</th>
+                    <th>Course Name</th>
+                    <th>Course Code</th>
+                    <th>Section</th>
                     <th>Semester</th>
                     <th>Year</th>
+                    <th>Instructor</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {enrolledClasses.map(course => (
+                  {enrolledCourses.map(course => (
                     <tr key={course.id}>
-                      <td>{course.name}</td>
+                      <td
+                        style={{ cursor: 'pointer', textDecoration: 'underline', color: 'blue' }}
+                        onClick={() => navigate(`/courses/${course.id}/activities`)}
+                      >
+                        {course.name}
+                      </td>
                       <td>{course.code}</td>
+                      <td>{course.section}</td>
                       <td>{course.semester}</td>
                       <td>{course.year}</td>
+                      <td>{course.instructor_name || 'N/A'}</td>
                     </tr>
                   ))}
                 </tbody>
               </Table>
             </>
           ) : (
-            <p>You are not enrolled in any classes yet.</p>
+            <p>You are not enrolled in any courses yet.</p>
           )}
 
-          <h5 className="mt-5">Join a Class by Code</h5>
+          <h5 className="mt-5">Join a Course by Code</h5>
           <Form className="d-flex" onSubmit={(e) => { e.preventDefault(); handleJoinCourse(); }}>
             <Form.Control
               type="text"

@@ -1,41 +1,63 @@
 const db = require('../db');
+const { toPlain } = require('../utils/dbHelpers');
 
+// Get all classes
 exports.getAllClasses = async (req, res) => {
-  const rows = await db.query('SELECT * FROM pogil_classes');
-  res.json(rows);
+  try {
+      const [rows] = await db.query('SELECT * FROM pogil_classes');
+      res.json(toPlain(rows));
+  } catch (err) {
+    console.error("Error fetching classes:", err);
+    res.status(500).json({ error: 'Failed to fetch classes' });
+  }
 };
 
 exports.createClass = async (req, res) => {
   const { name, description, createdBy } = req.body;
-  const result = await db.query(
-    'INSERT INTO pogil_classes (name, description, created_by) VALUES (?, ?, ?)',
-    [name, description, createdBy]
-  );
+  try {
+    const [result] = await db.query(
+      'INSERT INTO pogil_classes (name, description, created_by) VALUES (?, ?, ?)',
+      [name, description, createdBy]
+    );
     res.status(201).json({ id: Number(result.insertId), name, description, created_by: createdBy });
+  } catch (err) {
+    console.error("Error creating class:", err);
+    res.status(500).json({ error: 'Failed to create class' });
+  }
 };
 
 exports.updateClass = async (req, res) => {
   const { name, description } = req.body;
-  await db.query(
-    'UPDATE pogil_classes SET name = ?, description = ? WHERE id = ?',
-    [name, description, req.params.id]
-  );
-  res.json({ id: req.params.id, name, description });
+  try {
+    await db.query(
+      'UPDATE pogil_classes SET name = ?, description = ? WHERE id = ?',
+      [name, description, req.params.id]
+    );
+    res.json({ id: req.params.id, name, description });
+  } catch (err) {
+    console.error("Error updating class:", err);
+    res.status(500).json({ error: 'Failed to update class' });
+  }
 };
 
 exports.deleteClass = async (req, res) => {
-  await db.query('DELETE FROM pogil_classes WHERE id = ?', [req.params.id]);
-  res.status(204).send();
+  try {
+    await db.query('DELETE FROM pogil_classes WHERE id = ?', [req.params.id]);
+    res.status(204).send();
+  } catch (err) {
+    console.error("Error deleting class:", err);
+    res.status(500).json({ error: 'Failed to delete class' });
+  }
 };
 
 exports.getActivitiesByClass = async (req, res) => {
   const { id } = req.params;
   try {
-    const rows = await require('../db').query(
+    const [rows] = await db.query(
       'SELECT * FROM pogol_activities WHERE class_id = ? ORDER BY order_index',
       [id]
     );
-    res.json(rows);
+    res.json(toPlain(rows));
   } catch (err) {
     console.error('Error fetching class activities:', err);
     res.status(500).json({ error: 'Failed to retrieve activities for class.' });
@@ -46,10 +68,6 @@ exports.createActivityForClass = async (req, res) => {
   const classId = req.params.id;
   const { name, title, sheet_url, order_index, createdBy } = req.body;
 
-  console.log("Received POST /classes/:id/activities", {
-    name, title, sheet_url, order_index, createdBy, classId
-  });
-
   if (!name || !title || order_index === undefined || createdBy === undefined) {
     return res.status(400).json({
       error: 'Missing required fields',
@@ -58,7 +76,7 @@ exports.createActivityForClass = async (req, res) => {
   }
 
   try {
-    const result = await db.query(
+    const [result] = await db.query(
       'INSERT INTO pogol_activities (name, title, sheet_url, order_index, class_id, created_by) VALUES (?, ?, ?, ?, ?, ?)',
       [name, title, sheet_url, order_index, classId, createdBy]
     );
@@ -82,7 +100,7 @@ exports.updateActivityForClass = async (req, res) => {
   const { title, sheet_url, order_index } = req.body;
 
   try {
-    await require('../db').query(
+    await db.query(
       'UPDATE pogol_activities SET title = ?, sheet_url = ?, order_index = ? WHERE name = ? AND class_id = ?',
       [title, sheet_url, order_index, activityName, classId]
     );
@@ -98,7 +116,7 @@ exports.deleteActivityFromClass = async (req, res) => {
   const { id: classId, activityName } = req.params;
 
   try {
-    await require('../db').query(
+    await db.query(
       'DELETE FROM pogol_activities WHERE name = ? AND class_id = ?',
       [activityName, classId]
     );
@@ -110,75 +128,53 @@ exports.deleteActivityFromClass = async (req, res) => {
   }
 };
 
-exports.getUserEnrollments = async function getUserEnrollments(req, res) {
+exports.getUserEnrollments = async (req, res) => {
   const { userId } = req.params;
   try {
-    const rows = await db.query(`
-      SELECT c.* FROM courses c
-      JOIN course_enrollments e ON c.id = e.course_id
-      WHERE e.student_id = ?
-    `, [userId]);
-
-      console.log("STUDENT ENROLLMENTS:",rows);
-    if (!rows) {
-      console.error(`⚠️ No enrollment data found for user ${userId}`);
-      return res.status(200).json([]); // return empty array if nothing
-    }
-
-    res.json(rows);
+    const [rows] = await db.query(
+      `SELECT c.* FROM courses c
+       JOIN course_enrollments e ON c.id = e.course_id
+       WHERE e.student_id = ?`,
+      [userId]
+    );
+    res.json(toPlain(rows));
   } catch (err) {
-    console.error("❌ Error fetching enrollments:", err.message);
+    console.error("Error fetching enrollments:", err.message);
     res.status(500).json({ error: "Error fetching enrolled classes" });
   }
 };
 
-exports.enrollByCode = async function enrollByCode(req, res) {
+exports.enrollByCode = async (req, res) => {
   const { userId, code } = req.body;
 
-  console.log("📨 enrollByCode called with", { userId, code });
-
   try {
-    const result = await db.query(`SELECT * FROM courses WHERE code = ?`, [code]);
-    console.log("✅ DB query result:", result);
-    
-      if (!result || result.length == 0) {
-      console.warn(`⚠️ No course found with code "${code}"`);
+    const [results] = await db.query(`SELECT * FROM courses WHERE code = ?`, [code]);
+    if (!results || results.length === 0) {
       return res.status(404).json({ error: "Course not found" });
     }
 
-    const course = result[0];
-    console.log("✅ course object:", course);
-
-    if (!course || !course.id) {
-      console.error("🚨 Course object is invalid or missing ID:", course);
-      return res.status(500).json({ error: "Internal course structure error" });
-    }
-
-    const courseId = course.id;
-    console.log("✅ courseId extracted:", courseId);
+    const course = { ...results[0] }; // ✅ Flatten
 
     const [existing] = await db.query(
       `SELECT * FROM course_enrollments WHERE student_id = ? AND course_id = ?`,
-      [userId, courseId]
+      [userId, course.id]
     );
-      console.log("enrollments!!:",existing);
-    if (existing) {
+
+    if (existing.length > 0) {
       return res.status(400).json({ error: "Already enrolled" });
     }
 
     await db.query(
       `INSERT INTO course_enrollments (student_id, course_id) VALUES (?, ?)`,
-      [userId, courseId]
+      [userId, course.id]
     );
 
     res.json({ success: true, newCourse: course });
-
   } catch (err) {
-    console.error("❌ Enrollment error (outer catch):", err.message);
+    console.error("Enrollment error:", err.message);
     res.status(500).json({ error: "Enrollment failed" });
   }
 };
-
 
 exports.getClassById = async (req, res) => {
   const { id } = req.params;
@@ -187,7 +183,7 @@ exports.getClassById = async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Class not found' });
     }
-    res.json(rows[0]);
+      res.json(toPlain(rows[0]));
   } catch (err) {
     console.error("Error fetching class:", err);
     res.status(500).json({ error: 'Database error' });

@@ -45,26 +45,48 @@ router.get('/preview', async (req, res) => {
 // Google Docs Preview
 // ==========================
 
+// ==========================
+// Google Docs Preview
+// ==========================
+
 // GET /activities/preview-doc?docUrl=...
 router.get('/preview-doc', async (req, res) => {
-  const { docUrl } = req.query;
-  //console.log("Previewing doc:", docUrl);
+  const rawUrl = req.query.docUrl;
+  console.log("Previewing doc:", rawUrl);
+
+  if (!rawUrl || rawUrl === 'undefined') {
+    console.warn("📛 Missing or invalid docUrl:", rawUrl);
+    return res.status(400).json({ error: 'Missing or invalid docUrl' });
+  }
+
+  let docId;
+  try {
+    const url = new URL(rawUrl);
+    docId = url.pathname.split('/')[3];   // ✅ extract docId correctly
+    if (!docId) {
+      throw new Error("Could not extract documentId from URL");
+    }
+    console.log("✅ Extracted docId:", docId);
+  } catch (err) {
+    console.error("📛 Invalid docUrl format:", rawUrl, err.message);
+    return res.status(400).json({ error: 'Invalid docUrl format' });
+  }
+
   try {
     const auth = await authorize();
     const docs = google.docs({ version: 'v1', auth });
 
-    const docId = new URL(docUrl).pathname.split('/')[3];
     const doc = await docs.documents.get({ documentId: docId });
 
     const lines = doc.data.body.content
       .flatMap(item => item.paragraph?.elements || [])
-      .map(e => e.textRun?.content?.replace(/\r?\n$/, ''))  
-      .filter(Boolean);
+      .map(e => e.textRun?.content?.replace(/\r?\n$/, ''))  // strip trailing newlines
+      .filter(Boolean); // remove undefined
 
     res.json({ lines });
   } catch (err) {
-    console.error("Google Doc read error:", err);
-    res.status(500).send("Failed to read Google Doc");
+    console.error("Google Doc read error:", err.message);
+    res.status(500).json({ error: 'Failed to read Google Doc', details: err.message });
   }
 });
 

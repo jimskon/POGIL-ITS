@@ -5,6 +5,7 @@ import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
 
 export default function ManageCoursesPage() {
+  console.log("ManageCoursesPage rendered!!!");
   const { user } = useUser();
   const navigate = useNavigate();
   const [courses, setCourses] = useState([]);
@@ -16,9 +17,22 @@ export default function ManageCoursesPage() {
     year: new Date().getFullYear(),
     class_id: ''
   });
-  const [classList, setClassList] = useState([]);
+    const [classList, setClassList] = useState([]);
+ 
+ useEffect(() => {
+     console.log("ManageCoursesPage useEffect: user =", user);
+     if (!user) return;  // Wait for user context to load
 
-  const canManage = user?.role === 'root' || user?.role === 'creator';
+     const canManage = user?.role === 'root' || user?.role === 'creator'; // Move inside useEffect
+  
+     if (!canManage) {
+	 navigate('/dashboard');
+     } else {
+	 fetchCourses();
+     }
+ }, [user]);
+    
+  //const canManage = user?.role === 'root' || user?.role === 'creator';
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/classes`)
@@ -27,12 +41,8 @@ export default function ManageCoursesPage() {
       .catch(err => console.error("Failed to fetch classes:", err));
   }, []);
 
-  useEffect(() => {
-    if (!canManage) navigate('/dashboard');
-    else fetchCourses();
-  }, []);
-
   const fetchCourses = async () => {
+      console.log("fetchCourses!!!");
     try {
       const res = await fetch(`${API_BASE_URL}/api/courses`);
       if (!res.ok) {
@@ -40,7 +50,8 @@ export default function ManageCoursesPage() {
       }
 
       const data = await res.json();
-      if (!Array.isArray(data)) {
+	console.log("fetchCourses:", data);
+	if (!Array.isArray(data)) {
         console.error("❌ Expected array but got:", data);
         setCourses([]); // fallback
       } else {
@@ -57,6 +68,11 @@ export default function ManageCoursesPage() {
   };
 
   const handleAddCourse = async () => {
+  if (!newCourse.name || !newCourse.code || !newCourse.section || !newCourse.semester || !newCourse.year) {
+    alert('Please fill in all course details.');
+    return;
+  }
+      console.log("Add course:",newCourse.name,newCourse.code,newCourse.section,newCourse.semester,newCourse.year);
     const body = { ...newCourse, instructor_id: user.id };
     await fetch(`${API_BASE_URL}/api/courses`, {
       method: 'POST',
@@ -97,7 +113,7 @@ export default function ManageCoursesPage() {
               <td>{course.section}</td>
               <td>{course.semester}</td>
               <td>{course.year}</td>
-              <td>{course.instructor_id}</td>
+              <td>{course.instructor_name}</td>
               <td>{course.class_name || '—'}</td>
               <td>
                 <Button size="sm" variant="danger" onClick={() => handleDelete(course.id)}>Delete</Button>

@@ -16,7 +16,7 @@ exports.createActivity = async (req, res) => {
 	  name,
 	  title,
 	  sheet_url,
-	  created_by: createdBy
+	  createdBy
       });
   } catch (err) {
     console.error('Create activity error:', err);
@@ -41,7 +41,7 @@ exports.launchActivityInstance = async (req, res) => {
       'INSERT INTO activity_instances (activity_name, course_id, start_time, group_number) VALUES (?, ?, NOW(), ?)',
       [req.params.name, courseId, groupNumber]
     );
-    res.status(201).json({ message: 'Activity instance launched.' });
+    return res.status(201).json({ message: 'Activity instance launched.' });
   } catch (err) {
     res.status(500).json({ error: 'Launch failed.' });
   }

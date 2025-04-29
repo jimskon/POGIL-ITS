@@ -1,10 +1,18 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Form, Button } from 'react-bootstrap';
+import Prism from 'prismjs';
 
 export default function ActivityPythonBlock({ code, blockIndex }) {
   const [isEditing, setIsEditing] = useState(false);
   const outputId = `sk-output-${blockIndex}`;
   const codeId = `sk-code-${blockIndex}`;
+  const codeRef = useRef(null); // Add a ref to <code>
+
+  useEffect(() => {
+    if (!isEditing && codeRef.current) {
+      Prism.highlightElement(codeRef.current); // Highlight when shown
+    }
+  }, [isEditing]);
 
   const runPython = () => {
     const userCode = document.getElementById(codeId)?.value || code;
@@ -61,7 +69,11 @@ export default function ActivityPythonBlock({ code, blockIndex }) {
         />
       ) : (
         <pre className="mt-2">
-          <code id={codeId} className="language-python">
+          <code
+            id={codeId}
+            ref={codeRef}
+            className="language-python"
+          >
             {code}
           </code>
         </pre>

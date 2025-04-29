@@ -5,7 +5,7 @@ import { Container, Table, Button, Spinner } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
 
 export default function CourseActivitiesPage() {
-  const { classId } = useParams();
+  const { courseId } = useParams();
   const navigate = useNavigate();
   const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -14,7 +14,7 @@ export default function CourseActivitiesPage() {
   useEffect(() => {
     const fetchActivities = async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/activities`);
+        const res = await fetch(`${API_BASE_URL}/api/courses/${classId}/activities`);
         const data = await res.json();
         setActivities(data);
       } catch (err) {
@@ -57,7 +57,7 @@ export default function CourseActivitiesPage() {
                 <td>
                   <Button
                     variant="success"
-		      onClick={() => navigate(`/do-activity/${classId}/${activity.name}`)}
+		      onClick={() => navigate(`/do-activity/${courseId}/${activity.activity_id}`)}
                   >
                     Start
                   </Button>

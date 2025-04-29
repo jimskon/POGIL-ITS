@@ -41,17 +41,19 @@ export default function ActivityPreview() {
     loadSkulpt();
   }, []);
 
-  useEffect(() => {
-    if (sheetData.length > 0) Prism.highlightAll();
-  }, [sheetData]);
+useEffect(() => {
+  if (sheetData.length > 0) Prism.highlightAll();
+}, [sheetData]);
 
   useEffect(() => {
     const fetchActivityAndSheet = async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/api/activities/${activityName}`);
-        const activityData = await res.json();
+          const activityData = (await res.json())[0];
+	console.log("✅ Loaded activityData:", activityData);
+  
         setActivity(activityData);
-
+	  console.log("URL!!!!:",activityData.name,activityData.sheet_url);
         const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activityData.sheet_url)}`);
         const { lines } = await docRes.json();
         setSheetData(lines);
@@ -81,6 +83,9 @@ export default function ActivityPreview() {
     let currentField = 'text';
     let pythonBlock = null;
     let pythonBlockIndex = 0;
+    let inList = false;
+    let listType = null;
+    let listItems = [];
 
     const formatText = (text) =>
       text.replace(/\\textit\{([^}]+)\}/g, '<em>$1</em>')
@@ -117,14 +122,20 @@ export default function ActivityPreview() {
       const trimmed = line.trim();
 
       // --- Environment blocks ---
-      if (currentEnv) {
-        if (trimmed === `\\end{${currentEnv}}`) {
-          finalizeEnvironment();
-        } else {
-          envBuffer.push(trimmed);
-        }
-        return;
-      }
+if (currentEnv) {
+  if (trimmed === `\\end{${currentEnv}}`) {
+    finalizeEnvironment();
+  } else if (trimmed === '\\begin{itemize}' || trimmed === '\\begin{enumerate}') {
+    envBuffer.push(`<${trimmed.includes('itemize') ? 'ul' : 'ol'}>`);
+  } else if (trimmed === '\\end{itemize}' || trimmed === '\\end{enumerate}') {
+    envBuffer.push(`</${trimmed.includes('itemize') ? 'ul' : 'ol'}>`);
+  } else if (trimmed.startsWith('\\item')) {
+    envBuffer.push(`<li>${formatText(trimmed.replace(/^\\item\s*/, ''))}</li>`);
+  } else {
+    envBuffer.push(trimmed);
+  }
+  return;
+}
 
       // --- Start new environment ---
       const envMatch = trimmed.match(/^\\begin\{(content|process|knowledge)\}$/);
@@ -184,6 +195,31 @@ export default function ActivityPreview() {
         finalizeQuestion();
         return;
       }
+// Handle itemize/enumerate blocks
+if (trimmed === '\\begin{itemize}' || trimmed === '\\begin{enumerate}') {
+  inList = true;
+  listType = trimmed.includes('itemize') ? 'ul' : 'ol';
+  listItems = [];
+  return;
+}
+
+if (trimmed === '\\end{itemize}' || trimmed === '\\end{enumerate}') {
+  const Tag = listType;
+  blocks.push(
+    <Tag key={`list-${blocks.length}`}>
+      {listItems.map((item, i) => <li key={i} dangerouslySetInnerHTML={{ __html: formatText(item) }} />)}
+    </Tag>
+  );
+  inList = false;
+  listType = null;
+  listItems = [];
+  return;
+}
+
+if (inList && trimmed.startsWith('\\item')) {
+  listItems.push(trimmed.replace(/^\\item\s*/, ''));
+  return;
+}
 
       if (currentQuestion) {
         if (currentField === 'text') {
