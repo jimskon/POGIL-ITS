@@ -14,7 +14,7 @@ export default function LoginPage() {
     e.preventDefault();
     setError('');
     try {
-      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/auth/login`, {
+      const res = await fetch(`${import.meta.env.VITE_API_BASE_URL}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password })

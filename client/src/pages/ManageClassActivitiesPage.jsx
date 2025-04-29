@@ -10,7 +10,7 @@ export default function ManageClassActivitiesPage() {
   const [newActivity, setNewActivity] = useState({ name: '', title: '', sheet_url: '' });
 
   useEffect(() => {
-    fetch(`/activities/by-class/${classId}`)
+    fetch(`/api/activities/by-class/${classId}`)
       .then(res => res.json())
       .then(data => setActivities(data));
   }, [classId]);
@@ -20,7 +20,7 @@ export default function ManageClassActivitiesPage() {
   };
 
   const handleAdd = async () => {
-    const res = await fetch('/activities', {
+    const res = await fetch('/api/activities', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...newActivity, createdBy: user.id, class_id: classId })
@@ -31,7 +31,7 @@ export default function ManageClassActivitiesPage() {
   };
 
   const handleUpdate = async (activity) => {
-    const res = await fetch(`/activities/${activity.name}`, {
+    const res = await fetch(`/api/activities/${activity.name}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(activity)
@@ -41,7 +41,7 @@ export default function ManageClassActivitiesPage() {
   };
 
   const handleDelete = async (name) => {
-    await fetch(`/activities/${name}`, { method: 'DELETE' });
+    await fetch(`/api/activities/${name}`, { method: 'DELETE' });
     setActivities(activities.filter(a => a.name !== name));
   };
 

@@ -21,7 +21,7 @@ export default function ManageCoursesPage() {
   const canManage = user?.role === 'root' || user?.role === 'creator';
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/classes`)
+    fetch(`${API_BASE_URL}/api/classes`)
       .then(res => res.json())
       .then((rows) => setClassList(rows))
       .catch(err => console.error("Failed to fetch classes:", err));
@@ -34,7 +34,7 @@ export default function ManageCoursesPage() {
 
   const fetchCourses = async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/courses`);
+      const res = await fetch(`${API_BASE_URL}/api/courses`);
       if (!res.ok) {
         throw new Error(`HTTP error ${res.status}`);
       }
@@ -58,7 +58,7 @@ export default function ManageCoursesPage() {
 
   const handleAddCourse = async () => {
     const body = { ...newCourse, instructor_id: user.id };
-    await fetch(`${API_BASE_URL}/courses`, {
+    await fetch(`${API_BASE_URL}/api/courses`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
@@ -68,7 +68,7 @@ export default function ManageCoursesPage() {
   };
 
   const handleDelete = async (id) => {
-    await fetch(`${API_BASE_URL}/courses/${id}`, { method: 'DELETE' });
+    await fetch(`${API_BASE_URL}/api/courses/${id}`, { method: 'DELETE' });
     fetchCourses();
   };
 

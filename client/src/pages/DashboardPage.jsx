@@ -18,7 +18,7 @@ export default function DashboardPage() {
 
     const fetchEnrollments = async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/classes/user/${user.id}/enrollments`);
+        const res = await fetch(`${API_BASE_URL}/api/classes/user/${user.id}/enrollments`);
         const data = await res.json();
         setEnrolledClasses(data);
       } catch (err) {
@@ -34,7 +34,7 @@ export default function DashboardPage() {
     setError('');
     setSuccess('');
     try {
-      const res = await fetch(`${API_BASE_URL}/classes/enroll-by-code`, {
+      const res = await fetch(`${API_BASE_URL}/api/classes/enroll-by-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: user.id, code: courseCode })

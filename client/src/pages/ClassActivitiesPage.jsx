@@ -21,7 +21,7 @@ export default function ClassActivitiesPage() {
     if (!user || (user.role !== 'root' && user.role !== 'creator')) {
       navigate('/dashboard');
     } else {
-      fetch(`${API_BASE_URL}/classes/${classId}/activities`)
+      fetch(`${API_BASE_URL}/api/classes/${classId}/activities`)
         .then(res => res.json())
         .then(setActivities);
     }
@@ -39,7 +39,7 @@ console.log("Sending activity to backend:", {
   order_index: parseInt(newActivity.order_index) || 0,
   createdBy: user.id
 });
-    const res = await fetch(`${API_BASE_URL}/classes/${classId}/activities`, {
+    const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/activities`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -54,7 +54,7 @@ console.log("Sending activity to backend:", {
   };
 
   const handleUpdate = async (activity) => {
-    const res = await fetch(`${API_BASE_URL}/classes/${classId}/activities/${activity.name}`, {
+    const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/activities/${activity.name}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(activity)
@@ -64,7 +64,7 @@ console.log("Sending activity to backend:", {
   };
 
   const handleDelete = async (name) => {
-    await fetch(`${API_BASE_URL}/classes/${classId}/activities/${name}`, { method: 'DELETE' });
+    await fetch(`${API_BASE_URL}/api/classes/${classId}/activities/${name}`, { method: 'DELETE' });
     setActivities(activities.filter(a => a.name !== name));
   };
 

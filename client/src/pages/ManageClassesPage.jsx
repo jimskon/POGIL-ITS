@@ -15,7 +15,7 @@ export default function ManageClassesPage() {
     if (!user || (user.role !== 'root' && user.role !== 'creator')) {
       navigate('/dashboard');
     } else {
-      fetch(`${API_BASE_URL}/classes`)
+      fetch(`${API_BASE_URL}/api/classes`)
         .then(res => res.json())
         .then(data => setClasses(data));
     }
@@ -26,7 +26,7 @@ export default function ManageClassesPage() {
   };
 
   const handleAdd = async () => {
-    const res = await fetch(`${API_BASE_URL}/classes`, {
+    const res = await fetch(`${API_BASE_URL}/api/classes`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...newClass, createdBy: user.id })
@@ -37,7 +37,7 @@ export default function ManageClassesPage() {
   };
 
   const handleDelete = async (id) => {
-    await fetch(`${API_BASE_URL}/classes/${id}`, { method: 'DELETE' });
+    await fetch(`${API_BASE_URL}/api/classes/${id}`, { method: 'DELETE' });
     setClasses(classes.filter(c => c.id !== id));
   };
 
@@ -48,7 +48,7 @@ export default function ManageClassesPage() {
   };
 
   const handleUpdate = async (updatedClass) => {
-    const res = await fetch(`${API_BASE_URL}/classes/${updatedClass.id}`, {
+    const res = await fetch(`${API_BASE_URL}/api/classes/${updatedClass.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updatedClass)

@@ -180,3 +180,16 @@ exports.enrollByCode = async function enrollByCode(req, res) {
 };
 
 
+exports.getClassById = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const [rows] = await db.query('SELECT * FROM pogil_classes WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Class not found' });
+    }
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("Error fetching class:", err);
+    res.status(500).json({ error: 'Database error' });
+  }
+};

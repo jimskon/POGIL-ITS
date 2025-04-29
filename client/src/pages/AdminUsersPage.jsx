@@ -15,7 +15,7 @@ export default function AdminUsersPage() {
     if (user?.role !== 'root') {
       navigate('/dashboard');
     } else {
-	fetch(`${API_BASE_URL}/users/admin/users`)
+	fetch(`${API_BASE_URL}/api/users/admin/users`)
 	    .then(res => res.json())
 	    .then(data => {
 		console.log(" Fetched users:", data);
@@ -27,7 +27,7 @@ export default function AdminUsersPage() {
   }, [user, navigate]);
 
   const handleRoleChange = async (id, newRole) => {
-    const res = await fetch(`${API_BASE_URL}/users/admin/users/${id}/role`, {
+    const res = await fetch(`${API_BASE_URL}/api/users/admin/users/${id}/role`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role: newRole })

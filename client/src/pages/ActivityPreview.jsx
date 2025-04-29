@@ -51,11 +51,11 @@ export default function ActivityPreview() {
   useEffect(() => {
     const fetchActivityAndSheet = async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/activities/${activityName}`);
+        const res = await fetch(`${API_BASE_URL}/api/activities/${activityName}`);
         const activityData = await res.json();
         setActivity(activityData);
 
-        const docRes = await fetch(`${API_BASE_URL}/activities/preview-doc?docUrl=${encodeURIComponent(activityData.sheet_url)}`);
+        const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activityData.sheet_url)}`);
         const { lines } = await docRes.json();
         setSheetData(lines);
       } catch (err) {

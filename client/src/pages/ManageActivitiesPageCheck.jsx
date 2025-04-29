@@ -29,7 +29,7 @@ export default function ManageActivitiesPage() {
       return;
     }
 
-    fetch(`${API_BASE_URL}/classes/${classId}/activities`)
+    fetch(`${API_BASE_URL}/api/classes/${classId}/activities`)
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) {
@@ -63,7 +63,7 @@ export default function ManageActivitiesPage() {
       createdBy: user?.id
     };
 
-    const res = await fetch(`${API_BASE_URL}/classes/${classId}/activities`, {
+    const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/activities`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -86,7 +86,7 @@ export default function ManageActivitiesPage() {
     }
 
     try {
-      const res = await fetch(`${API_BASE_URL}/activities/check-access?url=${encodeURIComponent(pendingActivity.sheet_url)}`);
+      const res = await fetch(`${API_BASE_URL}/api/activities/check-access?url=${encodeURIComponent(pendingActivity.sheet_url)}`);
 
       let result = { access: false };
       if (res.ok) {
@@ -112,7 +112,7 @@ export default function ManageActivitiesPage() {
   };
 
   const handleDelete = async (name) => {
-    const res = await fetch(`${API_BASE_URL}/classes/${classId}/activities/${name}`, {
+    const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/activities/${name}`, {
       method: 'DELETE'
     });
 
@@ -130,7 +130,7 @@ export default function ManageActivitiesPage() {
       order_index: parseInt(activity.order_index, 10)
     };
 
-    const res = await fetch(`${API_BASE_URL}/classes/${classId}/activities/${activity.name}`, {
+    const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/activities/${activity.name}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
