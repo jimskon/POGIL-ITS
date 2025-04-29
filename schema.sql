@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS activity_instances (
     course_id INT,
     group_number INT,
     start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (activity_name) REFERENCES pogol_activities(name)
+    status ENUM('in_progress', 'completed') DEFAULT 'in_progress',
+    FOREIGN KEY (activity_name) REFERENCES pogil_activities(name),
+    FOREIGN KEY (course_id) REFERENCES courses(id)
 );
 
 -- Group roles per activity instance
