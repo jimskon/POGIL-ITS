@@ -1,68 +1,88 @@
 const db = require('../db');
 
+// Create a new activity
 exports.createActivity = async (req, res) => {
-  const { name, title, sheet_url, createdBy } = req.body;
-  console.log("Add activity: ",req.body);
-  if (!name || !title || !sheet_url) {
-    return res.status(400).json({ error: 'All fields are required' });
+  const { name, title, sheet_url, createdBy, class_id, order_index = 0 } = req.body;
+  console.log("Add activity:", req.body);
+
+  if (!name || !title || !sheet_url || !class_id || !createdBy) {
+    return res.status(400).json({ error: 'Missing required fields' });
   }
-  console.log("Add activity: ",name,title,sheet_url);
+
   try {
     await db.query(
-      'INSERT INTO pogol_activities (name, title, sheet_url, created_by) VALUES (?, ?, ?, ?)',
-      [name, title, sheet_url, createdBy]
+      `INSERT INTO pogil_activities 
+        (name, title, sheet_url, created_by, class_id, order_index) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [name, title, sheet_url, createdBy, class_id, order_index]
     );
-      res.status(201).json({
-	  name,
-	  title,
-	  sheet_url,
-	  createdBy
-      });
+
+    res.status(201).json({
+      name,
+      title,
+      sheet_url,
+      createdBy,
+      class_id,
+      order_index
+    });
   } catch (err) {
     console.error('Create activity error:', err);
     res.status(500).json({ error: 'Error creating activity.' });
   }
 };
 
+// Get a specific activity by ID
 exports.getActivity = async (req, res) => {
-  const { name } = req.params;
+  const { id } = req.params;
   try {
-    const [activity] = await db.query('SELECT * FROM pogol_activities WHERE name = ?', [name]);
-    res.json(activity);
+    const [rows] = await db.query('SELECT * FROM pogil_activities WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ error: 'Activity not found' });
+    }
+    res.json({ ...rows[0] }); // ✅ flatten the single result into an object
   } catch (err) {
     res.status(500).json({ error: 'Could not retrieve activity.' });
   }
 };
 
+// Launch a new activity instance by activity ID
 exports.launchActivityInstance = async (req, res) => {
   const { courseId, groupNumber } = req.body;
+  const activityId = req.params.id;
+
   try {
     await db.query(
-      'INSERT INTO activity_instances (activity_name, course_id, start_time, group_number) VALUES (?, ?, NOW(), ?)',
-      [req.params.name, courseId, groupNumber]
+      `INSERT INTO activity_instances 
+        (activity_id, course_id, start_time, group_number) 
+       VALUES (?, ?, NOW(), ?)`,
+      [activityId, courseId, groupNumber]
     );
+
     return res.status(201).json({ message: 'Activity instance launched.' });
   } catch (err) {
+    console.error('Launch error:', err);
     res.status(500).json({ error: 'Launch failed.' });
   }
 };
 
-
+// Get all activities
 exports.getAllActivities = async (req, res) => {
   try {
-    const activities = await db.query('SELECT * FROM pogol_activities');
-    res.json(activities); // make sure this is a plain array
+    const activities = await db.query('SELECT * FROM pogil_activities');
+    res.json(activities);
   } catch (err) {
     console.error('Error fetching activities:', err);
     res.status(500).json({ error: 'Could not retrieve activities.' });
   }
 };
 
+// Delete an activity by ID
 exports.deleteActivity = async (req, res) => {
-  const { name } = req.params;
-  console.log("Deleting activity:", name);
+  const { id } = req.params;
+  console.log("Deleting activity ID:", id);
+
   try {
-    await db.query('DELETE FROM pogol_activities WHERE name = ?', [name]);
+    await db.query('DELETE FROM pogil_activities WHERE id = ?', [id]);
     res.json({ message: 'Activity deleted.' });
   } catch (err) {
     console.error('Delete error:', err);

@@ -54,10 +54,10 @@ exports.getActivitiesByClass = async (req, res) => {
   const { id } = req.params;
   try {
     const [rows] = await db.query(
-      'SELECT * FROM pogol_activities WHERE class_id = ? ORDER BY order_index',
+      'SELECT * FROM pogil_activities WHERE class_id = ? ORDER BY order_index',
       [id]
     );
-    res.json(toPlain(rows));
+    res.json(rows.map(r => ({ ...r })));
   } catch (err) {
     console.error('Error fetching class activities:', err);
     res.status(500).json({ error: 'Failed to retrieve activities for class.' });

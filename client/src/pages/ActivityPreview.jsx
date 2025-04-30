@@ -13,7 +13,7 @@ import ActivityPythonBlock from '../components/activity/ActivityPythonBlock';
 import { API_BASE_URL } from '../config';
 
 export default function ActivityPreview() {
-  const { activityName } = useParams();
+  const { activityId } = useParams();
   const [activity, setActivity] = useState(null);
   const [sheetData, setSheetData] = useState([]);
 
@@ -42,14 +42,16 @@ export default function ActivityPreview() {
   }, []);
 
 useEffect(() => {
-  if (sheetData.length > 0) Prism.highlightAll();
+  if (Array.isArray(sheetData) && sheetData.length > 0) {
+    Prism.highlightAll();
+  }
 }, [sheetData]);
-
   useEffect(() => {
     const fetchActivityAndSheet = async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/activities/${activityName}`);
-          const activityData = (await res.json())[0];
+	try {
+	    console.log("activityId:",activityId);
+        const res = await fetch(`${API_BASE_URL}/api/activities/${activityId}`);
+          const activityData = await res.json();
 	console.log("✅ Loaded activityData:", activityData);
   
         setActivity(activityData);
@@ -62,7 +64,7 @@ useEffect(() => {
       }
     };
     fetchActivityAndSheet();
-  }, [activityName]);
+  }, [activityId]);
 
   useEffect(() => {
     // Parse the sheet when sheetData changes

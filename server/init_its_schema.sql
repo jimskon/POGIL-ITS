@@ -44,11 +44,11 @@ CREATE TABLE pogol_activities (
 -- Activity instances
 CREATE TABLE activity_instances (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    activity_name VARCHAR(255),
+    activity_id INT,
     course_id INT,
     start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     group_number INT,
-    FOREIGN KEY (activity_name) REFERENCES pogol_activities(name),
+    FOREIGN KEY (activity_id) REFERENCES pogil_activities(id),
     FOREIGN KEY (course_id) REFERENCES courses(id)
 );
 

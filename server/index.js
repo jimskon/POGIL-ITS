@@ -45,7 +45,17 @@ if (fs.existsSync(path.join(staticDir, 'index.html'))) {
 } else {
   console.warn('⚠️  index.html not found in client/dist.');
 }
+// Log and handle unmatched API routes first
+app.use('/api', (req, res, next) => {
+  console.warn(`⚠️ Unknown API route accessed: ${req.method} ${req.originalUrl}`);
+  res.status(404).json({ error: 'API route not found' });
+});
 
+// Let React handle all non-API paths (client-side routing)
+app.all('*', (req, res) => {
+  console.log(`📦 React route hit: ${req.method} ${req.originalUrl}`);
+  res.sendFile(path.resolve(staticDir, 'index.html'));
+});
 
 app.listen(PORT, () => console.log(`ITS server running on port ${PORT}`));
 

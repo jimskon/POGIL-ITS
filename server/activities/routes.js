@@ -110,7 +110,7 @@ router.get('/check-access', async (req, res) => {
 });
 
 // GET /activities/:name
-router.get('/:name', controller.getActivity);
+router.get('/:id', controller.getActivity);
 
 // POST /activities/:name/launch
 router.post('/:name/launch', controller.launchActivityInstance);

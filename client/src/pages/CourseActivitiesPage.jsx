@@ -1,8 +1,10 @@
 // src/pages/CourseActivitiesPage.jsx
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Container, Table, Button, Spinner } from 'react-bootstrap';
+import { Container, Table, Button, Spinner, Alert } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
+
+console.log("📘 CourseActivitiesPage mounted");
 
 export default function CourseActivitiesPage() {
   const { courseId } = useParams();
@@ -12,13 +14,20 @@ export default function CourseActivitiesPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    console.log("📘 Fetching activities for courseId:", courseId);
     const fetchActivities = async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/courses/${classId}/activities`);
+        const res = await fetch(`${API_BASE_URL}/api/courses/${courseId}/activities`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        setActivities(data);
+        if (!Array.isArray(data)) {
+          console.error("Expected array, got:", data);
+          setActivities([]);
+        } else {
+          setActivities(data);
+        }
       } catch (err) {
-        console.error('Failed to fetch activities', err);
+        console.error('❌ Failed to fetch activities:', err);
         setError('Unable to load activities.');
       } finally {
         setLoading(false);
@@ -26,10 +35,10 @@ export default function CourseActivitiesPage() {
     };
 
     fetchActivities();
-  }, [classId]);
+  }, [courseId]);
 
-  const handleDoActivity = (activityName) => {
-    navigate(`/do-activity/${classId}/${activity.name}`);
+  const handleDoActivity = (activityId) => {
+    navigate(`/do-activity/${courseId}/${activityId}`);
   };
 
   return (
@@ -39,9 +48,9 @@ export default function CourseActivitiesPage() {
       {loading ? (
         <Spinner animation="border" />
       ) : error ? (
-        <div className="text-danger mt-3">{error}</div>
+        <Alert variant="danger">{error}</Alert>
       ) : activities.length === 0 ? (
-        <p>No activities available for this class.</p>
+        <Alert variant="info">No activities available for this course.</Alert>
       ) : (
         <Table striped bordered hover>
           <thead>
@@ -53,11 +62,11 @@ export default function CourseActivitiesPage() {
           <tbody>
             {activities.map((activity, idx) => (
               <tr key={idx}>
-                <td>{activity.title}</td>
+                <td>{activity.title || activity.activity_name || 'Untitled Activity'}</td>
                 <td>
                   <Button
                     variant="success"
-		      onClick={() => navigate(`/do-activity/${courseId}/${activity.activity_id}`)}
+                    onClick={() => handleDoActivity(activity.activity_id)}
                   >
                     Start
                   </Button>

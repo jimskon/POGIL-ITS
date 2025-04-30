@@ -10,6 +10,7 @@ import ManageClassesPage from '../pages/ManageClassesPage';
 import ActivityPreview from '../pages/ActivityPreview';
 import AdminUsersPage from '../pages/AdminUsersPage';
 import ManageCoursesPage from '../pages/ManageCoursesPage';
+import CourseActivitiesPage from '../pages/CourseActivitiesPage';
 
 function AppRoutes() {
   const { user } = useUser();
@@ -24,9 +25,9 @@ function AppRoutes() {
         <Route path="/manage-classes" element={<ManageClassesPage />} />
         <Route path="/manage-courses" element={<ManageCoursesPage />} />
         <Route path="/class/:id" element={<ManageActivitiesPage />} />
-        <Route path="/preview/:activityName" element={<ActivityPreview />} />
+        <Route path="/preview/:activityId" element={<ActivityPreview />} />
 	<Route path="/admin/users" element={<AdminUsersPage />} />
-  
+        <Route path="/courses/:courseId/activities" element={<CourseActivitiesPage />} />  
       </Routes>
     </>
   );

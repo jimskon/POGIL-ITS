@@ -239,7 +239,7 @@ export default function ManageActivitiesPage() {
                   if (!activity.sheet_url) {
                     alert("No document URL specified for this activity.");
                   } else {
-                    navigate(`/preview/${activity.name}`);
+                    navigate(`/preview/${activity.id}`);
                   }
                 }} className="me-2">Preview</Button>
                 <Button variant="danger" size="sm" onClick={() => handleDelete(activity.name)}>Delete</Button>

@@ -57,16 +57,16 @@ async function getCourseActivities(req, res) {
       `SELECT 
           a.id AS activity_id,
           a.name AS activity_name,
-          a.activity_index AS activity_index,
+          a.order_index AS activity_index,
           ai.id AS instance_id,
           ai.status
         FROM pogil_activities a
         LEFT JOIN activity_instances ai
-          ON ai.activity_name = a.name
+          ON ai.activity_id = a.id
           AND ai.course_id = ?
           AND ai.group_number = ?
         WHERE a.course_id = ?
-        ORDER BY a.activity_index ASC`,
+        ORDER BY a.order_index ASC`,
       [courseId, studentId, courseId]
     );
     
