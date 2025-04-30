@@ -49,31 +49,39 @@ async function deleteCourse(req, res) {
 
 // GET activities for a course, with student instance info
 async function getCourseActivities(req, res) {
-  const { courseId } = req.params;
-  const studentId = req.session.userId; // Assumes userId is in session
-
+    const { courseId } = req.params;
+    console.log("🔍 courseId param:", courseId);
   try {
-    const [activities] = await db.query(
-      `SELECT 
-          a.id AS activity_id,
-          a.name AS activity_name,
-          a.order_index AS activity_index,
-          ai.id AS instance_id,
-          ai.status
-        FROM pogil_activities a
-        LEFT JOIN activity_instances ai
-          ON ai.activity_id = a.id
-          AND ai.course_id = ?
-          AND ai.group_number = ?
-        WHERE a.course_id = ?
-        ORDER BY a.order_index ASC`,
-      [courseId, studentId, courseId]
-    );
-    
-    res.json(activities.map(activity => ({ ...activity }))); // ✅ Flatten activities too
+  const [activities] = await db.query(`
+  SELECT a.id AS activity_id, a.name AS activity_name, a.order_index AS activity_index
+  FROM pogil_activities a
+  WHERE a.class_id = (
+    SELECT class_id FROM courses WHERE id = ?
+  )
+  ORDER BY a.order_index ASC;
+`, [courseId]);
+/*const [activities] = await db.query(`
+  SELECT 
+    a.id AS activity_id,
+    a.name AS activity_name,
+    a.order_index AS activity_index,
+    ai.id AS instance_id,
+    ai.status
+  FROM pogil_activities a
+  JOIN courses c ON a.class_id = c.class_id
+  LEFT JOIN activity_instances ai
+    ON ai.activity_id = a.id
+    AND ai.course_id = ?
+    AND ai.group_number IS NULL
+  WHERE c.id = ?
+  ORDER BY a.order_index ASC;
+`, [courseId, courseId]);*/
+
+
+    res.json(activities);
   } catch (err) {
-    console.error('Error fetching activities for course:', err);
-    res.status(500).json({ error: 'Failed to load course activities' });
+    console.error("Error fetching activities for course:", err);
+    res.status(500).json({ error: "Failed to fetch activities" });
   }
 }
 

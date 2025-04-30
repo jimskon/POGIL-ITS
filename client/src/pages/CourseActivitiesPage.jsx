@@ -37,6 +37,10 @@ export default function CourseActivitiesPage() {
     fetchActivities();
   }, [courseId]);
 
+useEffect(() => {
+  console.log("Fetched activities:", activities);
+}, [activities]);
+
   const handleDoActivity = (activityId) => {
     navigate(`/do-activity/${courseId}/${activityId}`);
   };
