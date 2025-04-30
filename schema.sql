@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS activity_instances (
 -- Group roles per activity instance
 CREATE TABLE IF NOT EXISTS activity_groups (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    activity_instance_id INT,
+    activity_instance_id INT UNIQUE, -- Enforces 1 group per instance
     facilitator_name TEXT NOT NULL,
     facilitator_email TEXT NOT NULL,
     spokesperson_name TEXT NOT NULL,
