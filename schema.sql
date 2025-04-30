@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS courses (
     class_id INT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (instructor_id) REFERENCES users(id),
-    FOREIGN KEY (class_id) REFERENCES pogil_classes(id) ON DELETE SET NULL
+    FOREIGN KEY (class_id) REFERENCES pogil_classes(id) ON DELETE SET NULL,
+    UNIQUE KEY unique_course_key (code, section, semester, year)
 );
 
 -- Course enrollments
