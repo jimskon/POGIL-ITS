@@ -36,6 +36,22 @@ async function createCourse(req, res) {
   }
 }
 
+async function getCourseEnrollments(req, res) {
+  const { courseId } = req.params;
+  try {
+    const [rows] = await db.query(`
+      SELECT u.id, u.name, u.email
+      FROM course_enrollments ce
+      JOIN users u ON ce.student_id = u.id
+      WHERE ce.course_id = ?
+    `, [courseId]);
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ Failed to get enrollments:", err);
+    res.status(500).json({ error: "Failed to retrieve enrollments" });
+  }
+}
+
 // DELETE a course
 async function deleteCourse(req, res) {
   try {
@@ -165,5 +181,6 @@ module.exports = {
   deleteCourse,
   getCourseActivities,
   getUserEnrollments,
-  enrollByCode
+  enrollByCode,
+  getCourseEnrollments
 };

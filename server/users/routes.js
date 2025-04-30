@@ -7,7 +7,7 @@ const db = require('../db'); // Adjust path if needed
 router.get('/admin/users', async (req, res) => {
   console.log("✅ /admin/users route hit");
   try {
-    const users = await db.query('SELECT id, email, name, role FROM users'); // ✅ correct query
+    const [users] = await db.query('SELECT id, email, name, role FROM users'); // ✅ correct query
 
     console.log("✅ Users fetched:", users);
     res.json(users); // directly send the array

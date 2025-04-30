@@ -19,7 +19,7 @@ export default function AdminUsersPage() {
 	    .then(res => res.json())
 	    .then(data => {
 		console.log(" Fetched users:", data);
-		setUsers(data.rows || data);
+		setUsers(Array.isArray(data) ? data : []);
 	    })
 	    .catch(err => console.error("❌ Failed to fetch users", err));
 	

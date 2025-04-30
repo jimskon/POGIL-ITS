@@ -23,6 +23,7 @@ console.log('Resolved staticDir:', staticDir);
 app.use(express.static(staticDir));
 
 // API routes
+
 // API routes (all now under /api)
 app.use('/api/auth', require('./auth/routes'));
 app.use('/api/users', require('./users/routes'));
@@ -32,10 +33,10 @@ app.use('/api/groups', require('./groups/routes'));
 app.use('/api/responses', require('./responses/routes'));
 app.use('/api/events', require('./events/routes'));
 app.use('/api/classes', require('./classes/routes'));
+app.use('/api/activity-instances', require('./activity_instances/routes'));
 
 
 // Safe React SPA fallback
-console.log('Pre front end',staticDir,);
 if (fs.existsSync(path.join(staticDir, 'index.html'))) {
   console.log('Pre get ',staticDir,);
   app.all('*', (req, res) => {
