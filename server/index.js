@@ -35,17 +35,6 @@ app.use('/api/events', require('./events/routes'));
 app.use('/api/classes', require('./classes/routes'));
 app.use('/api/activity-instances', require('./activity_instances/routes'));
 
-
-// Safe React SPA fallback
-if (fs.existsSync(path.join(staticDir, 'index.html'))) {
-  console.log('Pre get ',staticDir,);
-  app.all('*', (req, res) => {
-      console.log('Pre sendFile ',staticDir,);
-      res.sendFile(path.resolve(staticDir, 'index.html'));
-  });
-} else {
-  console.warn('⚠️  index.html not found in client/dist.');
-}
 // Log and handle unmatched API routes first
 app.use('/api', (req, res, next) => {
   console.warn(`⚠️ Unknown API route accessed: ${req.method} ${req.originalUrl}`);

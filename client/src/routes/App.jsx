@@ -12,6 +12,7 @@ import AdminUsersPage from '../pages/AdminUsersPage';
 import ManageCoursesPage from '../pages/ManageCoursesPage';
 import CourseActivitiesPage from '../pages/CourseActivitiesPage';
 import RunActivityPage from '../pages/RunActivityPage';
+import GroupSetupPage from '../pages/GroupSetupPage';
 
 function AppRoutes() {
   const { user } = useUser();
@@ -30,7 +31,9 @@ function AppRoutes() {
 	<Route path="/admin/users" element={<AdminUsersPage />} />
         <Route path="/courses/:courseId/activities" element={<CourseActivitiesPage />} />  
         <Route path="/run/:instanceId" element={<RunActivityPage />} />
-      </Routes>
+        <Route path="/setup-groups/:courseId/:instanceId" element={<GroupSetupPage />} />
+
+     </Routes>
     </>
   );
 }

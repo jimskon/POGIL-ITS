@@ -3,6 +3,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Container, Table, Button, Spinner, Alert } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
+import { useUser } from '../context/UserContext';
 
 console.log("📘 CourseActivitiesPage mounted");
 
@@ -42,7 +43,7 @@ useEffect(() => {
   console.log("Fetched activities:", activities);
 }, [activities]);
 
-const handleDoActivity = async (activity) => {
+const handleDoActivity = async (activity, isInstructor = false) => {
   try {
     console.log("▶️ Starting activity:", activity);
     const res = await fetch(`${API_BASE_URL}/api/activity-instances`, {
@@ -51,14 +52,15 @@ const handleDoActivity = async (activity) => {
       body: JSON.stringify({
         activityName: activity.activity_name || activity.name,
         courseId,
-	userId: user.id,
+        userId: user.id,
         userEmail: user.email
       })
     });
 
     const data = await res.json();
     if (data.instanceId) {
-      navigate(`/run/${data.instanceId}`);
+      const path = isInstructor ? `/setup-groups/${data.instanceId}` : `/run/${data.instanceId}`;
+      navigate(path);
     } else {
       console.warn("⚠️ No instanceId returned:", data);
     }
@@ -89,15 +91,51 @@ const handleDoActivity = async (activity) => {
             {activities.map((activity, idx) => (
               <tr key={idx}>
                 <td>{activity.title || activity.activity_name || 'Untitled Activity'}</td>
-                <td>
-                  <Button
-                    variant="success"
-		    type="button"
-                    onClick={() => handleDoActivity(activity)}
-                  >
-                    Start
-                  </Button>
-                </td>
+<td>
+{user.role === 'student' && activity.is_ready ? (
+  <Button
+    variant="success"
+    type="button"
+    onClick={() => handleDoActivity(activity)}
+  >
+    Start
+  </Button>
+) : (user.role === 'instructor' || user.role === 'root') ? (
+  <Button
+    variant="primary"
+    type="button"
+onClick={async () => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/activity-instances`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        activityName: activity.activity_name || activity.name,
+        courseId,
+        userId: user.id,
+        userEmail: user.email
+      })
+    });
+    const data = await res.json();
+    if (data.instanceId) {
+      navigate(`/setup-groups/${courseId}/${data.instanceId}`);
+
+    } else {
+      console.warn("⚠️ No instanceId returned for setup:", data);
+    }
+  } catch (err) {
+    console.error("❌ Failed to initiate group setup:", err);
+  }
+}}
+
+  >
+    Setup Groups
+  </Button>
+) : (
+  <span>Not available</span>
+)}
+
+</td>		  
               </tr>
             ))}
           </tbody>
