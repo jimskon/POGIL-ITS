@@ -3,7 +3,8 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Container, Form, Button, Row, Col, Alert } from 'react-bootstrap';
 import { useUser } from '../context/UserContext';
-import { API_BASE_URL } from '../config';
+import { API_BASE_URL } from '../config';import { parseSheetHTML } from '../utils/parseSheet';
+
 
 export default function RunActivityPage() {
   const { instanceId } = useParams();
@@ -28,8 +29,12 @@ export default function RunActivityPage() {
 useEffect(() => {
   if (!groupId) return;
   const interval = setInterval(async () => {
-    const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
-    const data = await res.json();
+      const sheetRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/preview-doc`);
+      const data = await sheetRes.json();
+      setActivityContent(data.lines || []);
+
+
+
     setActiveStudentId(data.activeStudentId);
   }, 10000); // every 10s
 
@@ -137,9 +142,11 @@ if (groupData.groups && Array.isArray(groupData.groups)) {
         setStudents(studentsData);
 
         // 3. Load sheet content
-        const sheetRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/preview-doc`);
-        const sheetData = await sheetRes.json();
-        setActivityContent(sheetData.lines || []);
+	const sheetRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/preview-doc`);
+	  const data = await sheetRes.json();
+	  console.log("✅ Parsed lines:", data.lines);
+	  setActivityContent(data.lines || []);
+
       } catch (err) {
         console.error('❌ Failed to load full activity data', err);
         setError('Failed to load activity data.');
@@ -165,9 +172,8 @@ if (groupData.groups && Array.isArray(groupData.groups)) {
         </Alert>
       )}
 
-	{roleAccess && (
+{roleAccess && (
   <div className="mt-4">
-
     {!isReadonly && (
       isActive ? (
         <Alert variant="success">
@@ -180,22 +186,48 @@ if (groupData.groups && Array.isArray(groupData.groups)) {
       )
     )}
 
-    {activityContent.map((line, idx) => (
-      <div key={idx}>
-        <p>{line.text || JSON.stringify(line)}</p>
+    {/* Display first info block */}
+    {activityContent.find(b => b.type === 'info') && (
+      <div className="mb-4">
+        <h5>Introduction</h5>
+        <div
+          dangerouslySetInnerHTML={{
+            __html: activityContent.find(b => b.type === 'info').content
+          }}
+        />
+      </div>
+    )}
 
+    {/* Display first question block */}
+    {activityContent.find(b => b.type === 'question') && (
+      <div className="mb-4">
+        <h5>Question</h5>
+        <div
+          dangerouslySetInnerHTML={{
+            __html: activityContent.find(b => b.type === 'question').content
+          }}
+        />
         {isActive ? (
-          <Button variant="primary" className="mb-3">
-            Submit Response
-          </Button>
+          <Form>
+            <Form.Control
+              as="textarea"
+              rows={4}
+              placeholder="Type your answer..."
+              className="my-2"
+            />
+            <Button variant="primary">Submit Response</Button>
+          </Form>
         ) : (
-          <p className="text-muted"><i>Waiting for your turn...</i></p>
+          <p className="text-muted">
+            <i>Waiting for your turn...</i>
+          </p>
         )}
       </div>
-    ))}
+    )}
   </div>
 )}
 
     </Container>
   );
 }
+

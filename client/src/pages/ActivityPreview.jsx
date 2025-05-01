@@ -4,6 +4,7 @@ import { Container } from 'react-bootstrap';
 import Prism from 'prismjs';
 import 'prismjs/themes/prism.css';
 import 'prismjs/components/prism-python';
+import { parseSheetHTML } from '../utils/parseSheet';
 
 import ActivityHeader from '../components/activity/ActivityHeader';
 import ActivityEnvironment from '../components/activity/ActivityEnvironment';
@@ -20,6 +21,16 @@ export default function ActivityPreview() {
   // State for blocks
   const [elements, setElements] = useState([]);
 
+  useEffect(() => {
+  async function load() {
+    const response = await fetch(`/activities/preview-doc?activityId=${activityId}`);
+    const html = await response.text(); // or .json() if returning html string
+    const parsed = parseSheetHTML(html);
+    setSheetData(parsed);
+  }
+  load();
+  }, []);
+    
   useEffect(() => {
     const loadScript = (src) => new Promise((resolve, reject) => {
       const script = document.createElement('script');
@@ -120,8 +131,12 @@ useEffect(() => {
       }
     };
 
-    sheetData.forEach((line, index) => {
-      const trimmed = line.trim();
+      sheetData.forEach((line, index) => {
+	  if (typeof line !== 'string') {
+	      console.warn('⚠️ Skipping non-string line in parseSheet:', line);
+	      return;
+	  }
+	  const trimmed = line.trim();
 
       // --- Environment blocks ---
 if (currentEnv) {

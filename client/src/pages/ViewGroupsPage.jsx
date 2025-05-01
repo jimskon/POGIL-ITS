@@ -2,6 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Container, Card, Spinner, Alert } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
+import { Link } from 'react-router-dom';
+import { LinkContainer } from 'react-router-bootstrap';
+import { Button } from 'react-bootstrap';
 
 export default function ViewGroupsPage() {
   const { courseId, instanceId } = useParams();
@@ -37,6 +40,9 @@ export default function ViewGroupsPage() {
                   <li key={i}>{m.role}: {m.name}</li>
                 ))}
               </ul>
+		<LinkContainer to={`/run/${instanceId}`}>
+                   <Button variant="primary">View Activity</Button>
+                </LinkContainer>
             </Card.Body>
           </Card>
         ))

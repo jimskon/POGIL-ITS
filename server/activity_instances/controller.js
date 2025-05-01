@@ -1,13 +1,44 @@
 const db = require('../db');
+const fetch = require('node-fetch');
+const { JSDOM } = require('jsdom');
+const { google } = require('googleapis');
 
-// Temporary placeholder parser
-async function parseGoogleSheet(sheetUrl) {
-  return {
-    lines: [
-      { tag: 'roles' },
-      { text: 'This is a placeholder preview from ' + sheetUrl }
-    ]
-  };
+function parseGoogleDocHTML(html) {
+  const dom = new JSDOM(html);
+  const body = dom.window.document.body;
+  const blocks = [];
+
+  let current = null;
+
+  for (const el of body.children) {
+    const text = el.textContent.trim();
+
+    if (text.startsWith('\\question{')) {
+      if (current) blocks.push(current);
+      const id = text.match(/\\question\{(.*?)\}/)?.[1] || `q${blocks.length + 1}`;
+      current = { type: 'question', id, content: '' };
+    } else if (text.startsWith('\\textresponse')) {
+      if (current) blocks.push(current);
+      current = { type: 'textresponse', content: '' };
+    } else if (text.startsWith('\\python')) {
+      if (current) blocks.push(current);
+      current = { type: 'code', language: 'python', content: '' };
+    } else if (text.startsWith('\\feedbackprompt')) {
+      if (current) blocks.push(current);
+      current = { type: 'feedbackprompt', content: '' };
+    } else if (text.startsWith('\\roles')) {
+      if (current) blocks.push(current);
+      current = { type: 'roles', content: '' };
+    } else if (text.startsWith('\\')) {
+      // Skip unknown commands
+    } else {
+      if (!current) current = { type: 'info', content: '' };
+      current.content += el.outerHTML;
+    }
+  }
+
+  if (current) blocks.push(current);
+  return blocks;
 }
 
 exports.createActivityInstance = async (req, res) => {
@@ -368,5 +399,54 @@ exports.getActiveStudent = async (req, res) => {
   } catch (err) {
     console.error("❌ Failed to determine active student:", err);
     res.status(500).json({ error: 'Failed to determine active student' });
+  }
+};
+
+const { authorize } = require('../utils/googleAuth');
+
+exports.getParsedActivityDoc = async (req, res) => {
+  const { instanceId } = req.params;
+
+  try {
+    const [rows] = await db.query(`
+      SELECT a.sheet_url
+      FROM activity_instances ai
+      JOIN pogil_activities a ON ai.activity_id = a.id
+      WHERE ai.id = ?
+    `, [instanceId]);
+
+    if (!rows.length || !rows[0].sheet_url) {
+      return res.status(404).json({ error: 'No sheet_url found' });
+    }
+
+    const sheetUrl = rows[0].sheet_url;
+    const docId = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1];
+    if (!docId) throw new Error('Invalid sheet_url');
+
+    const auth = authorize();
+    const docs = google.docs({ version: 'v1', auth });
+    const doc = await docs.documents.get({ documentId: docId });
+
+    // Build a raw HTML string from the Google Doc
+    const html = doc.data.body.content
+      .map(block => {
+        if (!block.paragraph?.elements) return null;
+
+        const text = block.paragraph.elements
+          .map(e => e.textRun?.content || '')
+          .join('')
+          .trim();
+
+        return text.length > 0 ? `<p>${text}</p>` : null;
+      })
+      .filter(Boolean)
+      .join('\n');
+
+    // Parse it into structured blocks (already defined above)
+    const blocks = parseGoogleDocHTML(html);
+    res.json({ lines: blocks });
+  } catch (err) {
+    console.error("❌ Error parsing activity doc:", err);
+    res.status(500).json({ error: 'Failed to load document' });
   }
 };
