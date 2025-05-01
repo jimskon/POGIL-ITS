@@ -6,7 +6,7 @@ const controller = require('./controller');
 router.post('/', controller.assignRoles);
 
 // Get role info for an activity instance
-router.get('/instance/:id', controller.getGroupByInstance);
+router.get('/instance/:id', controller.getGroupsByInstance);
 
 module.exports = router;
 

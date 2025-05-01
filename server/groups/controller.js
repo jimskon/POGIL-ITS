@@ -49,8 +49,10 @@ exports.assignRoles = async (req, res) => {
   }
 };
 
+
+
 // GET /api/activity-instances/:id/group
-exports.getGroupByInstance = async (req, res) => {
+/*exports.getGroupByInstance = async (req, res) => {
   const { id } = req.params;
 
   try {
@@ -86,6 +88,7 @@ exports.getGroupByInstance = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch group' });
   }
 };
+*/
 // POST /api/activity-instances/:id/setup-groups
 exports.setupGroups = async (req, res) => {
   const { id } = req.params;
@@ -171,5 +174,48 @@ console.log("👥 students fetched:", students);
   } catch (err) {
     console.error("❌ Error fetching students for setup groups:", err.message);
     res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+// GET /api/groups/instance/:id
+exports.getGroupsByInstance = async (req, res) => {
+  const { id: instanceId } = req.params;
+
+  try {
+    const [rows] = await db.query(`
+      SELECT 
+        g.id AS group_id,
+        g.group_number,
+        u.id AS student_id,
+        u.name,
+        gm.role
+      FROM activity_groups g
+      JOIN group_members gm ON gm.activity_group_id = g.id
+      JOIN users u ON gm.student_id = u.id
+      WHERE g.activity_instance_id = ?
+      ORDER BY g.group_number, gm.role
+    `, [instanceId]);
+
+    // Structure the result
+    const grouped = {};
+    for (const row of rows) {
+      const groupNum = row.group_number;
+      if (!grouped[groupNum]) grouped[groupNum] = [];
+      grouped[groupNum].push({
+        student_id: row.student_id,
+        name: row.name,
+        role: row.role
+      });
+    }
+
+    const formatted = Object.entries(grouped).map(([group_number, members]) => ({
+      group_number,
+      members
+    }));
+
+    res.json({ groups: formatted });
+  } catch (err) {
+    console.error("❌ Failed to fetch group view data:", err);
+    res.status(500).json({ error: "Failed to fetch group data" });
   }
 };

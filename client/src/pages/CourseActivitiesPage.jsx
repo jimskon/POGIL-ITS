@@ -91,51 +91,61 @@ const handleDoActivity = async (activity, isInstructor = false) => {
             {activities.map((activity, idx) => (
               <tr key={idx}>
                 <td>{activity.title || activity.activity_name || 'Untitled Activity'}</td>
+
 <td>
-{user.role === 'student' && activity.is_ready ? (
-  <Button
-    variant="success"
-    type="button"
-    onClick={() => handleDoActivity(activity)}
-  >
-    Start
-  </Button>
-) : (user.role === 'instructor' || user.role === 'root') ? (
-  <Button
-    variant="primary"
-    type="button"
-onClick={async () => {
-  try {
-    const res = await fetch(`${API_BASE_URL}/api/activity-instances`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        activityName: activity.activity_name || activity.name,
-        courseId,
-        userId: user.id,
-        userEmail: user.email
-      })
-    });
-    const data = await res.json();
-    if (data.instanceId) {
-      navigate(`/setup-groups/${courseId}/${data.instanceId}`);
+  {user.role === 'student' && activity.is_ready ? (
+    <Button
+      variant="success"
+      type="button"
+      onClick={() => handleDoActivity(activity)}
+    >
+      Start
+    </Button>
+  ) : (user.role === 'instructor' || user.role === 'root') ? (
+    <>
+      <Button
+        variant="primary"
+        className="me-2"
+        onClick={async () => {
+          try {
+            const res = await fetch(`${API_BASE_URL}/api/activity-instances`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                activityName: activity.activity_name || activity.name,
+                courseId,
+                userId: user.id,
+                userEmail: user.email
+              })
+            });
+            const data = await res.json();
+            if (data.instanceId) {
+              navigate(`/setup-groups/${courseId}/${data.instanceId}`);
+            } else {
+              console.warn("⚠️ No instanceId returned for setup:", data);
+            }
+          } catch (err) {
+            console.error("❌ Failed to initiate group setup:", err);
+          }
+        }}
+      >
+        Setup Groups
+      </Button>
 
-    } else {
-      console.warn("⚠️ No instanceId returned for setup:", data);
-    }
-  } catch (err) {
-    console.error("❌ Failed to initiate group setup:", err);
-  }
-}}
+      {activity.instance_id && activity.is_ready && (
+        <Button
+          variant="secondary"
+          onClick={() => navigate(`/view-groups/${courseId}/${activity.instance_id}`)}
+        >
+          View Groups
+        </Button>
+      )}
+    </>
+  ) : (
+    <span>Not available</span>
+  )}
+</td>
 
-  >
-    Setup Groups
-  </Button>
-) : (
-  <span>Not available</span>
-)}
-
-</td>		  
               </tr>
             ))}
           </tbody>
