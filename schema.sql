@@ -131,3 +131,13 @@ CREATE TABLE IF NOT EXISTS event_log (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS activity_heartbeats (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  activity_instance_id INT NOT NULL,
+  user_id INT NOT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  UNIQUE KEY unique_heartbeat (activity_instance_id, user_id)
+);
