@@ -197,23 +197,33 @@ exports.getGroupsByInstance = async (req, res) => {
     `, [instanceId]);
 
     // Structure the result
-    const grouped = {};
-    for (const row of rows) {
-      const groupNum = row.group_number;
-      if (!grouped[groupNum]) grouped[groupNum] = [];
-      grouped[groupNum].push({
-        student_id: row.student_id,
-        name: row.name,
-        role: row.role
-      });
-    }
+const grouped = {};
+for (const row of rows) {
+  const groupNum = row.group_number;
 
-    const formatted = Object.entries(grouped).map(([group_number, members]) => ({
-      group_number,
-      members
-    }));
+  if (!grouped[groupNum]) {
+    grouped[groupNum] = {
+      group_id: row.group_id,
+      members: []
+    };
+  }
 
-    res.json({ groups: formatted });
+  grouped[groupNum].members.push({
+    student_id: row.student_id,
+    name: row.name,
+    role: row.role
+  });
+}
+
+const formatted = Object.entries(grouped).map(([group_number, data]) => ({
+  group_number,
+  group_id: data.group_id,
+  members: data.members
+}));
+
+res.json({ groups: formatted });
+
+
   } catch (err) {
     console.error("❌ Failed to fetch group view data:", err);
     res.status(500).json({ error: "Failed to fetch group data" });

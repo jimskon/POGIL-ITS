@@ -15,17 +15,59 @@ export default function RunActivityPage() {
   const [activityName, setActivityName] = useState('');
   const [activityContent, setActivityContent] = useState([]);
   const [students, setStudents] = useState([]);
-  const [roles, setRoles] = useState({ facilitator: '', spokesperson: '', analyst: '', qc: '' });
   const [groupLoaded, setGroupLoaded] = useState(false);
   const [roleAccess, setRoleAccess] = useState(false);
   const [isReadonly, setIsReadonly] = useState(false);
   const [error, setError] = useState('');
-
-  const allRolesSelected = Object.values(roles).every(Boolean);
+  const [groupId, setGroupId] = useState(null);
+  const [activeStudentId, setActiveStudentId] = useState(null); 
+  const [isActiveStudent, setIsActiveStudent] = useState(false);
 
   const hasRolesTag = Array.isArray(activityContent) && activityContent.some(line => line.tag === 'roles');
 
-  useEffect(() => {
+useEffect(() => {
+  if (!groupId) return;
+  const interval = setInterval(async () => {
+    const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
+    const data = await res.json();
+    setActiveStudentId(data.activeStudentId);
+  }, 10000); // every 10s
+
+  return () => clearInterval(interval);
+}, [groupId, instanceId]);
+
+useEffect(() => {
+  if (!user?.id || !instanceId || !groupId) return;
+
+  const interval = setInterval(() => {
+    fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/heartbeat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user.id, groupId })
+    }).catch(err => console.error("❌ Heartbeat failed:", err));
+  }, 30000); // every 30s
+
+  return () => clearInterval(interval);
+}, [user?.id, instanceId, groupId]);
+
+useEffect(() => {
+  if (!user?.id || !instanceId) return;
+
+  const interval = setInterval(async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/group/${groupId}/active-student`);
+      const data = await res.json();
+      setActiveStudentId(data.activeStudentId);
+      setIsActiveStudent(data.activeStudentId === user.id);
+    } catch (err) {
+      console.error("❌ Failed to fetch active student:", err);
+    }
+  }, 30000); // every 30 seconds
+
+  return () => clearInterval(interval);
+}, [user?.id, instanceId, groupId]);
+
+     useEffect(() => {
     const loadInstance = async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
@@ -39,16 +81,45 @@ export default function RunActivityPage() {
     loadInstance();
   }, [instanceId]);
 
+
+useEffect(() => {
+  if (!groupId) return;
+  const interval = setInterval(async () => {
+    const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
+    const data = await res.json();
+    setActiveStudentId(data.activeStudentId);
+  }, 10000); // every 10s
+
+  return () => clearInterval(interval);
+}, [groupId, instanceId]);
+
   useEffect(() => {
     if (!courseId || !activityName || !user) return;
 
     const fetchData = async () => {
       try {
         // 1. Load group roles
-        const groupRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/group`);
-        const groupData = await groupRes.json();
-        setGroupLoaded(true);
+const groupRes = await fetch(`${API_BASE_URL}/api/groups/instance/${instanceId}`);
+const groupData = await groupRes.json();
+setGroupLoaded(true);
 
+ // Find the student's group
+if (groupData.groups && Array.isArray(groupData.groups)) {
+  for (const group of groupData.groups) {
+    const found = group.members.find(m => m.student_id === user.id);
+    if (found) {
+      console.log("💓 Found groupId:", group.group_id);
+      setGroupId(group.group_id);
+      break;
+    }
+  }
+} else {
+  // For instructor/root, just use first group ID if present
+  if (groupData.groups.length > 0) {
+    setGroupId(groupData.groups[0].group_id);
+  }
+}
+	  
         if (!groupData || !groupData.rolesAssigned) {
           setRoleAccess(true); // no roles yet → allow assignment
         } else {
@@ -78,46 +149,11 @@ export default function RunActivityPage() {
     fetchData();
   }, [courseId, activityName, user, instanceId]);
 
-  const handleAssignRoles = async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/groups`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          activity_instance_id: instanceId,
-          facilitator_id: roles.facilitator,
-          spokesperson_id: roles.spokesperson,
-          analyst_id: roles.analyst,
-          qc_id: roles.qc,
-          facilitator_email: getEmail(roles.facilitator),
-          spokesperson_email: getEmail(roles.spokesperson),
-          analyst_email: getEmail(roles.analyst),
-          qc_email: getEmail(roles.qc)
-        })
-      });
-      if (!res.ok) {
-  if (res.status === 400) {
-    const errorData = await res.json();
-    setError(errorData.error || 'This activity already has assigned roles.');
-  } else {
-    throw new Error('Failed to save roles');
-  }
-  return;
-}
-       setRoleAccess(true);
-    } catch (err) {
-      console.error(err);
-      setError('Failed to assign roles.');
-    }
-  };
 
-  const getEmail = (id) => {
-    const student = students.find(s => s.id.toString() === id.toString());
-    return student?.email || '';
-  };
 
   if (error) return <Alert variant="danger">{error}</Alert>;
   if (!groupLoaded) return <p>Loading activity...</p>;
+  const isActive = user.id === activeStudentId;
 
   return (
     <Container className="mt-4">
@@ -129,38 +165,37 @@ export default function RunActivityPage() {
         </Alert>
       )}
 
-      {roleAccess && hasRolesTag && !isReadonly && (
-        <>
-          <h4>Assign Roles</h4>
-          <Row>
-            {Object.keys(roles).map(role => (
-              <Col md={6} key={role} className="mb-3">
-                <Form.Group>
-                  <Form.Label>{role}</Form.Label>
-                  <Form.Select
-                    value={roles[role]}
-                    onChange={e => setRoles(prev => ({ ...prev, [role]: e.target.value }))}
-                  >
-                    <option value="">-- Select Student --</option>
-                    {students.map(s => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </Form.Select>
-                </Form.Group>
-              </Col>
-            ))}
-          </Row>
-          {allRolesSelected && <Button onClick={handleAssignRoles}>Start Activity</Button>}
-        </>
-      )}
+	{roleAccess && (
+  <div className="mt-4">
 
-      {roleAccess && (
-        <div className="mt-4">
-          {activityContent.map((line, idx) => (
-            <p key={idx}>{line.text || JSON.stringify(line)}</p>
-          ))}
-        </div>
-      )}
+    {!isReadonly && (
+      isActive ? (
+        <Alert variant="success">
+          ✅ You are the active student. You may submit responses.
+        </Alert>
+      ) : (
+        <Alert variant="info">
+          ⏳ You are currently observing. The active student is submitting.
+        </Alert>
+      )
+    )}
+
+    {activityContent.map((line, idx) => (
+      <div key={idx}>
+        <p>{line.text || JSON.stringify(line)}</p>
+
+        {isActive ? (
+          <Button variant="primary" className="mb-3">
+            Submit Response
+          </Button>
+        ) : (
+          <p className="text-muted"><i>Waiting for your turn...</i></p>
+        )}
+      </div>
+    ))}
+  </div>
+)}
+
     </Container>
   );
 }
