@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- Classes Table
 CREATE TABLE IF NOT EXISTS pogil_classes (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(191) UNIQUE NOT NULL, -- e.g., "Intro to Programming"
+    name VARCHAR(191) UNIQUE NOT NULL,
     description TEXT,
     created_by INT,
     FOREIGN KEY (created_by) REFERENCES users(id)
@@ -63,26 +63,29 @@ CREATE TABLE IF NOT EXISTS activity_instances (
     id INT AUTO_INCREMENT PRIMARY KEY,
     activity_id INT,
     course_id INT,
-    group_number INT,
     start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status ENUM('in_progress', 'completed') DEFAULT 'in_progress',
     FOREIGN KEY (activity_id) REFERENCES pogil_activities(id),
     FOREIGN KEY (course_id) REFERENCES courses(id)
 );
 
--- Group roles per activity instance
+-- Activity Groups (1 per group, multiple per instance)
 CREATE TABLE IF NOT EXISTS activity_groups (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    activity_instance_id INT UNIQUE, -- Enforces 1 group per instance
-    facilitator_name TEXT NOT NULL,
-    facilitator_email TEXT NOT NULL,
-    spokesperson_name TEXT NOT NULL,
-    spokesperson_email TEXT NOT NULL,
-    qc_name TEXT,
-    qc_email TEXT,
-    analyst_name TEXT,
-    analyst_email TEXT,
-    FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id)
+    activity_instance_id INT NOT NULL,
+    group_number INT NOT NULL,
+    FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id),
+    UNIQUE(activity_instance_id, group_number)
+);
+
+-- Group Members and Roles (one row per student)
+CREATE TABLE IF NOT EXISTS group_members (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    group_id INT NOT NULL,
+    student_id INT NOT NULL,
+    role ENUM('facilitator', 'spokesperson', 'analyst', 'qc') NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES activity_groups(id),
+    FOREIGN KEY (student_id) REFERENCES users(id)
 );
 
 -- Group responses
