@@ -318,3 +318,7 @@ VITE_SERVICE_ACCOUNT_EMAIL=pogil-sheets-reader@pogil-its.iam.gserviceaccount.com
 ## Service account for access to google docs:
 `server/utils/service-account.json`
 You must get this from Jim Skon
+
+## To get the schma from mysql
+mysqldump -u root -p --no-data --routines --triggers pogil_its > pogil_its_full_schema.sql
+
