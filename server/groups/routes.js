@@ -8,7 +8,5 @@ router.post('/', controller.assignRoles);
 // Get role info for an activity instance
 router.get('/instance/:id', controller.getGroupByInstance);
 
-router.post('/activity-instances/:id/setup-groups', controller.setupGroups);
-
 module.exports = router;
 
