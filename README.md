@@ -121,6 +121,7 @@ npm install mariadb
 npm install googleapis
 npm install mysql2
 npm install react-router-bootstrap
+npm install jsdom
 
 cd ../client
 npm install react-bootstrap bootstrap
