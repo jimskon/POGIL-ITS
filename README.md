@@ -120,6 +120,8 @@ npm install bcrypt
 npm install mariadb
 npm install googleapis
 npm install mysql2
+npm install react-router-bootstrap
+
 cd ../client
 npm install react-bootstrap bootstrap
 npm install prismjs
