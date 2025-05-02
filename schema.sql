@@ -93,12 +93,17 @@ CREATE TABLE IF NOT EXISTS group_members (
 CREATE TABLE IF NOT EXISTS responses (
   id INT AUTO_INCREMENT PRIMARY KEY,
   activity_instance_id INT NOT NULL,
+  group_id INT NOT NULL,
   question_id TEXT NOT NULL,
-  response_type ENUM('text', 'python', 'cpp') NOT NULL,
+  response_type ENUM('text', 'python', 'cpp') NOT NULL DEFAULT 'text',
   response TEXT NOT NULL,
+  answered_by_user_id INT NOT NULL,
   submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  
+  FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE,
+  FOREIGN KEY (group_id) REFERENCES activity_groups(id) ON DELETE CASCADE,
+  FOREIGN KEY (answered_by_user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- AI-generated feedback
