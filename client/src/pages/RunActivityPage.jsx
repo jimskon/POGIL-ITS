@@ -1,9 +1,11 @@
 // Updated RunActivityPage.jsx with access logic and role checks
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Container, Form, Button, Row, Col, Alert } from 'react-bootstrap';
 import { useUser } from '../context/UserContext';
-import { API_BASE_URL } from '../config';import { parseSheetHTML } from '../utils/parseSheet';
+import { API_BASE_URL } from '../config';
+import { parseSheetHTML } from '../utils/parseSheet';
+import { Container, Form, Button, Row, Col, Alert } from 'react-bootstrap';
+import axios from 'axios';
 
 
 export default function RunActivityPage() {
@@ -23,6 +25,10 @@ export default function RunActivityPage() {
   const [groupId, setGroupId] = useState(null);
   const [activeStudentId, setActiveStudentId] = useState(null); 
   const [isActiveStudent, setIsActiveStudent] = useState(false);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [responses, setResponses] = useState({});
+  const [currentAnswer, setCurrentAnswer] = useState('');
+
 
   const hasRolesTag = Array.isArray(activityContent) && activityContent.some(line => line.tag === 'roles');
 
@@ -55,7 +61,7 @@ useEffect(() => {
   return () => clearInterval(interval);
 }, [user?.id, instanceId, groupId]);
 
-useEffect(() => {
+useEffect(() => { 
   if (!user?.id || !instanceId) return;
 
   const interval = setInterval(async () => {
@@ -72,7 +78,7 @@ useEffect(() => {
   return () => clearInterval(interval);
 }, [user?.id, instanceId, groupId]);
 
-     useEffect(() => {
+useEffect(() => {
     const loadInstance = async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
@@ -98,7 +104,7 @@ useEffect(() => {
   return () => clearInterval(interval);
 }, [groupId, instanceId]);
 
-  useEffect(() => {
+useEffect(() => {
     if (!courseId || !activityName || !user) return;
 
     const fetchData = async () => {
@@ -162,6 +168,39 @@ if (groupData.groups && Array.isArray(groupData.groups)) {
   if (!groupLoaded) return <p>Loading activity...</p>;
   const isActive = user.id === activeStudentId;
 
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+  
+    const questionBlock = activityContent.filter(b => b.type === 'question')[currentQuestionIndex];
+    const responsePayload = {
+      instanceId,
+      groupId,
+      questionId: questionBlock.id,
+      responseText: currentAnswer,
+      answeredBy: user.id,
+    };
+  
+    try {
+      await axios.post(`${API_BASE_URL}/api/responses`, responsePayload);
+  
+      setResponses({ ...responses, [questionBlock.id]: currentAnswer });
+      setCurrentAnswer('');
+      setCurrentQuestionIndex(prev => prev + 1);
+  
+      // Backend rotation will occur as part of response handler
+      await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/rotate-active`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groupId }),
+      });
+  
+      await fetchActiveStudent(); // refresh active user
+  
+    } catch (err) {
+      console.error('❌ Error submitting response:', err);
+    }
+  };
+
   return (
     <Container className="mt-4">
       <h2>Run Activity: {activityName}</h2>
@@ -199,35 +238,61 @@ if (groupData.groups && Array.isArray(groupData.groups)) {
     )}
 
     {/* Display first question block */}
-    {activityContent.find(b => b.type === 'question') && (
-      <div className="mb-4">
-        <h5>Question</h5>
-        <div
-          dangerouslySetInnerHTML={{
-            __html: activityContent.find(b => b.type === 'question').content
-          }}
-        />
-        {isActive ? (
-          <Form>
-            <Form.Control
-              as="textarea"
-              rows={4}
-              placeholder="Type your answer..."
-              className="my-2"
-            />
-            <Button variant="primary">Submit Response</Button>
-          </Form>
-        ) : (
-          <p className="text-muted">
-            <i>Waiting for your turn...</i>
-          </p>
-        )}
+{/* Display content up to current question index */}
+{activityContent
+  .slice(0, activityContent.findIndex((b, i) => {
+    const questionCount = activityContent.slice(0, i + 1).filter(b => b.type === 'question').length;
+    return questionCount > currentQuestionIndex;
+  }) + 1)
+  .map((block, idx) => {
+    if (block.type === 'info') {
+      return (
+        <div key={idx} className="mb-3" dangerouslySetInnerHTML={{ __html: block.content }} />
+      );
+    }
+
+    if (block.type === 'question') {
+      const questionIndex = activityContent
+        .slice(0, idx + 1)
+        .filter(b => b.type === 'question')
+        .length - 1;
+
+      return (
+        <div key={block.id} className="mb-4">
+          <h5>Question {questionIndex + 1}</h5>
+          <div dangerouslySetInnerHTML={{ __html: block.content }} />
+
+          {questionIndex === currentQuestionIndex ? (
+            isActive ? (
+              <Form onSubmit={handleSubmit}>
+                <Form.Control
+                  as="textarea"
+                  rows={4}
+                  value={currentAnswer}
+                  onChange={(e) => setCurrentAnswer(e.target.value)}
+                  placeholder="Type your answer..."
+                  className="my-2"
+                />
+                <Button variant="primary" type="submit">Submit Response</Button>
+              </Form>
+            ) : (
+              <p className="text-muted"><i>Waiting for your turn...</i></p>
+            )
+          ) : (
+            <div className="mt-2">
+              <strong>Answer:</strong> {responses[block.id] || <i>(Submitted)</i>}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return null;
+  })}
+
       </div>
     )}
-  </div>
-)}
 
     </Container>
   );
 }
-

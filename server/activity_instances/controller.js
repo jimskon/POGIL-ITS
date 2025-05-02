@@ -2,97 +2,219 @@ const db = require('../db');
 const fetch = require('node-fetch');
 const { JSDOM } = require('jsdom');
 const { google } = require('googleapis');
+const { authorize } = require('../utils/googleAuth');
 
 function parseGoogleDocHTML(html) {
   const dom = new JSDOM(html);
   const body = dom.window.document.body;
   const blocks = [];
 
-  let current = null;
+  let currentEnv = null;
+  let envBuffer = [];
+  let currentQuestion = null;
+  let collectingSamples = false;
+  let collectingFeedback = false;
+  let collectingFollowups = false;
+  let currentField = 'text';
+
+  const formatText = (text) =>
+    text.replace(/\\textit\{([^}]+)\}/g, '<em>$1</em>')
+        .replace(/\\textbf\{([^}]+)\}/g, '<strong>$1</strong>');
+
+  const finalizeEnvironment = () => {
+    if (currentEnv) {
+      blocks.push({
+        type: currentEnv,
+        content: envBuffer.map(formatText)
+      });
+      currentEnv = null;
+      envBuffer = [];
+    }
+  };
+
+  const finalizeQuestion = () => {
+    if (currentQuestion) {
+      blocks.push({ type: 'question', ...currentQuestion });
+      currentQuestion = null;
+    }
+  };
 
   for (const el of body.children) {
     const text = el.textContent.trim();
+    if (!text) continue;
 
-    if (text.startsWith('\\question{')) {
-      if (current) blocks.push(current);
-      const id = text.match(/\\question\{(.*?)\}/)?.[1] || `q${blocks.length + 1}`;
-      current = { type: 'question', id, content: '' };
-    } else if (text.startsWith('\\textresponse')) {
-      if (current) blocks.push(current);
-      current = { type: 'textresponse', content: '' };
-    } else if (text.startsWith('\\python')) {
-      if (current) blocks.push(current);
-      current = { type: 'code', language: 'python', content: '' };
-    } else if (text.startsWith('\\feedbackprompt')) {
-      if (current) blocks.push(current);
-      current = { type: 'feedbackprompt', content: '' };
-    } else if (text.startsWith('\\roles')) {
-      if (current) blocks.push(current);
-      current = { type: 'roles', content: '' };
-    } else if (text.startsWith('\\')) {
-      // Skip unknown commands
-    } else {
-      if (!current) current = { type: 'info', content: '' };
-      current.content += el.outerHTML;
+    const envMatch = text.match(/^\\begin\{(content|process|knowledge)\}$/);
+    if (envMatch) {
+      finalizeEnvironment();
+      currentEnv = envMatch[1];
+      continue;
     }
+
+    if (currentEnv && text === `\\end{${currentEnv}}`) {
+      finalizeEnvironment();
+      continue;
+    }
+
+    if (currentEnv) {
+      if (text.startsWith('\\item')) {
+        envBuffer.push(`<li>${formatText(text.replace(/^\\item\s*/, ''))}</li>`);
+      } else {
+        envBuffer.push(text);
+      }
+      continue;
+    }
+
+    if (text.startsWith('\\title{') || text.startsWith('\\name{') || text.startsWith('\\section{')) {
+      const type = text.match(/^\\(\w+)\{/)[1];
+      const value = text.match(/\\\w+\{(.+?)\}/)?.[1];
+      blocks.push({ type: 'header', field: type, content: value });
+      continue;
+    }
+
+    if (text.startsWith('\\begin{question}')) {
+      finalizeQuestion();
+      const id = text.match(/\\begin\{question\}\{(.+?)\}/)?.[1] || `q${blocks.length + 1}`;
+      currentQuestion = {
+        id,
+        text: '',
+        samples: [],
+        feedback: [],
+        followups: [],
+        responseLines: 1
+      };
+      continue;
+    }
+
+    if (text.startsWith('\\textresponse')) {
+      const match = text.match(/\\textresponse\{.+?,(\d+)\}/);
+      if (match) currentQuestion.responseLines = parseInt(match[1]);
+      continue;
+    }
+
+    if (text === '\\sampleresponses') {
+      collectingSamples = true;
+      currentField = 'samples';
+      continue;
+    }
+    if (text === '\\endsampleresponses') {
+      collectingSamples = false;
+      currentField = 'text';
+      continue;
+    }
+
+    if (text === '\\feedbackprompt') {
+      collectingFeedback = true;
+      currentField = 'feedback';
+      continue;
+    }
+    if (text === '\\endfeedbackprompt') {
+      collectingFeedback = false;
+      currentField = 'text';
+      continue;
+    }
+
+    if (text === '\\followupprompt') {
+      collectingFollowups = true;
+      currentField = 'followups';
+      continue;
+    }
+    if (text === '\\endfollowupprompt') {
+      collectingFollowups = false;
+      currentField = 'text';
+      continue;
+    }
+
+    if (text === '\\end{question}') {
+      finalizeQuestion();
+      continue;
+    }
+
+    if (currentQuestion) {
+      if (currentField === 'text') {
+        currentQuestion.text += (currentQuestion.text ? ' ' : '') + formatText(text);
+      } else {
+        currentQuestion[currentField].push(formatText(text));
+      }
+      continue;
+    }
+
+    blocks.push({ type: 'info', content: formatText(text) });
   }
 
-  if (current) blocks.push(current);
+  finalizeQuestion();
+  finalizeEnvironment();
   return blocks;
 }
 
-exports.createActivityInstance = async (req, res) => {
-  const { activityName, courseId, userId } = req.body; // Add userId from frontend
+exports.getParsedActivityDoc = async (req, res) => {
+  const { instanceId } = req.params;
 
   try {
-    // 1. Find activity_id
+    const [rows] = await db.query(`
+      SELECT a.sheet_url
+      FROM activity_instances ai
+      JOIN pogil_activities a ON ai.activity_id = a.id
+      WHERE ai.id = ?
+    `, [instanceId]);
+
+    if (!rows.length || !rows[0].sheet_url) {
+      return res.status(404).json({ error: 'No sheet_url found' });
+    }
+
+    const sheetUrl = rows[0].sheet_url;
+    const docId = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1];
+    if (!docId) throw new Error('Invalid sheet_url');
+
+    const auth = authorize();
+    const docs = google.docs({ version: 'v1', auth });
+    const doc = await docs.documents.get({ documentId: docId });
+
+    const html = doc.data.body.content
+      .map(block => {
+        if (!block.paragraph?.elements) return null;
+        const text = block.paragraph.elements
+          .map(e => e.textRun?.content || '')
+          .join('')
+          .trim();
+        return text.length > 0 ? `<p>${text}</p>` : null;
+      })
+      .filter(Boolean)
+      .join('\n');
+
+    const blocks = parseGoogleDocHTML(html);
+    res.json({ lines: blocks });
+  } catch (err) {
+    console.error("❌ Error parsing activity doc:", err);
+    res.status(500).json({ error: 'Failed to load document' });
+  }
+};
+
+// POST /api/activity-instances
+exports.createActivityInstance = async (req, res) => {
+  const { activityName, courseId, userId } = req.body;
+
+  try {
+    // 1. Look up activity
     const [[activity]] = await db.query(
       `SELECT id FROM pogil_activities WHERE name = ?`,
       [activityName]
     );
-    if (!activity) return res.status(404).json({ error: 'Activity not found' });
 
-    // 2. Check for existing instance (group_number is NULL = general instance)
+    if (!activity) {
+      return res.status(404).json({ error: 'Activity not found' });
+    }
+
+    // 2. Check for existing instance
     const [[instance]] = await db.query(
-      `SELECT id FROM activity_instances 
-       WHERE activity_id = ? AND course_id = ? AND group_number IS NULL`,
+      `SELECT id FROM activity_instances WHERE activity_id = ? AND course_id = ? AND group_number IS NULL`,
       [activity.id, courseId]
     );
 
-    // 3. If found, check roles (via activity_groups)
     if (instance) {
-      const [[group]] = await db.query(
-        `SELECT * FROM activity_groups WHERE activity_instance_id = ?`,
-        [instance.id]
-      );
-
-      if (!group) {
-        // ✅ Roles not assigned yet → allow any student to proceed
-        return res.json({ instanceId: instance.id });
-      }
-
-      // ✅ Roles are assigned: check if user is in the group
-      const roleEmails = [
-        group.facilitator_email,
-        group.spokesperson_email,
-        group.analyst_email,
-        group.qc_email
-      ];
-
-      // Check if instructor
-      const [[course]] = await db.query(
-        `SELECT instructor_id FROM courses WHERE id = ?`,
-        [courseId]
-      );
-
-      if (roleEmails.includes(req.body.userEmail) || course?.instructor_id === userId) {
-        return res.json({ instanceId: instance.id });
-      } else {
-        return res.status(403).json({ error: 'Not authorized to start this activity.' });
-      }
+      return res.json({ instanceId: instance.id });
     }
 
-    // 4. No instance exists → create one
+    // 3. Create new instance
     const [result] = await db.query(
       `INSERT INTO activity_instances (activity_id, course_id, group_number) VALUES (?, ?, NULL)`,
       [activity.id, courseId]
@@ -101,221 +223,8 @@ exports.createActivityInstance = async (req, res) => {
     res.json({ instanceId: result.insertId });
 
   } catch (err) {
-    console.error("❌ Failed to create/use activity instance:", err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-};
-
-exports.createActivityInstanceWithRoles = async (req, res) => {
-  const { activityName, courseId, roles } = req.body;
-
-  try {
-    // 1. Look up activity ID
-    const [[activity]] = await db.query(
-      `SELECT id FROM pogil_activities WHERE name = ?`, [activityName]
-    );
-
-    if (!activity) {
-      return res.status(404).json({ error: "Activity not found" });
-    }
-
-    // 2. Create activity_instance
-    const [result] = await db.query(
-      `INSERT INTO activity_instances (activity_id, course_id) VALUES (?, ?)`,
-      [activity.id, courseId]
-    );
-
-    const instanceId = result.insertId;
-
-    // 3. Create 1 activity_group for this instance with group_number = 1
-    const [groupResult] = await db.query(
-      `INSERT INTO activity_groups (activity_instance_id, group_number) VALUES (?, ?)`,
-      [instanceId, 1]
-    );
-    const groupId = groupResult.insertId;
-
-    // 4. Insert group members (roles are passed as user IDs)
-    const roleEntries = [
-      ['facilitator', roles.facilitator],
-      ['spokesperson', roles.spokesperson],
-      ['analyst', roles.analyst],
-      ['qc', roles.qc]
-    ];
-
-    for (const [role, studentId] of roleEntries) {
-      await db.query(
-        `INSERT INTO group_members (activity_group_id, student_id, role) VALUES (?, ?, ?)`,
-        [groupId, studentId, role]
-      );
-    }
-
-    res.json({ instanceId });
-  } catch (err) {
     console.error("❌ Failed to create activity instance:", err);
-    res.status(500).json({ error: "Failed to create activity instance" });
-  }
-};
-
-exports.getActivityInstanceById = async (req, res) => {
-  const { id } = req.params;
-console.log("🔍 Instance ID:", id);
-  try {
-    const [[instance]] = await db.query(`
-      SELECT ai.id, ai.course_id, a.name AS activity_name
-      FROM activity_instances ai
-      JOIN pogil_activities a ON ai.activity_id = a.id
-      WHERE ai.id = ?
-    `, [id]);
-
-    if (!instance) {
-      return res.status(404).json({ error: "Instance not found" });
-    }
-
-    res.json(instance);
-  } catch (err) {
-    console.error("❌ Failed to fetch activity instance:", err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-};
-
-// In activity_instances/controller.js
-exports.getParsedSheetForInstance = async (req, res) => {
-  const { id } = req.params;
-
-  try {
-    const [rows] = await db.query(`
-      SELECT a.sheet_url
-      FROM activity_instances ai
-      JOIN pogil_activities a ON ai.activity_id = a.id
-      WHERE ai.id = ?
-    `, [id]);
-
-    console.log("🧪 Raw query result:", rows);
-
-    const row = rows[0];
-    console.log("📄 Extracted row:", row);
-
-    if (!row || !row.sheet_url) {
-      console.warn("⚠️ Missing or empty sheet_url");
-      return res.status(404).json({ error: 'No sheet_url found' });
-    }
-
-    console.log("✅ Found sheet_url:", row.sheet_url);
-    const parsed = await parseGoogleSheet(row.sheet_url);
-    res.json(parsed);
-  } catch (err) {
-    console.error("❌ Error fetching sheet preview:", err);
-    res.status(500).json({ error: 'Internal error' });
-  }
-};
-
-exports.setupGroupsForActivity = async (req, res) => {
-  const { activityId, courseId, presentStudentIds } = req.body;
-
-  if (!activityId || !courseId || !Array.isArray(presentStudentIds)) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-
-  try {
-    // 1. Create the main activity instance
-    const [instanceResult] = await db.query(
-      `INSERT INTO activity_instances (activity_id, course_id) VALUES (?, ?)`,
-      [activityId, courseId]
-    );
-    const instanceId = instanceResult.insertId;
-
-    // 2. Shuffle students and group them into groups of 4
-    const shuffled = [...presentStudentIds].sort(() => Math.random() - 0.5);
-    const groups = [];
-    for (let i = 0; i < shuffled.length; i += 4) {
-      groups.push(shuffled.slice(i, i + 4));
-    }
-
-    let groupNumber = 1;
-    for (const group of groups) {
-      const [groupResult] = await db.query(
-        `INSERT INTO activity_groups (activity_instance_id, group_number) VALUES (?, ?)`,
-        [instanceId, groupNumber]
-      );
-      const groupId = groupResult.insertId;
-
-      const roles = ['facilitator', 'spokesperson', 'analyst', 'qc'];
-      for (let i = 0; i < group.length; i++) {
-        const studentId = group[i];
-        if (!studentId) continue;
-
-        await db.query(
-          `INSERT INTO group_members (activity_group_id, student_id, role) VALUES (?, ?, ?)`,
-          [groupId, studentId, roles[i]]
-        );
-      }
-
-      groupNumber++;
-    }
-
-    res.status(201).json({ instanceId });
-  } catch (err) {
-    console.error('❌ Group setup failed:', err);
     res.status(500).json({ error: 'Internal server error' });
-  }
-};
-
-exports.setupGroupsForInstance = async (req, res) => {
-  const { id: instanceId } = req.params;
-  const { groups } = req.body;
-
-// 🧹 Delete existing groups and their members first
-const [existingGroups] = await db.query(
-  `SELECT id FROM activity_groups WHERE activity_instance_id = ?`,
-  [instanceId]
-);
-
-const groupIds = existingGroups.map(g => g.id);
-if (groupIds.length > 0) {
-  await db.query(
-    `DELETE FROM group_members WHERE activity_group_id IN (?)`,
-    [groupIds]
-  );
-  await db.query(
-    `DELETE FROM activity_groups WHERE activity_instance_id = ?`,
-    [instanceId]
-  );
-}
-
-  // ✅ Validate group structure and size
-  if (
-    !Array.isArray(groups) ||
-    groups.length === 0 ||
-    groups.flatMap(g => g.members || []).length < 4
-  ) {
-    return res.status(400).json({ error: 'At least 4 students are required' });
-  }
-
-  try {
-    for (let i = 0; i < groups.length; i++) {
-      const group = groups[i];
-
-      // ✅ Provide group_number to satisfy UNIQUE(activity_instance_id, group_number)
-      const [groupResult] = await db.query(
-        `INSERT INTO activity_groups (activity_instance_id, group_number) VALUES (?, ?)`,
-        [instanceId, i + 1]
-      );
-
-      const groupId = groupResult.insertId;
-
-      // ✅ Insert group members
-      for (const member of group.members) {
-        await db.query(
-          `INSERT INTO group_members (activity_group_id, student_id, role) VALUES (?, ?, ?)`,
-          [groupId, member.student_id, member.role]
-        );
-      }
-    }
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error('❌ Error setting up groups:', err);
-    res.status(500).json({ error: 'Failed to set up groups' });
   }
 };
 
@@ -402,51 +311,85 @@ exports.getActiveStudent = async (req, res) => {
   }
 };
 
-const { authorize } = require('../utils/googleAuth');
 
-exports.getParsedActivityDoc = async (req, res) => {
-  const { instanceId } = req.params;
-
+exports.getActivityInstanceById = async (req, res) => {
+  const { id } = req.params;
+console.log("🔍 Instance ID:", id);
   try {
-    const [rows] = await db.query(`
-      SELECT a.sheet_url
+    const [[instance]] = await db.query(`
+      SELECT ai.id, ai.course_id, a.name AS activity_name
       FROM activity_instances ai
       JOIN pogil_activities a ON ai.activity_id = a.id
       WHERE ai.id = ?
-    `, [instanceId]);
+    `, [id]);
 
-    if (!rows.length || !rows[0].sheet_url) {
-      return res.status(404).json({ error: 'No sheet_url found' });
+    if (!instance) {
+      return res.status(404).json({ error: "Instance not found" });
     }
 
-    const sheetUrl = rows[0].sheet_url;
-    const docId = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1];
-    if (!docId) throw new Error('Invalid sheet_url');
-
-    const auth = authorize();
-    const docs = google.docs({ version: 'v1', auth });
-    const doc = await docs.documents.get({ documentId: docId });
-
-    // Build a raw HTML string from the Google Doc
-    const html = doc.data.body.content
-      .map(block => {
-        if (!block.paragraph?.elements) return null;
-
-        const text = block.paragraph.elements
-          .map(e => e.textRun?.content || '')
-          .join('')
-          .trim();
-
-        return text.length > 0 ? `<p>${text}</p>` : null;
-      })
-      .filter(Boolean)
-      .join('\n');
-
-    // Parse it into structured blocks (already defined above)
-    const blocks = parseGoogleDocHTML(html);
-    res.json({ lines: blocks });
+    res.json(instance);
   } catch (err) {
-    console.error("❌ Error parsing activity doc:", err);
-    res.status(500).json({ error: 'Failed to load document' });
+    console.error("❌ Failed to fetch activity instance:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+
+exports.setupGroupsForInstance = async (req, res) => {
+  const { id: instanceId } = req.params;
+  const { groups } = req.body;
+
+// 🧹 Delete existing groups and their members first
+const [existingGroups] = await db.query(
+  `SELECT id FROM activity_groups WHERE activity_instance_id = ?`,
+  [instanceId]
+);
+
+const groupIds = existingGroups.map(g => g.id);
+if (groupIds.length > 0) {
+  await db.query(
+    `DELETE FROM group_members WHERE activity_group_id IN (?)`,
+    [groupIds]
+  );
+  await db.query(
+    `DELETE FROM activity_groups WHERE activity_instance_id = ?`,
+    [instanceId]
+  );
+}
+
+  // ✅ Validate group structure and size
+  if (
+    !Array.isArray(groups) ||
+    groups.length === 0 ||
+    groups.flatMap(g => g.members || []).length < 4
+  ) {
+    return res.status(400).json({ error: 'At least 4 students are required' });
+  }
+
+  try {
+    for (let i = 0; i < groups.length; i++) {
+      const group = groups[i];
+
+      // ✅ Provide group_number to satisfy UNIQUE(activity_instance_id, group_number)
+      const [groupResult] = await db.query(
+        `INSERT INTO activity_groups (activity_instance_id, group_number) VALUES (?, ?)`,
+        [instanceId, i + 1]
+      );
+
+      const groupId = groupResult.insertId;
+
+      // ✅ Insert group members
+      for (const member of group.members) {
+        await db.query(
+          `INSERT INTO group_members (activity_group_id, student_id, role) VALUES (?, ?, ?)`,
+          [groupId, member.student_id, member.role]
+        );
+      }
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('❌ Error setting up groups:', err);
+    res.status(500).json({ error: 'Failed to set up groups' });
   }
 };
