@@ -169,25 +169,25 @@ exports.getParsedActivityDoc = async (req, res) => {
     const docs = google.docs({ version: 'v1', auth });
     const doc = await docs.documents.get({ documentId: docId });
 
-    const html = doc.data.body.content
+    // ✅ Extract plain paragraph lines
+    const lines = doc.data.body.content
       .map(block => {
         if (!block.paragraph?.elements) return null;
         const text = block.paragraph.elements
           .map(e => e.textRun?.content || '')
           .join('')
           .trim();
-        return text.length > 0 ? `<p>${text}</p>` : null;
+        return text.length > 0 ? text : null;
       })
-      .filter(Boolean)
-      .join('\n');
+      .filter(Boolean); // removes nulls and empty lines
 
-    const blocks = parseGoogleDocHTML(html);
-    res.json({ lines: blocks });
+    res.json({ lines });
   } catch (err) {
     console.error("❌ Error parsing activity doc:", err);
     res.status(500).json({ error: 'Failed to load document' });
   }
 };
+
 
 // POST /api/activity-instances
 exports.createActivityInstance = async (req, res) => {

@@ -166,18 +166,21 @@ export function parseSheetToBlocks(lines) {
   return blocks;
 }
 
-export function renderBlocks(blocks) {
+export function renderBlocks(blocks, options = {}) {
+  const { editable = false } = options;
+
   return blocks.map((block, index) => {
-    if (block.type === 'text') {
-      return <p key={`t-${index}`} dangerouslySetInnerHTML={{ __html: block.content }} />;
-    }
-    if (block.type === 'code') {
+    if (block.type === 'code' && block.language === 'python') {
       return (
-        <pre className="bg-light p-3 rounded" key={`c-${index}`}>
-          <code>{block.content}</code>
-        </pre>
+        <ActivityPythonBlock
+          key={`py-${index}`}
+          code={block.content}
+          blockIndex={index}
+          editable={editable}
+        />
       );
     }
+    
     if (block.type === 'question') {
       return (
         <div key={`q-${block.id}`} className="mb-3">

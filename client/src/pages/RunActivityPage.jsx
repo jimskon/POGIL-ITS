@@ -1,19 +1,15 @@
-// Updated RunActivityPage.jsx for one-question-at-a-time flow with Preview-style rendering
+// Updated RunActivityPage.jsx to use parseSheet with group-based rendering
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
-import { Container, Form, Button, Alert } from 'react-bootstrap';
-import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet.jsx';
+import { Container, Button, Alert } from 'react-bootstrap';
+import { parseSheetToBlocks } from '../utils/parseSheet.jsx';
 import Prism from 'prismjs';
 import 'prismjs/themes/prism.css';
 import 'prismjs/components/prism-python';
 import axios from 'axios';
 
-import ActivityQuestionBlock from '../components/activity/ActivityQuestionBlock';
-import ActivityHeader from '../components/activity/ActivityHeader';
-import ActivityEnvironment from '../components/activity/ActivityEnvironment';
-import ActivityPythonBlock from '../components/activity/ActivityPythonBlock';
 
 export default function RunActivityPage() {
   const { instanceId } = useParams();
@@ -21,25 +17,21 @@ export default function RunActivityPage() {
 
   const [courseId, setCourseId] = useState('');
   const [activityName, setActivityName] = useState('');
-  const [blocks, setBlocks] = useState([]);
+  const [groups, setGroups] = useState([]);
   const [groupId, setGroupId] = useState(null);
   const [students, setStudents] = useState([]);
   const [activeStudentId, setActiveStudentId] = useState(null);
-  const [currentAnswer, setCurrentAnswer] = useState('');
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [roleAccess, setRoleAccess] = useState(true);
+  const [currentGroupIndex, setCurrentGroupIndex] = useState(0);
   const [groupMembers, setGroupMembers] = useState([]);
-  
+  const [responses, setResponses] = useState({});
 
   const isActive = user.id === activeStudentId || (
     groupMembers.length === 1 && groupMembers[0]?.student_id === user.id
   );
-  
+
   useEffect(() => {
-    if (blocks.length > 0) {
-      Prism.highlightAll();
-    }
-  }, [blocks]);
+    Prism.highlightAll();
+  }, [groups]);
 
   useEffect(() => {
     async function loadActivity() {
@@ -63,11 +55,25 @@ export default function RunActivityPage() {
 
         const sheetRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/preview-doc`);
         const { lines } = await sheetRes.json();
-        const parsed = Array.isArray(lines) && typeof lines[0] === 'string' ? parseSheetToBlocks(lines) : lines;
-        setBlocks(parsed);
-        console.log("students:", studentData, activeStudentId);
-        console.log("usergroup members:",userGroup.members);
-        console.log("Active:", isActive);
+        const blocks = parseSheetToBlocks(lines);
+
+        const grouped = [];
+        let currentGroup = null;
+        for (let block of blocks) {
+          if (block.type === 'groupIntro') {
+            if (currentGroup) grouped.push(currentGroup);
+            currentGroup = { intro: block, questions: [] };
+          } else if (block.type === 'question') {
+            currentGroup?.questions.push(block);
+          } else {
+            if (currentGroup && currentGroup.intro) {
+              currentGroup.intro.content += ` ${block.content || ''}`;
+            }
+            
+          }
+        }
+        if (currentGroup) grouped.push(currentGroup);
+        setGroups(grouped);
 
       } catch (err) {
         console.error('❌ Error loading activity data', err);
@@ -82,13 +88,10 @@ export default function RunActivityPage() {
       const data = await res.json();
       setActiveStudentId(data.activeStudentId);
     }
-  
-    fetchActive(); // ✅ immediate fetch on mount
-  
-    const interval = setInterval(fetchActive, 10000); // then repeat
+    fetchActive();
+    const interval = setInterval(fetchActive, 10000);
     return () => clearInterval(interval);
   }, [instanceId]);
-  
 
   useEffect(() => {
     const heartbeat = setInterval(() => {
@@ -102,52 +105,61 @@ export default function RunActivityPage() {
     return () => clearInterval(heartbeat);
   }, [user.id, groupId, instanceId]);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    const question = blocks.filter(b => b.type === 'question')[currentQuestionIndex];
-    const payload = {
+  const handleSave = async () => {
+    const responsePayload = Object.entries(responses).map(([questionId, text]) => ({
       instanceId,
       groupId,
-      questionId: question.id,
-      responseText: currentAnswer,
+      questionId,
+      responseText: text,
       answeredBy: user.id
-    };
+    }));
     try {
-      await axios.post(`${API_BASE_URL}/api/responses`, payload);
-      setCurrentAnswer('');
-      setCurrentQuestionIndex(prev => prev + 1);
+      await Promise.all(responsePayload.map(payload =>
+        axios.post(`${API_BASE_URL}/api/responses`, payload)
+      ));
       await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/rotate-active`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ groupId })
       });
+      setCurrentGroupIndex(prev => prev + 1);
     } catch (err) {
-      console.error('❌ Failed to submit response', err);
+      console.error('❌ Failed to submit group responses', err);
     }
   };
 
-  let visible = [];
-  let qSeen = -1;
-  for (const block of blocks) {
-    if (block.type === 'question') qSeen++;
-    visible.push(block);
-    if (qSeen === currentQuestionIndex) break;
-  }
+  const currentGroup = groups[currentGroupIndex];
+  if (!currentGroup) return <Container><Alert variant="info">🎉 Activity complete!</Alert></Container>;
 
   return (
     <Container className="mt-4">
       <h2>Run Activity: {activityName}</h2>
-      {roleAccess ? (
-        <>
-          {isActive ? (
-            <Alert variant="success">✅ You are the active student. You may submit responses.</Alert>
-          ) : (
-            <Alert variant="info">⏳ You are currently observing. The active student is submitting.</Alert>
-          )}
-          {renderBlocks(visible, currentAnswer, setCurrentAnswer, isActive, handleSubmit)}
-        </>
+      {isActive ? (
+        <Alert variant="success">✅ You are the active student. You may submit responses.</Alert>
       ) : (
-        <Alert variant="warning">⛔ You are not authorized to view this activity.</Alert>
+        <Alert variant="info">⏳ You are currently observing. The active student is submitting.</Alert>
+      )}
+
+      <p><strong>{currentGroup.intro.groupId}.</strong> {currentGroup.intro.content}</p>
+
+      {currentGroup.questions.map(q => (
+        <div key={q.id} className="mb-4">
+          <p><strong>{q.label}</strong> {q.prompt}</p>
+          {isActive ? (
+            <Form.Control
+              as="textarea"
+              rows={q.responseLines || 2}
+              value={responses[q.id] || ''}
+              onChange={(e) => setResponses(prev => ({ ...prev, [q.id]: e.target.value }))}
+            />
+          ) : (
+            <Alert variant="light">{responses[q.id] || '(No answer yet)'}</Alert>
+          )}
+        </div>
+      ))}
+
+      {isActive && (
+        <Button onClick={handleSave}>Submit Group</Button>
       )}
     </Container>
   );
