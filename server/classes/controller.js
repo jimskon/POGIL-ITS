@@ -77,7 +77,7 @@ exports.createActivityForClass = async (req, res) => {
 
   try {
     const [result] = await db.query(
-      'INSERT INTO pogol_activities (name, title, sheet_url, order_index, class_id, created_by) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT INTO pogil_activities (name, title, sheet_url, order_index, class_id, created_by) VALUES (?, ?, ?, ?, ?, ?)',
       [name, title, sheet_url, order_index, classId, createdBy]
     );
 
@@ -101,7 +101,7 @@ exports.updateActivityForClass = async (req, res) => {
 
   try {
     await db.query(
-      'UPDATE pogol_activities SET title = ?, sheet_url = ?, order_index = ? WHERE name = ? AND class_id = ?',
+      'UPDATE pogil_activities SET title = ?, sheet_url = ?, order_index = ? WHERE name = ? AND class_id = ?',
       [title, sheet_url, order_index, activityName, classId]
     );
 
@@ -117,7 +117,7 @@ exports.deleteActivityFromClass = async (req, res) => {
 
   try {
     await db.query(
-      'DELETE FROM pogol_activities WHERE name = ? AND class_id = ?',
+      'DELETE FROM pogil_activities WHERE name = ? AND class_id = ?',
       [activityName, classId]
     );
 
@@ -183,6 +183,7 @@ exports.getClassById = async (req, res) => {
     if (rows.length === 0) {
       return res.status(404).json({ error: 'Class not found' });
     }
+    console.log("Class found:", rows[0]);
       res.json(toPlain(rows[0]));
   } catch (err) {
     console.error("Error fetching class:", err);

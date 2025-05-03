@@ -1,298 +1,154 @@
-// Updated RunActivityPage.jsx with access logic and role checks
+// Updated RunActivityPage.jsx for one-question-at-a-time flow with Preview-style rendering
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
-import { parseSheetHTML } from '../utils/parseSheet';
-import { Container, Form, Button, Row, Col, Alert } from 'react-bootstrap';
+import { Container, Form, Button, Alert } from 'react-bootstrap';
+import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet.jsx';
+import Prism from 'prismjs';
+import 'prismjs/themes/prism.css';
+import 'prismjs/components/prism-python';
 import axios from 'axios';
 
+import ActivityQuestionBlock from '../components/activity/ActivityQuestionBlock';
+import ActivityHeader from '../components/activity/ActivityHeader';
+import ActivityEnvironment from '../components/activity/ActivityEnvironment';
+import ActivityPythonBlock from '../components/activity/ActivityPythonBlock';
 
 export default function RunActivityPage() {
   const { instanceId } = useParams();
-  const navigate = useNavigate();
   const { user } = useUser();
-    console.log("👤 User from context:", user);
-    
+
   const [courseId, setCourseId] = useState('');
   const [activityName, setActivityName] = useState('');
-  const [activityContent, setActivityContent] = useState([]);
-  const [students, setStudents] = useState([]);
-  const [groupLoaded, setGroupLoaded] = useState(false);
-  const [roleAccess, setRoleAccess] = useState(false);
-  const [isReadonly, setIsReadonly] = useState(false);
-  const [error, setError] = useState('');
+  const [blocks, setBlocks] = useState([]);
   const [groupId, setGroupId] = useState(null);
-  const [activeStudentId, setActiveStudentId] = useState(null); 
-  const [isActiveStudent, setIsActiveStudent] = useState(false);
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [responses, setResponses] = useState({});
+  const [students, setStudents] = useState([]);
+  const [activeStudentId, setActiveStudentId] = useState(null);
   const [currentAnswer, setCurrentAnswer] = useState('');
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [roleAccess, setRoleAccess] = useState(true);
+  const [groupMembers, setGroupMembers] = useState([]);
+  
 
-
-  const hasRolesTag = Array.isArray(activityContent) && activityContent.some(line => line.tag === 'roles');
-
-useEffect(() => {
-  if (!groupId) return;
-  const interval = setInterval(async () => {
-      const sheetRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/preview-doc`);
-      const data = await sheetRes.json();
-      setActivityContent(data.lines || []);
-
-
-
-    setActiveStudentId(data.activeStudentId);
-  }, 10000); // every 10s
-
-  return () => clearInterval(interval);
-}, [groupId, instanceId]);
-
-useEffect(() => {
-  if (!user?.id || !instanceId || !groupId) return;
-
-  const interval = setInterval(() => {
-    fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/heartbeat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userId: user.id, groupId })
-    }).catch(err => console.error("❌ Heartbeat failed:", err));
-  }, 30000); // every 30s
-
-  return () => clearInterval(interval);
-}, [user?.id, instanceId, groupId]);
-
-useEffect(() => { 
-  if (!user?.id || !instanceId) return;
-
-  const interval = setInterval(async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/group/${groupId}/active-student`);
-      const data = await res.json();
-      setActiveStudentId(data.activeStudentId);
-      setIsActiveStudent(data.activeStudentId === user.id);
-    } catch (err) {
-      console.error("❌ Failed to fetch active student:", err);
+  const isActive = user.id === activeStudentId || (
+    groupMembers.length === 1 && groupMembers[0]?.student_id === user.id
+  );
+  
+  useEffect(() => {
+    if (blocks.length > 0) {
+      Prism.highlightAll();
     }
-  }, 30000); // every 30 seconds
+  }, [blocks]);
 
-  return () => clearInterval(interval);
-}, [user?.id, instanceId, groupId]);
-
-useEffect(() => {
-    const loadInstance = async () => {
+  useEffect(() => {
+    async function loadActivity() {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
-        const data = await res.json();
-        setCourseId(data.course_id);
-        setActivityName(data.activity_name);
-      } catch (err) {
-        setError('Failed to load activity instance.');
-      }
-    };
-    loadInstance();
-  }, [instanceId]);
+        const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
+        const instanceData = await instanceRes.json();
+        setCourseId(instanceData.course_id);
+        setActivityName(instanceData.activity_name);
 
-
-useEffect(() => {
-  if (!groupId) return;
-  const interval = setInterval(async () => {
-    const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
-    const data = await res.json();
-    setActiveStudentId(data.activeStudentId);
-  }, 10000); // every 10s
-
-  return () => clearInterval(interval);
-}, [groupId, instanceId]);
-
-useEffect(() => {
-    if (!courseId || !activityName || !user) return;
-
-    const fetchData = async () => {
-      try {
-        // 1. Load group roles
-const groupRes = await fetch(`${API_BASE_URL}/api/groups/instance/${instanceId}`);
-const groupData = await groupRes.json();
-setGroupLoaded(true);
-
- // Find the student's group
-if (groupData.groups && Array.isArray(groupData.groups)) {
-  for (const group of groupData.groups) {
-    const found = group.members.find(m => m.student_id === user.id);
-    if (found) {
-      console.log("💓 Found groupId:", group.group_id);
-      setGroupId(group.group_id);
-      break;
-    }
-  }
-} else {
-  // For instructor/root, just use first group ID if present
-  if (groupData.groups.length > 0) {
-    setGroupId(groupData.groups[0].group_id);
-  }
-}
-	  
-        if (!groupData || !groupData.rolesAssigned) {
-          setRoleAccess(true); // no roles yet → allow assignment
-        } else {
-          // roles exist: check if user is in group or is instructor/root
-          const emails = Object.values(groupData.roles || {});
-          if (emails.includes(user.email) || user.role === 'root' || groupData.instructor_id === user.id) {
-            setRoleAccess(true);
-            setIsReadonly(user.role !== 'student');
-          }
+        const groupRes = await fetch(`${API_BASE_URL}/api/groups/instance/${instanceId}`);
+        const groupData = await groupRes.json();
+        const userGroup = groupData.groups.find(g => g.members.some(m => m.student_id === user.id));
+        if (userGroup) {
+          setGroupId(userGroup.group_id);
+          setGroupMembers(userGroup.members);
         }
 
-        // 2. Load students
-        const studentsRes = await fetch(`${API_BASE_URL}/api/courses/${courseId}/enrollments`);
-        const studentsData = await studentsRes.json();
-        setStudents(studentsData);
+        const studentRes = await fetch(`${API_BASE_URL}/api/courses/${instanceData.course_id}/enrollments`);
+        const studentData = await studentRes.json();
+        setStudents(studentData);
 
-        // 3. Load sheet content
-	const sheetRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/preview-doc`);
-	  const data = await sheetRes.json();
-	  console.log("✅ Parsed lines:", data.lines);
-	  setActivityContent(data.lines || []);
+        const sheetRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/preview-doc`);
+        const { lines } = await sheetRes.json();
+        const parsed = Array.isArray(lines) && typeof lines[0] === 'string' ? parseSheetToBlocks(lines) : lines;
+        setBlocks(parsed);
+        console.log("students:", studentData, activeStudentId);
+        console.log("usergroup members:",userGroup.members);
+        console.log("Active:", isActive);
 
       } catch (err) {
-        console.error('❌ Failed to load full activity data', err);
-        setError('Failed to load activity data.');
+        console.error('❌ Error loading activity data', err);
       }
-    };
+    }
+    loadActivity();
+  }, [instanceId, user.id]);
 
-    fetchData();
-  }, [courseId, activityName, user, instanceId]);
+  useEffect(() => {
+    async function fetchActive() {
+      const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
+      const data = await res.json();
+      setActiveStudentId(data.activeStudentId);
+    }
+  
+    fetchActive(); // ✅ immediate fetch on mount
+  
+    const interval = setInterval(fetchActive, 10000); // then repeat
+    return () => clearInterval(interval);
+  }, [instanceId]);
+  
 
-
-
-  if (error) return <Alert variant="danger">{error}</Alert>;
-  if (!groupLoaded) return <p>Loading activity...</p>;
-  const isActive = user.id === activeStudentId;
+  useEffect(() => {
+    const heartbeat = setInterval(() => {
+      if (!groupId) return;
+      fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/heartbeat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id, groupId })
+      });
+    }, 30000);
+    return () => clearInterval(heartbeat);
+  }, [user.id, groupId, instanceId]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-  
-    const questionBlock = activityContent.filter(b => b.type === 'question')[currentQuestionIndex];
-    const responsePayload = {
+    const question = blocks.filter(b => b.type === 'question')[currentQuestionIndex];
+    const payload = {
       instanceId,
       groupId,
-      questionId: questionBlock.id,
+      questionId: question.id,
       responseText: currentAnswer,
-      answeredBy: user.id,
+      answeredBy: user.id
     };
-  
     try {
-      await axios.post(`${API_BASE_URL}/api/responses`, responsePayload);
-  
-      setResponses({ ...responses, [questionBlock.id]: currentAnswer });
+      await axios.post(`${API_BASE_URL}/api/responses`, payload);
       setCurrentAnswer('');
       setCurrentQuestionIndex(prev => prev + 1);
-  
-      // Backend rotation will occur as part of response handler
       await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/rotate-active`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupId }),
+        body: JSON.stringify({ groupId })
       });
-  
-      await fetchActiveStudent(); // refresh active user
-  
     } catch (err) {
-      console.error('❌ Error submitting response:', err);
+      console.error('❌ Failed to submit response', err);
     }
   };
+
+  let visible = [];
+  let qSeen = -1;
+  for (const block of blocks) {
+    if (block.type === 'question') qSeen++;
+    visible.push(block);
+    if (qSeen === currentQuestionIndex) break;
+  }
 
   return (
     <Container className="mt-4">
       <h2>Run Activity: {activityName}</h2>
-
-      {!roleAccess && (
-        <Alert variant="warning">
-          You are not authorized to view this activity. Please wait for roles to be assigned.
-        </Alert>
-      )}
-
-{roleAccess && (
-  <div className="mt-4">
-    {!isReadonly && (
-      isActive ? (
-        <Alert variant="success">
-          ✅ You are the active student. You may submit responses.
-        </Alert>
-      ) : (
-        <Alert variant="info">
-          ⏳ You are currently observing. The active student is submitting.
-        </Alert>
-      )
-    )}
-
-    {/* Display first info block */}
-    {activityContent.find(b => b.type === 'info') && (
-      <div className="mb-4">
-        <h5>Introduction</h5>
-        <div
-          dangerouslySetInnerHTML={{
-            __html: activityContent.find(b => b.type === 'info').content
-          }}
-        />
-      </div>
-    )}
-
-    {/* Display first question block */}
-{/* Display content up to current question index */}
-{activityContent
-  .slice(0, activityContent.findIndex((b, i) => {
-    const questionCount = activityContent.slice(0, i + 1).filter(b => b.type === 'question').length;
-    return questionCount > currentQuestionIndex;
-  }) + 1)
-  .map((block, idx) => {
-    if (block.type === 'info') {
-      return (
-        <div key={idx} className="mb-3" dangerouslySetInnerHTML={{ __html: block.content }} />
-      );
-    }
-
-    if (block.type === 'question') {
-      const questionIndex = activityContent
-        .slice(0, idx + 1)
-        .filter(b => b.type === 'question')
-        .length - 1;
-
-      return (
-        <div key={block.id} className="mb-4">
-          <h5>Question {questionIndex + 1}</h5>
-          <div dangerouslySetInnerHTML={{ __html: block.content }} />
-
-          {questionIndex === currentQuestionIndex ? (
-            isActive ? (
-              <Form onSubmit={handleSubmit}>
-                <Form.Control
-                  as="textarea"
-                  rows={4}
-                  value={currentAnswer}
-                  onChange={(e) => setCurrentAnswer(e.target.value)}
-                  placeholder="Type your answer..."
-                  className="my-2"
-                />
-                <Button variant="primary" type="submit">Submit Response</Button>
-              </Form>
-            ) : (
-              <p className="text-muted"><i>Waiting for your turn...</i></p>
-            )
+      {roleAccess ? (
+        <>
+          {isActive ? (
+            <Alert variant="success">✅ You are the active student. You may submit responses.</Alert>
           ) : (
-            <div className="mt-2">
-              <strong>Answer:</strong> {responses[block.id] || <i>(Submitted)</i>}
-            </div>
+            <Alert variant="info">⏳ You are currently observing. The active student is submitting.</Alert>
           )}
-        </div>
-      );
-    }
-
-    return null;
-  })}
-
-      </div>
-    )}
-
+          {renderBlocks(visible, currentAnswer, setCurrentAnswer, isActive, handleSubmit)}
+        </>
+      ) : (
+        <Alert variant="warning">⛔ You are not authorized to view this activity.</Alert>
+      )}
     </Container>
   );
 }

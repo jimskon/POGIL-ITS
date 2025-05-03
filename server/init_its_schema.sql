@@ -32,7 +32,7 @@ CREATE TABLE course_enrollments (
 );
 
 -- POGOL activities
-CREATE TABLE pogol_activities (
+CREATE TABLE pogil_activities (
     name VARCHAR(255) PRIMARY KEY,
     title VARCHAR(255) NOT NULL,
     google_sheet_url TEXT NOT NULL,
