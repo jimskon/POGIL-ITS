@@ -5,7 +5,7 @@ import ActivityEnvironment from '../components/activity/ActivityEnvironment';
 import ActivityPythonBlock from '../components/activity/ActivityPythonBlock';
 
 export function parseSheetToBlocks(lines) {
-  console.log("🧠 parseSheetToBlocks invoked");
+  console.log("🧑‍💻 parseSheetToBlocks invoked");
   const blocks = [];
   let groupNumber = 0;
   let questionLetterCode = 97;
@@ -14,6 +14,7 @@ export function parseSheetToBlocks(lines) {
   let currentQuestion = null;
   let currentField = 'prompt';
   let currentBlock = [];
+  let currentGroupIntro = null;
 
   const flushCurrentBlock = () => {
     if (currentBlock.length > 0) {
@@ -33,7 +34,7 @@ export function parseSheetToBlocks(lines) {
   for (let line of lines) {
     const trimmed = line.trim();
     console.log("Processing line:", trimmed);
-    // Header blocks
+
     const headerMatch = trimmed.match(/^\\(title|name|section)\{(.+?)\}$/);
     if (headerMatch) {
       flushCurrentBlock();
@@ -45,20 +46,31 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // Start/end question group
     if (trimmed.startsWith('\\questiongroup')) {
+      if (currentGroupIntro) {
+        blocks.push(currentGroupIntro);
+      }
       flushCurrentBlock();
       groupNumber++;
       questionLetterCode = 97;
+      currentGroupIntro = {
+        type: 'groupIntro',
+        groupId: groupNumber,
+        content: ''
+      };
       continue;
     }
 
     if (trimmed === '\\question') {
-      flushCurrentBlock();
-      const id = `${groupNumber}${String.fromCharCode(questionLetterCode++)}`;
+      if (currentGroupIntro) {
+        blocks.push(currentGroupIntro);
+        currentGroupIntro = null;
+      }
+      const id = String.fromCharCode(questionLetterCode++);
       currentQuestion = {
         type: 'question',
         id,
+        label: `${id}.`,
         responseId: responseId++,
         prompt: '',
         responseLines: 1,
@@ -110,7 +122,6 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // Python block
     if (trimmed === '\\python') {
       flushCurrentBlock();
       currentField = 'python';
@@ -132,7 +143,11 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // Add lines to the current question field
+    if (currentGroupIntro && !currentQuestion) {
+      currentGroupIntro.content += (currentGroupIntro.content ? ' ' : '') + format(line);
+      continue;
+    }
+
     if (currentQuestion) {
       if (currentField === 'prompt') {
         currentQuestion.prompt += (currentQuestion.prompt ? ' ' : '') + format(line);
@@ -151,34 +166,32 @@ export function parseSheetToBlocks(lines) {
   return blocks;
 }
 
-
-
 export function renderBlocks(blocks) {
   return blocks.map((block, index) => {
-    if (block.type === 'code' && block.language === 'python') {
+    if (block.type === 'text') {
+      return <p key={`t-${index}`} dangerouslySetInnerHTML={{ __html: block.content }} />;
+    }
+    if (block.type === 'code') {
       return (
-        <ActivityPythonBlock
-          key={`py-${index}`}
-          code={block.content}
-          blockIndex={index}
-        />
+        <pre className="bg-light p-3 rounded" key={`c-${index}`}>
+          <code>{block.content}</code>
+        </pre>
       );
     }
     if (block.type === 'question') {
-      console.log("📦 Rendering question block:", block);
-      return <ActivityQuestionBlock key={block.id} question={block} editable={false} />;
+      return (
+        <div key={`q-${block.id}`} className="mb-3">
+          <p><strong>{block.label}</strong> {block.prompt}</p>
+          <ActivityQuestionBlock key={block.id} question={block} editable={false} />
+        </div>
+      );
     }
     if (block.type === 'header') {
       return <ActivityHeader key={`h-${index}`} {...{ [block.tag]: block.content }} />;
     }
-    if (block.type === 'list') {
-      const Tag = block.listType;
+    if (block.type === 'groupIntro') {
       return (
-        <Tag key={`list-${index}`}>
-          {block.items.map((item, i) => (
-            <li key={i} dangerouslySetInnerHTML={{ __html: item }} />
-          ))}
-        </Tag>
+        <p key={`g-${block.groupId}`}><strong>{block.groupId}.</strong> {block.content}</p>
       );
     }
     return null;
