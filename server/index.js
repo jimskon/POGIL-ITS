@@ -48,6 +48,6 @@ app.all('*', (req, res) => {
   res.sendFile(path.resolve(staticDir, 'index.html'));
 });
 
-app.listen(PORT, () => console.log(`ITS server running on port ${PORT}`));
+app.listen(PORT, '0.0.0.0', () => console.log(`ITS server running on port ${PORT}`));
 
 

@@ -16,6 +16,10 @@ export function parseSheetToBlocks(lines) {
   let currentBlock = [];
   let currentGroupIntro = null;
 
+  let inList = false;
+  let listType = null;
+  let listItems = [];
+
   const flushCurrentBlock = () => {
     if (currentBlock.length > 0) {
       blocks.push({
@@ -29,12 +33,62 @@ export function parseSheetToBlocks(lines) {
   const format = (text) =>
     text
       .replace(/\\textbf\{(.+?)\}/g, '<strong>$1</strong>')
-      .replace(/\\textit\{(.+?)\}/g, '<em>$1</em>');
+      .replace(/\\textit\{(.+?)\}/g, '<em>$1</em>')
+      .replace(/\\text\{(.+?)\}/g, '$1');
 
   for (let line of lines) {
     const trimmed = line.trim();
     console.log("Processing line:", trimmed);
 
+    // --- Lists ---
+    if (trimmed === '\\begin{itemize}' || trimmed === '\\begin{enumerate}') {
+      inList = true;
+      listType = trimmed.includes('itemize') ? 'ul' : 'ol';
+      listItems = [];
+      continue;
+    }
+
+    if (trimmed === '\\end{itemize}' || trimmed === '\\end{enumerate}') {
+      blocks.push({
+        type: 'list',
+        listType,
+        items: listItems.map(format)
+      });
+      inList = false;
+      listType = null;
+      listItems = [];
+      continue;
+    }
+
+    if (inList && trimmed.startsWith('\\item')) {
+      listItems.push(trimmed.replace(/^\\item\s*/, ''));
+      continue;
+    }
+
+    // --- Python block ---
+    if (trimmed === '\\python') {
+      flushCurrentBlock();
+      currentField = 'python';
+      currentQuestion = { type: 'python', lines: [] };
+      continue;
+    }
+
+    if (trimmed === '\\endpython') {
+      blocks.push({
+        type: 'python',
+        content: currentQuestion.lines.join('\n')
+      });
+      currentQuestion = null;
+      currentField = 'prompt';
+      continue;
+    }
+
+    if (currentField === 'python' && currentQuestion?.type === 'python') {
+      currentQuestion.lines.push(line);
+      continue;
+    }
+
+    // --- Headers ---
     const headerMatch = trimmed.match(/^\\(title|name|section)\{(.+?)\}$/);
     if (headerMatch) {
       flushCurrentBlock();
@@ -46,10 +100,9 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
+    // --- Group start ---
     if (trimmed.startsWith('\\questiongroup')) {
-      if (currentGroupIntro) {
-        blocks.push(currentGroupIntro);
-      }
+      if (currentGroupIntro) blocks.push(currentGroupIntro);
       flushCurrentBlock();
       groupNumber++;
       questionLetterCode = 97;
@@ -61,6 +114,7 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
+    // --- Question start/end ---
     if (trimmed === '\\question') {
       if (currentGroupIntro) {
         blocks.push(currentGroupIntro);
@@ -89,6 +143,7 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
+    // --- Question internals ---
     if (trimmed.startsWith('\\textresponse')) {
       const match = trimmed.match(/\\textresponse\{(\d+)\}/);
       if (match) currentQuestion.responseLines = parseInt(match[1]);
@@ -122,27 +177,16 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    if (trimmed === '\\python') {
-      flushCurrentBlock();
-      currentField = 'python';
-      currentQuestion = { type: 'code', language: 'python', lines: [] };
-      continue;
-    }
-    if (trimmed === '\\endpython') {
+    // --- Treat \text{...} and similar as own block ---
+    if (/^\\text(it|bf)?\{.+\}$/.test(trimmed)) {
       blocks.push({
-        type: 'code',
-        language: 'python',
-        content: currentQuestion.lines.join('\n')
+        type: 'text',
+        content: format(trimmed)
       });
-      currentQuestion = null;
-      currentField = 'prompt';
-      continue;
-    }
-    if (currentField === 'python' && currentQuestion?.type === 'code') {
-      currentQuestion.lines.push(line);
       continue;
     }
 
+    // --- Add to group intro or question ---
     if (currentGroupIntro && !currentQuestion) {
       currentGroupIntro.content += (currentGroupIntro.content ? ' ' : '') + format(line);
       continue;
@@ -154,49 +198,102 @@ export function parseSheetToBlocks(lines) {
       } else {
         currentQuestion[currentField].push(format(line));
       }
-    } else {
-      currentBlock.push(format(line));
+      continue;
     }
+
+    // --- Fallback: generic text block ---
+    currentBlock.push(format(line));
   }
 
-  if (currentBlock.length > 0) {
-    flushCurrentBlock();
-  }
+  flushCurrentBlock();
 
   return blocks;
 }
 
+
 export function renderBlocks(blocks, options = {}) {
-  const { editable = false } = options;
+  const {
+    editable = false,
+    isActive = false,
+    onSave = () => {},
+    onSubmit = () => {},
+  } = options;
 
   return blocks.map((block, index) => {
-    if (block.type === 'code' && block.language === 'python') {
+    if (block.type === 'python') {
       return (
         <ActivityPythonBlock
-          key={`py-${index}`}
+          key={index}
           code={block.content}
           blockIndex={index}
           editable={editable}
+          isActive={isActive}
+          onSave={onSave}
+          onSubmit={onSubmit}
         />
       );
     }
-    
+
+    if (block.type === 'code') {
+      return (
+        <pre key={`code-${index}`} className="bg-light p-2 rounded">
+          <code className="language-python">{block.content}</code>
+        </pre>
+      );
+    }
+
     if (block.type === 'question') {
       return (
         <div key={`q-${block.id}`} className="mb-3">
           <p><strong>{block.label}</strong> {block.prompt}</p>
-          <ActivityQuestionBlock key={block.id} question={block} editable={false} />
+          {block.code?.map((codeBlock, i) => (
+            <ActivityPythonBlock
+              key={`qcode-${block.id}-${i}`}
+              code={codeBlock.content}
+              blockIndex={i}
+            />
+          ))}
+          <ActivityQuestionBlock question={block} editable={editable} />
         </div>
       );
     }
+
     if (block.type === 'header') {
       return <ActivityHeader key={`h-${index}`} {...{ [block.tag]: block.content }} />;
     }
+
     if (block.type === 'groupIntro') {
       return (
-        <p key={`g-${block.groupId}`}><strong>{block.groupId}.</strong> {block.content}</p>
+        <div key={`g-${block.groupId}`} className="mb-3">
+          <p><strong>{block.groupId}.</strong> {block.content}</p>
+          {block.code?.map((codeBlock, i) => (
+            <ActivityPythonBlock
+              key={`gcode-${block.groupId}-${i}`}
+              code={codeBlock.content}
+              blockIndex={i}
+            />
+          ))}
+        </div>
       );
     }
-    return null;
+
+    if (block.type === 'text') {
+      return (
+        <p key={`text-${index}`} dangerouslySetInnerHTML={{ __html: block.content }} />
+      );
+    }
+
+    if (block.type === 'list') {
+      const ListTag = block.listType === 'ul' ? 'ul' : 'ol';
+      return (
+        <ListTag key={`list-${index}`} className="ms-4">
+          {block.items.map((item, i) => (
+            <li key={i} dangerouslySetInnerHTML={{ __html: item }} />
+          ))}
+        </ListTag>
+      );
+    }
+
+    return <div key={index}>[Unknown block type: {block.type}]</div>;
   });
 }

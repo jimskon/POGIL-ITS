@@ -1,3 +1,4 @@
+// server/activity_instances/controller.js
 const db = require('../db');
 const fetch = require('node-fetch');
 const { JSDOM } = require('jsdom');
@@ -314,10 +315,10 @@ exports.getActiveStudent = async (req, res) => {
 
 exports.getActivityInstanceById = async (req, res) => {
   const { id } = req.params;
-console.log("🔍 Instance ID:", id);
+  console.log("🔍 Instance ID:", id);
   try {
     const [[instance]] = await db.query(`
-      SELECT ai.id, ai.course_id, a.name AS activity_name
+      SELECT ai.id, ai.course_id, ai.activity_id, a.name AS activity_name, a.sheet_url
       FROM activity_instances ai
       JOIN pogil_activities a ON ai.activity_id = a.id
       WHERE ai.id = ?
@@ -333,6 +334,7 @@ console.log("🔍 Instance ID:", id);
     res.status(500).json({ error: "Internal server error" });
   }
 };
+
 
 
 exports.setupGroupsForInstance = async (req, res) => {

@@ -1,3 +1,4 @@
+// server/activities/controller.js
 const db = require('../db');
 
 // Create a new activity
