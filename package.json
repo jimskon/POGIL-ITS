@@ -1,6 +1,7 @@
 {
   "dependencies": {
     "bootstrap": "^5.3.5",
+    "googleapis": "^148.0.0",
     "prismjs": "^1.30.0",
     "react-bootstrap": "^2.10.9",
     "react-router-bootstrap": "^0.26.3"

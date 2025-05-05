@@ -177,6 +177,11 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
+    if (line === '\\endquestiongroup') {
+      blocks.push({ type: 'endGroup' });
+      continue;
+    }
+    
     // --- Treat \text{...} and similar as own block ---
     if (/^\\text(it|bf)?\{.+\}$/.test(trimmed)) {
       blocks.push({

@@ -92,12 +92,18 @@ export default function RunActivityPage() {
           if (block.type === 'groupIntro') {
             if (currentGroup) grouped.push(currentGroup);
             currentGroup = { intro: block, content: [] };
+          } else if (block.type === 'endGroup') {
+            if (currentGroup) {
+              grouped.push(currentGroup);
+              currentGroup = null;
+            }
           } else if (currentGroup) {
             currentGroup.content.push(block);
-          } else {
-            // fallback: orphan blocks (e.g. Python blocks before any group) go in a dummy group
-            grouped.push({ intro: { type: 'info', content: 'Orphaned Content' }, content: [block] });
+          } else if (block.type !== 'text' || block.content.trim() !== '') {
+            // ignore empty text blocks outside a group
+            console.warn('❗ Orphaned block:', block);
           }
+          
         }
         if (currentGroup) grouped.push(currentGroup);
         
