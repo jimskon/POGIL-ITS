@@ -142,11 +142,11 @@ npm install prismjs
 
 ```
 
-Edit `.env`:
+Edit `server/.env`:
 
 ```
 DB_HOST=localhost
-DB_USER=pogiluser
+DB_USER=pogil_user
 DB_PASSWORD=securepassword
 DB_NAME=pogil_db
 PORT=4000
