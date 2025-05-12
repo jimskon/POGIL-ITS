@@ -339,5 +339,5 @@ VITE_SERVICE_ACCOUNT_EMAIL=pogil-sheets-reader@pogil-its.iam.gserviceaccount.com
 You must get this from Jim Skon
 
 ## To get the schma from mysql
-mysqldump -u root -p --no-data --routines --triggers pogil_its > pogil_its_full_schema.sql
+mysqldump -u root -p --no-data --routines --triggers pogil_db > pogil_db_full_schema.sql
 
