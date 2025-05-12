@@ -110,7 +110,7 @@ cd POGIL-ITS
 If installing from the clone repository:
 ```
 cd server
-npn install
+npm install
 cd ../client
 npm install
 cd ..
