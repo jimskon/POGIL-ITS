@@ -145,12 +145,25 @@ npm install prismjs
 Edit `server/.env`:
 
 ```
-DB_HOST=localhost
-DB_USER=pogil_user
-DB_PASSWORD=securepassword
-DB_NAME=pogil_db
+# Server
 PORT=4000
-SESSION_SECRET=your-secret-key
+
+# MariaDB
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=pogil_user
+DB_PASSWORD=secret!!!
+DB_NAME=pogil_db
+SESSION_SECRET=PhilanderChaseLovesPogil
+
+# Google API
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=your-google-redirect-uri
+
+
+# OpenAI API
+OPENAI_API_KEY=APIKe
 ```
 
 Start the server:
