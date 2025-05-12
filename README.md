@@ -52,7 +52,7 @@ Answer the prompts to:
 ## 4. Create the Database
 
 ```bash
-sudo mariadb -u root -p
+sudo mysql -u root -p
 ```
 
 Then inside the MariaDB prompt:
