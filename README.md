@@ -76,9 +76,6 @@ sudo apt install php libapache2-mod-php php-mysql -y
 sudo ln -s /etc/phpmyadmin/apache.conf /etc/apache2/conf-available/phpmyadmin.conf
 sudo a2enconf phpmyadmin
 sudo systemctl reload apache2
-
-sudo systemctl reload apache2
-
 ```
 
 ---
