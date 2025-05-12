@@ -85,7 +85,7 @@ systemctl reload apache2
 
 ##  5. Install Node.js & npm (LTS)
 
-```bash
+```
 sudo apt install curl -y
 curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
 sudo apt install -y nodejs
@@ -110,8 +110,24 @@ cd POGIL-ITS
 ---
 
 ## 7. Backend Setup (Express + MariaDB)
+If installing from the clone repository:
+```
+cd server
+npn install
+cd ../client
+npm install
+cd ..
+mysql -u root -p
+CREATE DATABASE pogil_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
-```bash
+CREATE USER 'pogil_user'@'localhost' IDENTIFIED BY 'strong_password_here';
+GRANT ALL PRIVILEGES ON pogil_db.* TO 'pogil_user'@'localhost';
+FLUSH PRIVILEGES;
+
+mysql -u pogil_user -p pogil_db < schema.sql
+```
+If installing from ground up...
+```
 cd server
 cp .env.example .env  # or create a new .env
 npm install
@@ -142,7 +158,7 @@ SESSION_SECRET=your-secret-key
 
 Start the server:
 
-```bash
+```
 npm run start
 ```
 
@@ -150,7 +166,7 @@ npm run start
 
 ## 8. Frontend Setup (React + Vite)
 
-```bash
+```
 cd ../client
 npm install
 npm run build
@@ -169,13 +185,13 @@ VITE_API_BASE_URL=http://this-ip-address:4000
 
 Create a new Apache site config:
 
-```bash
+```
 sudo emacs /etc/apache2/sites-available/pogil.conf
 ```
 
 Example config:
 
-```apache
+```
 <VirtualHost *:80>
     ServerName yourdomain.com
     DocumentRoot /path/to/POGIL-ITS/client/dist
@@ -197,7 +213,7 @@ Example config:
 
 Enable site and proxy modules:
 
-```bash
+```
 sudo a2enmod proxy proxy_http
 sudo a2ensite pogil
 sudo systemctl reload apache2
