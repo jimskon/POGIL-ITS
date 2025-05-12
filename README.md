@@ -166,6 +166,12 @@ GOOGLE_REDIRECT_URI=your-google-redirect-uri
 OPENAI_API_KEY=APIKe
 ```
 
+Make sure everything is installed:
+```
+rm -rf node_modules package-lock.json
+npm install
+```
+
 Start the server:
 
 ```
