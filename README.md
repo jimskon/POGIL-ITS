@@ -77,7 +77,7 @@ sudo ln -s /etc/phpmyadmin/apache.conf /etc/apache2/conf-available/phpmyadmin.co
 sudo a2enconf phpmyadmin
 sudo systemctl reload apache2
 
-systemctl reload apache2
+sudo systemctl reload apache2
 
 ```
 
