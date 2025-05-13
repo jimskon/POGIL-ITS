@@ -368,3 +368,8 @@ git reset --hard HEAD
 rm -rf node_modules package-lock.json
 npm install
 ```
+# UTF32 error
+```
+rm -rf node_modules package-lock.json
+npm install
+```
