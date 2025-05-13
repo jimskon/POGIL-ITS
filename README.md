@@ -357,3 +357,14 @@ You must get this from Jim Skon
 ## To get the schma from mysql
 mysqldump -u root -p --no-data --routines --triggers pogil_db > pogil_db_full_schema.sql
 
+
+# To reset git back to head
+```
+git reset --hard HEAD
+```
+
+# If the server is corrupted
+```
+rm -rf node_modules package-lock.json
+npm install
+```
