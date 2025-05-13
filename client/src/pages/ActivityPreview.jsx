@@ -22,18 +22,6 @@ export default function ActivityPreview() {
   const [elements, setElements] = useState([]);
 
   useEffect(() => {
-  async function load() {
-    const res = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activityData.sheet_url)}`);
-    const { lines } = await res.json();  // <- MUST be an array of strings!
-    console.log("📄 Raw lines from doc:", lines);
-    const structuredBlocks = parseSheetToBlocks(lines);
-    const rendered = renderBlocks(structuredBlocks);
-    setElements(rendered);  // <- direct to JSX output
-  }
-  load();
-  }, []);
-    
-  useEffect(() => {
     const loadScript = (src) => new Promise((resolve, reject) => {
       const script = document.createElement('script');
       script.src = src;
@@ -170,11 +158,20 @@ if (currentEnv) {
         return;
       }
 
-      if (trimmed.startsWith('\\textresponse')) {
-        const match = trimmed.match(/\\textresponse\{.+?,(\d+)\}/);
-        if (match) currentQuestion.responseLines = parseInt(match[1]);
-        return;
-      }
+if (trimmed.startsWith('\\textresponse')) {
+  const match = trimmed.match(/\\textresponse\{(\d+)\}/);
+  if (match) {
+    if (currentQuestion) {
+      currentQuestion.responseLines = parseInt(match[1]);
+    } else {
+      console.warn('⚠️ \\textresponse used outside of a question block');
+    }
+  } else {
+    console.warn('⚠️ Malformed \\textresponse line:', trimmed);
+  }
+  return;
+}
+
 
       if (trimmed === '\\sampleresponses') {
         collectingSamples = true;
