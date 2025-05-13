@@ -52,7 +52,7 @@ Answer the prompts to:
 ## 4. Create the Database
 
 ```bash
-sudo mariadb -u root -p
+sudo mysql -u root -p
 ```
 
 Then inside the MariaDB prompt:
@@ -76,9 +76,6 @@ sudo apt install php libapache2-mod-php php-mysql -y
 sudo ln -s /etc/phpmyadmin/apache.conf /etc/apache2/conf-available/phpmyadmin.conf
 sudo a2enconf phpmyadmin
 sudo systemctl reload apache2
-
-systemctl reload apache2
-
 ```
 
 ---
@@ -113,7 +110,7 @@ cd POGIL-ITS
 If installing from the clone repository:
 ```
 cd server
-npn install
+npm install
 cd ../client
 npm install
 cd ..
@@ -145,15 +142,34 @@ npm install prismjs
 
 ```
 
-Edit `.env`:
+Edit `server/.env`:
 
 ```
-DB_HOST=localhost
-DB_USER=pogiluser
-DB_PASSWORD=securepassword
-DB_NAME=pogil_db
+# Server
 PORT=4000
-SESSION_SECRET=your-secret-key
+
+# MariaDB
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=pogil_user
+DB_PASSWORD=secret!!!
+DB_NAME=pogil_db
+SESSION_SECRET=PhilanderChaseLovesPogil
+
+# Google API
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+GOOGLE_REDIRECT_URI=your-google-redirect-uri
+
+
+# OpenAI API
+OPENAI_API_KEY=APIKe
+```
+
+Make sure everything is installed:
+```
+rm -rf node_modules package-lock.json
+npm install
 ```
 
 Start the server:
@@ -339,5 +355,5 @@ VITE_SERVICE_ACCOUNT_EMAIL=pogil-sheets-reader@pogil-its.iam.gserviceaccount.com
 You must get this from Jim Skon
 
 ## To get the schma from mysql
-mysqldump -u root -p --no-data --routines --triggers pogil_its > pogil_its_full_schema.sql
+mysqldump -u root -p --no-data --routines --triggers pogil_db > pogil_db_full_schema.sql
 
