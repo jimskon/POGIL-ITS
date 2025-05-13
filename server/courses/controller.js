@@ -1,3 +1,4 @@
+// By James Skon
 const db = require('../db');
 
 // GET all courses
