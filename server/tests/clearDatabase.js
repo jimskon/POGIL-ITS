@@ -1,5 +1,6 @@
 // clearDatabase.js
-const db = require('../db'); // Adjust if your db file is elsewhere
+require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
+const db = require('../db');
 
 async function clearDatabase() {
   const tableOrder = [
