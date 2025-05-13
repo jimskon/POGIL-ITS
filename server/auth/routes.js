@@ -3,7 +3,7 @@ const bcrypt = require('bcrypt');
 const pool = require('../db');
 const router = express.Router();
 
-// ✅ Register new user
+// ✅ Register new user and return user object
 router.post('/register', async (req, res) => {
   console.log('Registering user:', req.body);
   const { name, email, password } = req.body;
@@ -12,18 +12,34 @@ router.post('/register', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     const conn = await pool.getConnection();
 
-    await conn.query(
+    // Insert the user
+    const [result] = await conn.query(
       'INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)',
       [name, email, hashedPassword]
     );
 
+    const userId = result.insertId;
+
+    // Retrieve the inserted user (excluding password_hash)
+    const [rows] = await conn.query(
+      'SELECT id, name, email, role FROM users WHERE id = ?',
+      [userId]
+    );
+
     conn.release();
-    res.status(201).json({ message: 'User registered successfully' });
+
+    if (rows.length === 0) {
+      return res.status(500).json({ error: 'User created but not found' });
+    }
+
+    const user = rows[0];
+    res.status(201).json(user);
   } catch (err) {
     console.error('Registration error:', err);
     res.status(500).json({ error: 'Registration failed' });
   }
 });
+
 
 // ✅ Login user
 router.post('/login', async (req, res) => {
