@@ -79,8 +79,8 @@ async function createCourse(name, code, section, semester, year, instructorId, c
 
 async function enrollStudent(courseCode, studentId) {
   await axios.post(`${BASE_URL}/courses/enroll-by-code`, {
-    courseCode,
-    studentId
+    code: courseCode,
+    userId: studentId
   });
 }
 
