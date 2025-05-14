@@ -3,6 +3,8 @@ import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
 
+import { useNavigate } from 'react-router-dom'; // <-- add this at the top
+
 export default function ManageClassActivitiesPage() {
   const { user } = useUser();
   const { classId } = useParams();
@@ -20,14 +22,28 @@ export default function ManageClassActivitiesPage() {
   };
 
   const handleAdd = async () => {
+    console.log("🚀 handleAdd called with:", newActivity);
+
     const res = await fetch('/api/activities', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...newActivity, createdBy: user.id, class_id: classId })
     });
-    const data = await res.json();
+
+    const data = await res.json(); // ✅ FIXED: must be *before* using `data`
+    console.log("🎯 Created activity:", data);
+
+    if (!data.id) {
+      console.error("❌ No ID returned from backend:", data);
+      alert("Activity created, but missing ID. Cannot preview.");
+      return;
+    }
+
     setActivities([...activities, data]);
     setNewActivity({ name: '', title: '', sheet_url: '' });
+
+    // ✅ Navigate to the preview page
+    navigate(`/preview/${data.id}`);
   };
 
   const handleUpdate = async (activity) => {

@@ -66,28 +66,49 @@ export function parseSheetToBlocks(lines) {
     }
 
     // --- Python block ---
-    if (trimmed === '\\python') {
-      flushCurrentBlock();
-      currentField = 'python';
-      currentQuestion = { type: 'python', lines: [] };
-      continue;
-    }
+// --- Python block ---
+if (trimmed === '\\python') {
+  flushCurrentBlock();
+  currentField = 'python';
+  if (currentQuestion && currentQuestion.type === 'question') {
+    if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
+    currentQuestion.pythonBlocks.push([]);
+  } else {
+    currentQuestion = { type: 'python', lines: [] };
+  }
+  continue;
+}
 
-    if (trimmed === '\\endpython') {
+if (trimmed === '\\endpython') {
+  if (currentField === 'python') {
+    if (currentQuestion?.type === 'python') {
       blocks.push({
         type: 'python',
         content: currentQuestion.lines.join('\n')
       });
       currentQuestion = null;
-      currentField = 'prompt';
-      continue;
+    } else if (currentQuestion?.pythonBlocks?.length > 0) {
+      const lines = currentQuestion.pythonBlocks.pop();
+      currentQuestion.pythonBlocks.push({
+        type: 'python',
+        content: lines.join('\n')
+      });
     }
+    currentField = 'prompt';
+  }
+  continue;
+}
 
-    if (currentField === 'python' && currentQuestion?.type === 'python') {
-      currentQuestion.lines.push(line);
-      continue;
-    }
+if (currentField === 'python') {
+  if (currentQuestion?.type === 'python') {
+    currentQuestion.lines.push(line);
+  } else if (currentQuestion?.pythonBlocks?.length > 0) {
+    currentQuestion.pythonBlocks[currentQuestion.pythonBlocks.length - 1].push(line);
+  }
+  continue;
+}
 
+    
     // --- Headers ---
     const headerMatch = trimmed.match(/^\\(title|name|section)\{(.+?)\}$/);
     if (headerMatch) {
@@ -95,126 +116,104 @@ export function parseSheetToBlocks(lines) {
       blocks.push({
         type: 'header',
         tag: headerMatch[1],
-        content: headerMatch[2]
+        content: format(headerMatch[2])
       });
       continue;
     }
 
     // --- Group start ---
-    if (trimmed.startsWith('\\questiongroup')) {
-      if (currentGroupIntro) blocks.push(currentGroupIntro);
+    if (trimmed.startsWith('\\questiongroup{')) {
       flushCurrentBlock();
       groupNumber++;
       questionLetterCode = 97;
-      currentGroupIntro = {
+      const content = trimmed.match(/\\questiongroup\{(.+?)\}/)?.[1] || '';
+      blocks.push({
         type: 'groupIntro',
         groupId: groupNumber,
-        content: ''
-      };
+        content: format(content)
+      });
       continue;
     }
 
-    // --- Question start/end ---
-    if (trimmed === '\\question') {
-      if (currentGroupIntro) {
-        blocks.push(currentGroupIntro);
-        currentGroupIntro = null;
-      }
+    if (trimmed === '\\endquestiongroup') {
+      blocks.push({ type: 'endGroup' });
+      continue;
+    }
+
+    // --- Question ---
+    if (trimmed.startsWith('\\question{')) {
+      const content = trimmed.match(/\\question\{(.+?)\}/)?.[1] || '';
       const id = String.fromCharCode(questionLetterCode++);
       currentQuestion = {
         type: 'question',
         id,
         label: `${id}.`,
         responseId: responseId++,
-        prompt: '',
+        prompt: format(content),
         responseLines: 1,
         samples: [],
         feedback: [],
         followups: []
       };
-      currentField = 'prompt';
       continue;
     }
 
     if (trimmed === '\\endquestion') {
-      blocks.push(currentQuestion);
+      if (currentQuestion !== null) {
+        blocks.push(currentQuestion);
+      } else {
+        console.warn("⚠️ \\endquestion found without matching \\question");
+      }
       currentQuestion = null;
-      currentField = 'prompt';
       continue;
     }
 
-    // --- Question internals ---
     if (trimmed.startsWith('\\textresponse')) {
       const match = trimmed.match(/\\textresponse\{(\d+)\}/);
+      if (!currentQuestion) {
+        console.warn("⚠️ \\textresponse found outside of a question block");
+        continue;
+      }
       if (match) currentQuestion.responseLines = parseInt(match[1]);
       continue;
     }
 
-    if (trimmed === '\\sampleresponses') {
-      currentField = 'samples';
-      continue;
-    }
-    if (trimmed === '\\endsampleresponses') {
-      currentField = 'prompt';
+    if (trimmed.startsWith('\\sampleresponses{')) {
+      const match = trimmed.match(/\\sampleresponses\{(.+?)\}/);
+      if (match && currentQuestion) currentQuestion.samples.push(format(match[1]));
       continue;
     }
 
-    if (trimmed === '\\feedbackprompt') {
-      currentField = 'feedback';
-      continue;
-    }
-    if (trimmed === '\\endfeedbackprompt') {
-      currentField = 'prompt';
+    if (trimmed.startsWith('\\feedbackprompt{')) {
+      const match = trimmed.match(/\\feedbackprompt\{(.+?)\}/);
+      if (match && currentQuestion) currentQuestion.feedback.push(format(match[1]));
       continue;
     }
 
-    if (trimmed === '\\followupprompt') {
-      currentField = 'followups';
-      continue;
-    }
-    if (trimmed === '\\endfollowupprompt') {
-      currentField = 'prompt';
+    if (trimmed.startsWith('\\followupprompt{')) {
+      const match = trimmed.match(/\\followupprompt\{(.+?)\}/);
+      if (match && currentQuestion) currentQuestion.followups.push(format(match[1]));
       continue;
     }
 
-    if (line === '\\endquestiongroup') {
-      blocks.push({ type: 'endGroup' });
-      continue;
-    }
-    
-    // --- Treat \text{...} and similar as own block ---
-    if (/^\\text(it|bf)?\{.+\}$/.test(trimmed)) {
+    // --- \\textbf as line ---
+    const textbfMatch = trimmed.match(/^\\textbf\{(.+?)\}$/);
+    if (textbfMatch) {
+      flushCurrentBlock();
       blocks.push({
         type: 'text',
-        content: format(trimmed)
+        content: `<strong>${textbfMatch[1]}</strong>`
       });
       continue;
     }
 
-    // --- Add to group intro or question ---
-    if (currentGroupIntro && !currentQuestion) {
-      currentGroupIntro.content += (currentGroupIntro.content ? ' ' : '') + format(line);
-      continue;
-    }
-
-    if (currentQuestion) {
-      if (currentField === 'prompt') {
-        currentQuestion.prompt += (currentQuestion.prompt ? ' ' : '') + format(line);
-      } else {
-        currentQuestion[currentField].push(format(line));
-      }
-      continue;
-    }
-
-    // --- Fallback: generic text block ---
+    // --- Text fallback ---
     currentBlock.push(format(line));
   }
 
   flushCurrentBlock();
-
   return blocks;
 }
-
 
 export function renderBlocks(blocks, options = {}) {
   const {
@@ -222,9 +221,15 @@ export function renderBlocks(blocks, options = {}) {
     isActive = false,
     onSave = () => {},
     onSubmit = () => {},
+    mode = 'preview'
   } = options;
 
   return blocks.map((block, index) => {
+    if (block.type === 'endGroup') {
+      return mode === 'preview'
+        ? <hr key={`endgroup-${index}`} className="my-4" />
+        : <div key={`endgroup-${index}`} data-type="endGroup" />;
+    }
     if (block.type === 'python') {
       return (
         <ActivityPythonBlock
@@ -238,56 +243,33 @@ export function renderBlocks(blocks, options = {}) {
         />
       );
     }
-
-    if (block.type === 'code') {
-      return (
-        <pre key={`code-${index}`} className="bg-light p-2 rounded">
-          <code className="language-python">{block.content}</code>
-        </pre>
-      );
-    }
-
     if (block.type === 'question') {
       return (
         <div key={`q-${block.id}`} className="mb-3">
           <p><strong>{block.label}</strong> {block.prompt}</p>
-          {block.code?.map((codeBlock, i) => (
+          {block.pythonBlocks?.map((py, i) => (
             <ActivityPythonBlock
-              key={`qcode-${block.id}-${i}`}
-              code={codeBlock.content}
-              blockIndex={i}
+              key={`q-${block.id}-py-${i}`}
+              code={py.content}
+              editable={editable}
+              isActive={isActive}
+              onSave={onSave}
+              onSubmit={onSubmit}
             />
           ))}
           <ActivityQuestionBlock question={block} editable={editable} />
         </div>
       );
     }
-
     if (block.type === 'header') {
       return <ActivityHeader key={`h-${index}`} {...{ [block.tag]: block.content }} />;
     }
-
     if (block.type === 'groupIntro') {
-      return (
-        <div key={`g-${block.groupId}`} className="mb-3">
-          <p><strong>{block.groupId}.</strong> {block.content}</p>
-          {block.code?.map((codeBlock, i) => (
-            <ActivityPythonBlock
-              key={`gcode-${block.groupId}-${i}`}
-              code={codeBlock.content}
-              blockIndex={i}
-            />
-          ))}
-        </div>
-      );
+      return <p key={`g-${block.groupId}`}><strong>{block.groupId}.</strong> {block.content}</p>;
     }
-
     if (block.type === 'text') {
-      return (
-        <p key={`text-${index}`} dangerouslySetInnerHTML={{ __html: block.content }} />
-      );
+      return <p key={`text-${index}`} dangerouslySetInnerHTML={{ __html: block.content }} />;
     }
-
     if (block.type === 'list') {
       const ListTag = block.listType === 'ul' ? 'ul' : 'ol';
       return (
@@ -298,7 +280,6 @@ export function renderBlocks(blocks, options = {}) {
         </ListTag>
       );
     }
-
     return <div key={index}>[Unknown block type: {block.type}]</div>;
   });
-}
+} // end of parseSheet.js
