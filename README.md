@@ -377,3 +377,7 @@ npm install
 ```
 nohup npm start > out.log 2>&1 &
 ```
+# Create rsa key
+```
+ssh-keygen -t rsa -b 4096 -C "your_email@example.com"
+```
