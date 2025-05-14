@@ -1,3 +1,4 @@
+// RunActivityPage.jsx
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { Container, Alert, Button } from 'react-bootstrap';
@@ -19,6 +20,9 @@ export default function RunActivityPage() {
   const [groupMembers, setGroupMembers] = useState([]);
   const [activeStudentId, setActiveStudentId] = useState(null);
   const [currentGroupIndex, setCurrentGroupIndex] = useState(0);
+
+  const [preamble, setPreamble] = useState([]);
+
 
   const isActive =
     user.id === activeStudentId ||
@@ -87,7 +91,9 @@ export default function RunActivityPage() {
         console.log("🔍 Parsed blocks:", blocks);
 
         const grouped = [];
+        const preamble = [];
         let currentGroup = null;
+        
         for (let block of blocks) {
           if (block.type === 'groupIntro') {
             if (currentGroup) grouped.push(currentGroup);
@@ -99,12 +105,16 @@ export default function RunActivityPage() {
             }
           } else if (currentGroup) {
             currentGroup.content.push(block);
-          } else if (block.type !== 'text' || block.content.trim() !== '') {
-            // ignore empty text blocks outside a group
-            console.warn('❗ Orphaned block:', block);
+          } else {
+            preamble.push(block); // instead of warning
           }
-          
         }
+        
+        if (currentGroup) grouped.push(currentGroup);
+        
+        setGroups(grouped);
+        setPreamble(preamble); // 👈 new state
+        
         if (currentGroup) grouped.push(currentGroup);
         
         setGroups(grouped);
@@ -158,23 +168,26 @@ export default function RunActivityPage() {
       ) : (
         <Alert variant="info">⏳ You are currently observing. The active student is submitting.</Alert>
       )}
+      
+      {renderBlocks(preamble, { editable: false, isActive: false, mode: 'run' })}
 
       <p>
         <strong>{currentGroup.intro.groupId}.</strong> {currentGroup.intro.content}
       </p>
 
       {renderBlocks(currentGroup.content, {
-        editable: isActive,
-        isActive,
-        onSave: (code) => {
-          console.log('💾 Save:', code);
-          // TODO: save-to-server logic
-        },
-        onSubmit: (code) => {
-          console.log('📤 Submit:', code);
-          setCurrentGroupIndex((prev) => prev + 1);
-        }
+      editable: isActive,
+      isActive,
+      mode: 'run', // ← THIS is the missing part
+      onSave: (code) => {
+       console.log('💾 Save:', code);
+      },
+      onSubmit: (code) => {
+        console.log('📤 Submit:', code);
+        setCurrentGroupIndex((prev) => prev + 1);
+      }
       })}
+
 
       {isActive && (
         <div className="mt-3">

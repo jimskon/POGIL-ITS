@@ -3,6 +3,7 @@ import ActivityQuestionBlock from '../components/activity/ActivityQuestionBlock'
 import ActivityHeader from '../components/activity/ActivityHeader';
 import ActivityEnvironment from '../components/activity/ActivityEnvironment';
 import ActivityPythonBlock from '../components/activity/ActivityPythonBlock';
+import { Form } from 'react-bootstrap';
 
 export function parseSheetToBlocks(lines) {
   console.log("🧑‍💻 parseSheetToBlocks invoked");
@@ -224,7 +225,13 @@ export function renderBlocks(blocks, options = {}) {
     mode = 'preview'
   } = options;
 
+  const hiddenTypesInRun = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
+
+
   return blocks.map((block, index) => {
+    if (hiddenTypesInRun.includes(block.type) && mode !== 'preview') {
+      return null;
+    } 
     if (block.type === 'endGroup') {
       return mode === 'preview'
         ? <hr key={`endgroup-${index}`} className="my-4" />
@@ -247,6 +254,8 @@ export function renderBlocks(blocks, options = {}) {
       return (
         <div key={`q-${block.id}`} className="mb-3">
           <p><strong>{block.label}</strong> {block.prompt}</p>
+    
+          {/* Python code blocks (if any) */}
           {block.pythonBlocks?.map((py, i) => (
             <ActivityPythonBlock
               key={`q-${block.id}-py-${i}`}
@@ -257,10 +266,48 @@ export function renderBlocks(blocks, options = {}) {
               onSubmit={onSubmit}
             />
           ))}
-          <ActivityQuestionBlock question={block} editable={editable} />
+    
+          {/* Text input */}
+          <Form.Control
+            as="textarea"
+            rows={block.responseLines || 1}
+            defaultValue=""
+            readOnly={!editable}
+          />
+    
+          {/* Render metadata ONLY in preview mode */}
+          {mode === 'preview' && (
+            <>
+              {block.samples?.length > 0 && (
+                <div className="mt-2 text-muted small">
+                  <strong>Sample Responses:</strong>
+                  <ul>
+                    {block.samples.map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
+                </div>
+              )}
+              {block.feedback?.length > 0 && (
+                <div className="mt-2 text-muted small">
+                  <strong>Feedback Prompts:</strong>
+                  <ul>
+                    {block.feedback.map((f, i) => <li key={i}>{f}</li>)}
+                  </ul>
+                </div>
+              )}
+              {block.followups?.length > 0 && (
+                <div className="mt-2 text-muted small">
+                  <strong>Follow-up Prompts:</strong>
+                  <ul>
+                    {block.followups.map((f, i) => <li key={i}>{f}</li>)}
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
         </div>
       );
     }
+    
     if (block.type === 'header') {
       return <ActivityHeader key={`h-${index}`} {...{ [block.tag]: block.content }} />;
     }

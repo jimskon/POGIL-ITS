@@ -1,0 +1,20 @@
+# Node.js
+server/node_modules/
+client/node_modules
+client/node_modules/
+server/.env
+client/.env
+*.log
+dist/
+build/
+*~
+*-save
+*\#
+
+# Vite / React
+.vite/
+/client/.vite/
+*.local
+
+# OS junk
+Thumbs.db
