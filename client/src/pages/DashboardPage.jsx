@@ -64,16 +64,6 @@ export default function DashboardPage() {
     <Container className="mt-4">
       <h2>Welcome, {user?.name}</h2>
 
-      {canManage && (
-        <Row className="mt-4 mb-4">
-          <Col><Button variant="secondary" onClick={() => navigate('/manage-courses')}>Manage Courses</Button></Col>
-          <Col><Button variant="secondary" onClick={() => navigate('/manage-classes')}>Manage Classes</Button></Col>
-          {user.role === 'root' && (
-            <Col><Button variant="danger" onClick={() => navigate('/admin/users')}>Manage Users</Button></Col>
-          )}
-        </Row>
-      )}
-
       {user?.id && (
         <>
           {loading ? (
