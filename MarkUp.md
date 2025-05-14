@@ -1,12 +1,12 @@
-# 📝 POGIL Markup Language Cheat Sheet 
-## 🔖 Document Metadata
+# POGIL Markup Language Cheat Sheet 
+## Document Metadata
 | Syntax             | Description                          | Example                          |
 |--------------------|--------------------------------------|----------------------------------|
 | `\title{...}`      | Title of the activity                 | `\title{Void Functions - V2.0}` |
 | `\name{...}`       | Unique identifier for the activity    | `\name{voidfunctions}`          |
 | `\section{...}`    | Section heading                       | `\section{Learning Objectives}` |
 
-## 📦 Blocks and Structure
+## Blocks and Structure
 | Syntax                 | Description                                     | Example                            |
 |------------------------|-------------------------------------------------|------------------------------------|
 | `\block`               | Starts a content-only section (not a group)     | `\block`                           |
@@ -14,14 +14,14 @@
 | `\questiongroup{...}`  | Starts a group of related questions with intro  | `\questiongroup{Explore output}`  |
 | `\endquestiongroup`    | Ends a question group                           | `\endquestiongroup`               |
 
-## 🧠 Text and Formatting
+## Text and Formatting
 | Syntax           | Description              | Example                                |
 |------------------|--------------------------|----------------------------------------|
 | `\text{...}`     | Plain inline paragraph   | `\text{This is an intro paragraph.}`   |
 | `\textbf{...}`   | Bold inline text         | `\textbf{Content}`                     |
 | `\textit{...}`   | Italic inline text       | `\textit{Remember this rule}`          |
 
-## 📝 Lists
+## Lists
 | Syntax               | Description              | Example                                |
 |----------------------|--------------------------|----------------------------------------|
 | `\begin{itemize}`    | Start bullet list        |                                        |
@@ -30,13 +30,13 @@
 | `\begin{enumerate}`  | Start numbered list      |                                        |
 | `\end{enumerate}`    | End numbered list        |                                        |
 
-## 🐍 Python Code
+## Python Code
 | Syntax        | Description                  | Example                                |
 |---------------|------------------------------|----------------------------------------|
 | `\python`     | Begin Python code block      | `\python`                              |
 | `\endpython`  | End Python code block        | `\endpython`                           |
 
-## ❓ Questions and Responses
+## Questions and Responses
 | Syntax                      | Description                                                  | Example                                       |
 |-----------------------------|--------------------------------------------------------------|-----------------------------------------------|
 | `\question{...}`            | Start a question with inline prompt text                     | `\question{What does def mean?}`             |
@@ -48,6 +48,6 @@
 
 ---
 
-## 🧪 Examples
+##  Examples
 
-### ✅ Question Example
+### Question Example
