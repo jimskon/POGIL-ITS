@@ -1,5 +1,4 @@
-# 📝 POGIL Markup Language Cheat Sheet (2025 Syntax)
-
+# 📝 POGIL Markup Language Cheat Sheet 
 ## 🔖 Document Metadata
 | Syntax             | Description                          | Example                          |
 |--------------------|--------------------------------------|----------------------------------|
