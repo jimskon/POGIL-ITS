@@ -7,7 +7,7 @@ const rl = readline.createInterface({
 });
 
 const BASE_URL = 'http://localhost:4000/api';
-const PASSWORD = 'password';
+const PASSWORD = 'pinhead';
 
 function prompt(question) {
   return new Promise(resolve => rl.question(question, resolve));
@@ -159,6 +159,7 @@ async function main() {
   } finally {
     rl.close();
   }
+  console.log("The passwords are all set to: ",PASSWORD);
 }
 
 main();
