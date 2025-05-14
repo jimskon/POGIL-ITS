@@ -65,6 +65,16 @@ FLUSH PRIVILEGES;
 EXIT;
 ```
 
+### To regenreate the database after a change
+```
+sudo mysql -u root -p
+drop database pogil_db;
+CREATE DATABASE pogil_db CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+FLUSH PRIVILEGES;
+EXIT;
+mysql -u pogil_user -p pogil_db < schema.sql
+```
+
 ### Install phpmyadmin
 ```
 sudo apt install phpmyadmin php-mbstring php-zip php-gd php-json php-curl -y
