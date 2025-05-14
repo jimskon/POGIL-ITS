@@ -81,7 +81,28 @@ export default function RunActivityPage() {
         if (userGroup) {
           setGroupId(userGroup.group_id);
           setGroupMembers(userGroup.members);
+        
+          if (userGroup.members.length === 1) {
+            setActiveStudentId(userGroup.members[0].student_id);
+          } else {
+            // only set if no active student is already saved in DB
+            const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
+            const { activeStudentId } = await res.json();
+        
+            if (!activeStudentId) {
+              const random = userGroup.members[Math.floor(Math.random() * userGroup.members.length)];
+              await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ activeStudentId: random.student_id })
+              });
+              setActiveStudentId(random.student_id);
+            } else {
+              setActiveStudentId(activeStudentId);
+            }
+          }
         }
+        
 
         const docRes = await fetch(
           `${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activityData.sheet_url)}`
@@ -182,10 +203,40 @@ export default function RunActivityPage() {
       onSave: (code) => {
        console.log('💾 Save:', code);
       },
-      onSubmit: (code) => {
+      onSubmit: async (code) => {
         console.log('📤 Submit:', code);
+      
+        // Save current group’s answers (to be implemented as needed)
+        await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            groupId,
+            groupIndex: currentGroupIndex,
+            studentId: user.id,
+            answers: code // optional: actual answers
+          })
+        });
+      
+        // Advance group index
         setCurrentGroupIndex((prev) => prev + 1);
+      
+        // Pick a new active student randomly
+        const others = groupMembers.filter(m => m.student_id !== user.id);
+        const next = others.length > 0
+          ? others[Math.floor(Math.random() * others.length)]
+          : groupMembers[0];
+      
+        // Save new active student to server
+        await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ activeStudentId: next.student_id })
+        });
+      
+        setActiveStudentId(next.student_id);
       }
+      
       })}
 
 
