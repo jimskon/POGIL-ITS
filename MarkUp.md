@@ -1,82 +1,54 @@
-# 📝 POGIL Markup Language Cheat Sheet
+# 📝 POGIL Markup Language Cheat Sheet (2025 Syntax)
 
 ## 🔖 Document Metadata
-| Syntax             | Description                        | Example                          |
-|--------------------|------------------------------------|----------------------------------|
-| `\questiongroup`   | Starts a group of related questions | `\questiongroup`                |
-| `\endquestiongroup`| Ends a group of related questions   | `\endquestiongroup`             |
-| `\title{...}`      | Title of the activity               | `\title{Void Functions - V2.0}` |
-| `\name{...}`       | Unique identifier for activity      | `\name{voidfunctions}`          |
-| `\section{...}`    | Section heading                     | `\section{Learning Objectives}` |
+| Syntax             | Description                          | Example                          |
+|--------------------|--------------------------------------|----------------------------------|
+| `\title{...}`      | Title of the activity                 | `\title{Void Functions - V2.0}` |
+| `\name{...}`       | Unique identifier for the activity    | `\name{voidfunctions}`          |
+| `\section{...}`    | Section heading                       | `\section{Learning Objectives}` |
 
-## 🧠 Learning Objectives and Descriptive Text
-| Syntax             | Description                        | Example                          |
-|--------------------|------------------------------------|----------------------------------|
-| `\text{...}`       | Plain paragraph text                | `\text{Students will be able to:}` |
-| `\textbf{...}`     | Boldface inline text                | `\textbf{Content}`              |
+## 📦 Blocks and Structure
+| Syntax                 | Description                                     | Example                            |
+|------------------------|-------------------------------------------------|------------------------------------|
+| `\block`               | Starts a content-only section (not a group)     | `\block`                           |
+| `\endblock`            | Ends a content block                            | `\endblock`                        |
+| `\questiongroup{...}`  | Starts a group of related questions with intro  | `\questiongroup{Explore output}`  |
+| `\endquestiongroup`    | Ends a question group                           | `\endquestiongroup`               |
+
+## 🧠 Text and Formatting
+| Syntax           | Description              | Example                                |
+|------------------|--------------------------|----------------------------------------|
+| `\text{...}`     | Plain inline paragraph   | `\text{This is an intro paragraph.}`   |
+| `\textbf{...}`   | Bold inline text         | `\textbf{Content}`                     |
+| `\textit{...}`   | Italic inline text       | `\textit{Remember this rule}`          |
 
 ## 📝 Lists
-| Syntax                   | Description                       | Example                              |
-|--------------------------|-----------------------------------|--------------------------------------|
-| `\begin{itemize}`        | Starts a bullet list              |                                      |
-| `\item ...`              | Bullet point                      | `\item Explain the meaning...`       |
-| `\end{itemize}`          | Ends bullet list                  |                                      |
-| `\begin{enumerate}`      | Starts a numbered list            |                                      |
-| `\end{enumerate}`        | Ends numbered list                |                                      |
+| Syntax               | Description              | Example                                |
+|----------------------|--------------------------|----------------------------------------|
+| `\begin{itemize}`    | Start bullet list        |                                        |
+| `\item ...`          | List item                | `\item Reuse code`                     |
+| `\end{itemize}`      | End bullet list          |                                        |
+| `\begin{enumerate}`  | Start numbered list      |                                        |
+| `\end{enumerate}`    | End numbered list        |                                        |
 
 ## 🐍 Python Code
-| Syntax        | Description                      | Example                     |
-|---------------|----------------------------------|-----------------------------|
-| `\python`     | Starts a Python code block       | `\python`                   |
-| `\endpython`  | Ends a Python code block         | `\endpython`                |
+| Syntax        | Description                  | Example                                |
+|---------------|------------------------------|----------------------------------------|
+| `\python`     | Begin Python code block      | `\python`                              |
+| `\endpython`  | End Python code block        | `\endpython`                           |
 
 ## ❓ Questions and Responses
-| Syntax                 | Description                                             | Example                                       |
-|------------------------|---------------------------------------------------------|-----------------------------------------------|
-| `\question`            | Begins a question                                       | `\question`                                   |
-| `\endquestion`         | Ends a question                                         | `\endquestion`                                |
-| `\textresponse{n}`     | Text area for student response (n = # lines)            | `\textresponse{3}`                            |
-| `\sampleresponses`     | Starts block of sample responses                        | `\sampleresponses`                            |
-| `\endsampleresponses`  | Ends block of sample responses                          | `\endsampleresponses`                         |
-| `\feedbackprompt`      | Starts feedback guidance for instructors                | `\feedbackprompt`                             |
-| `\endfeedbackprompt`   | Ends feedback guidance                                  | `\endfeedbackprompt`                          |
-| `\followupprompt`      | Starts follow-up question prompt                        | `\followupprompt`                             |
-| `\endfollowupprompt`   | Ends follow-up prompt                                   | `\endfollowupprompt`                          |
+| Syntax                      | Description                                                  | Example                                       |
+|-----------------------------|--------------------------------------------------------------|-----------------------------------------------|
+| `\question{...}`            | Start a question with inline prompt text                     | `\question{What does def mean?}`             |
+| `\endquestion`              | End the current question                                     | `\endquestion`                                |
+| `\textresponse{n}`          | Response box (n lines)                                       | `\textresponse{3}`                            |
+| `\sampleresponses{...}`     | Inline sample response                                       | `\sampleresponses{The keyword is \`def\`.}`   |
+| `\feedbackprompt{...}`      | Instructor feedback guidance                                 | `\feedbackprompt{Check if they mention def}`  |
+| `\followupprompt{...}`      | Follow-up prompt to ask student a deeper question            | `\followupprompt{Ask about use of def}`       |
+
+---
 
 ## 🧪 Examples
 
-### Question Example
-```
-\question
-What is the purpose of a function in Python?
-\textresponse{3}
-
-\sampleresponses
-To avoid repeating code and organize logic.
-\endsampleresponses
-
-\feedbackprompt
-Evaluate whether the student explains reuse and structure benefits.
-\endfeedbackprompt
-
-\followupprompt
-Ask the student to provide an example of function reuse.
-\endfollowupprompt
-\endquestion
-```
-
-### Code Block Example
-```
-\python
-def greet():
-    print("Hello!")
-
-greet()
-\endpython
-```
-
-## ✅ Notes
-- All environments like `\begin{itemize}` must be properly closed with `\end{itemize}`.
-- All questions are self-contained within `\question` and `\endquestion`.
-- Question groups should be wrapped in `\questiongroup` and `\endquestiongroup`.
-- Document begins with metadata using `\title`, `\name`, and `\section`.
+### ✅ Question Example
