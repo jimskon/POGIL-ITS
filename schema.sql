@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS activity_instances (
   activity_id INT,
   course_id INT,
   group_number INT DEFAULT NULL,
+  active_student_id INT DEFAULT NULL,
   start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   status ENUM('in_progress', 'completed') DEFAULT 'in_progress',
   FOREIGN KEY (activity_id) REFERENCES pogil_activities(id),
