@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS group_members (
   activity_group_id INT NOT NULL,
   student_id INT NOT NULL,
   role ENUM('facilitator', 'spokesperson', 'analyst', 'qc') NOT NULL,
+  last_heartbeat DATETIME DEFAULT NULL;
   UNIQUE KEY unique_member_role (activity_group_id, role),
   FOREIGN KEY (activity_group_id) REFERENCES activity_groups(id) ON DELETE CASCADE,
   FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
