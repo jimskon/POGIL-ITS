@@ -1,28 +1,26 @@
--- Users
-CREATE TABLE IF NOT EXISTS users (
+-- USERS
+CREATE TABLE users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name TEXT NOT NULL,
-  email TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role ENUM('root', 'creator', 'instructor', 'student', 'grader') NOT NULL DEFAULT 'student',
+  role ENUM('root', 'creator', 'instructor', 'student', 'grader') DEFAULT 'student',
   created_by INT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY email (email),
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
--- POGIL Classes
-CREATE TABLE IF NOT EXISTS pogil_classes (
+-- POGIL CLASSES
+CREATE TABLE pogil_classes (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  name VARCHAR(191) NOT NULL,
+  name VARCHAR(191) NOT NULL UNIQUE,
   description TEXT,
   created_by INT,
-  UNIQUE KEY name (name),
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
--- Courses (within a class)
-CREATE TABLE IF NOT EXISTS courses (
+-- COURSES (within a class)
+CREATE TABLE courses (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name TEXT NOT NULL,
   code TEXT NOT NULL,
@@ -32,13 +30,13 @@ CREATE TABLE IF NOT EXISTS courses (
   instructor_id INT,
   class_id INT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY unique_course_key (code, section, semester, year),
+  UNIQUE KEY (code, section, semester, year),
   FOREIGN KEY (instructor_id) REFERENCES users(id) ON DELETE SET NULL,
   FOREIGN KEY (class_id) REFERENCES pogil_classes(id) ON DELETE SET NULL
 );
 
--- Enrollments
-CREATE TABLE IF NOT EXISTS course_enrollments (
+-- COURSE ENROLLMENTS
+CREATE TABLE course_enrollments (
   id INT AUTO_INCREMENT PRIMARY KEY,
   course_id INT NOT NULL,
   student_id INT NOT NULL,
@@ -47,60 +45,60 @@ CREATE TABLE IF NOT EXISTS course_enrollments (
   FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- Activities (metadata per class)
-CREATE TABLE IF NOT EXISTS pogil_activities (
+-- POGIL ACTIVITIES (metadata per class)
+CREATE TABLE pogil_activities (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(191) NOT NULL,
   title TEXT NOT NULL,
   sheet_url TEXT,
   class_id INT NOT NULL,
-  order_index INT NOT NULL DEFAULT 0,
+  order_index INT DEFAULT 0,
   created_by INT,
   last_loaded TIMESTAMP,
   FOREIGN KEY (class_id) REFERENCES pogil_classes(id) ON DELETE CASCADE,
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
--- Activity Instances (per course)
-CREATE TABLE IF NOT EXISTS activity_instances (
+-- ACTIVITY INSTANCES (one per course+activity run)
+CREATE TABLE activity_instances (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  activity_id INT,
-  course_id INT,
-  group_number INT DEFAULT NULL,
+  activity_id INT NOT NULL,
+  course_id INT NOT NULL,
   active_student_id INT DEFAULT NULL,
   start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   status ENUM('in_progress', 'completed') DEFAULT 'in_progress',
   FOREIGN KEY (activity_id) REFERENCES pogil_activities(id),
-  FOREIGN KEY (course_id) REFERENCES courses(id)
+  FOREIGN KEY (course_id) REFERENCES courses(id),
+  FOREIGN KEY (active_student_id) REFERENCES users(id)
 );
 
--- Groups per instance
-CREATE TABLE IF NOT EXISTS activity_groups (
+-- ACTIVITY GROUPS (per instance, regrouped every time)
+CREATE TABLE activity_groups (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  activity_instance_id INT,
-  group_number INT NOT NULL DEFAULT 1,
-  UNIQUE KEY unique_group_per_instance (activity_instance_id, group_number),
-  FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id)
+  activity_instance_id INT NOT NULL,
+  group_number INT NOT NULL,
+  UNIQUE(activity_instance_id, group_number),
+  FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE
 );
 
--- Group membership with roles
-CREATE TABLE IF NOT EXISTS group_members (
+-- GROUP MEMBERS (roles within group per activity instance)
+CREATE TABLE group_members (
   id INT AUTO_INCREMENT PRIMARY KEY,
   activity_group_id INT NOT NULL,
   student_id INT NOT NULL,
   role ENUM('facilitator', 'spokesperson', 'analyst', 'qc') NOT NULL,
-  last_heartbeat DATETIME DEFAULT NULL;
-  UNIQUE KEY unique_member_role (activity_group_id, role),
+  last_heartbeat DATETIME DEFAULT NULL,
+  UNIQUE(activity_group_id, role),
   FOREIGN KEY (activity_group_id) REFERENCES activity_groups(id) ON DELETE CASCADE,
   FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- Responses
-CREATE TABLE IF NOT EXISTS responses (
+-- RESPONSES
+CREATE TABLE responses (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  activity_instance_id INT,
+  activity_instance_id INT NOT NULL,
   question_id TEXT NOT NULL,
-  response_type ENUM('text', 'python', 'cpp') NOT NULL DEFAULT 'text',
+  response_type ENUM('text', 'python', 'cpp') DEFAULT 'text',
   response TEXT NOT NULL,
   submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -111,8 +109,8 @@ CREATE TABLE IF NOT EXISTS responses (
   FOREIGN KEY (answered_by_user_id) REFERENCES users(id)
 );
 
--- AI-generated feedback
-CREATE TABLE IF NOT EXISTS feedback (
+-- FEEDBACK
+CREATE TABLE feedback (
   id INT AUTO_INCREMENT PRIMARY KEY,
   response_id INT,
   feedback_text TEXT NOT NULL,
@@ -120,8 +118,8 @@ CREATE TABLE IF NOT EXISTS feedback (
   FOREIGN KEY (response_id) REFERENCES responses(id)
 );
 
--- AI-generated follow-up questions
-CREATE TABLE IF NOT EXISTS followups (
+-- FOLLOWUPS
+CREATE TABLE followups (
   id INT AUTO_INCREMENT PRIMARY KEY,
   response_id INT,
   followup_prompt TEXT NOT NULL,
@@ -130,8 +128,8 @@ CREATE TABLE IF NOT EXISTS followups (
   FOREIGN KEY (response_id) REFERENCES responses(id)
 );
 
--- Event logging
-CREATE TABLE IF NOT EXISTS event_log (
+-- EVENT LOGGING
+CREATE TABLE event_log (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT,
   activity_instance_id INT,
@@ -142,13 +140,13 @@ CREATE TABLE IF NOT EXISTS event_log (
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE
 );
 
--- Heartbeat tracking for active participants
-CREATE TABLE IF NOT EXISTS activity_heartbeats (
+-- HEARTBEAT TRACKING
+CREATE TABLE activity_heartbeats (
   id INT AUTO_INCREMENT PRIMARY KEY,
   activity_instance_id INT NOT NULL,
   user_id INT NOT NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE KEY unique_heartbeat (activity_instance_id, user_id),
+  UNIQUE(activity_instance_id, user_id),
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
