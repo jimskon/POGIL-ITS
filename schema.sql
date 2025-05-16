@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS activity_instances (
   activity_id INT,
   course_id INT,
   group_number INT DEFAULT NULL,
+  active_student_id INT DEFAULT NULL,
   start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   status ENUM('in_progress', 'completed') DEFAULT 'in_progress',
   FOREIGN KEY (activity_id) REFERENCES pogil_activities(id),
@@ -88,6 +89,7 @@ CREATE TABLE IF NOT EXISTS group_members (
   activity_group_id INT NOT NULL,
   student_id INT NOT NULL,
   role ENUM('facilitator', 'spokesperson', 'analyst', 'qc') NOT NULL,
+  last_heartbeat DATETIME DEFAULT NULL;
   UNIQUE KEY unique_member_role (activity_group_id, role),
   FOREIGN KEY (activity_group_id) REFERENCES activity_groups(id) ON DELETE CASCADE,
   FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
