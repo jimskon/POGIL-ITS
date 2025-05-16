@@ -1,4 +1,3 @@
-// utils/parseSheet.js
 import ActivityQuestionBlock from '../components/activity/ActivityQuestionBlock';
 import ActivityHeader from '../components/activity/ActivityHeader';
 import ActivityEnvironment from '../components/activity/ActivityEnvironment';
@@ -37,9 +36,6 @@ export function parseSheetToBlocks(lines) {
       .replace(/\\textit\{(.+?)\}/g, '<em>$1</em>')
       .replace(/\\text\{(.+?)\}/g, '$1');
 
-
-
-      
   for (let line of lines) {
     const trimmed = line.trim();
     console.log("Processing line:", trimmed);
@@ -80,7 +76,6 @@ export function parseSheetToBlocks(lines) {
       } else {
         currentQuestion = { type: 'python', lines: [] };
       }
-
       continue;
     }
 
@@ -115,16 +110,31 @@ export function parseSheetToBlocks(lines) {
     }
 
     // --- Headers ---
-    const headerMatch = trimmed.match(/^\\(title|name|section)\{(.+?)\}$/);
-    if (headerMatch) {
-      flushCurrentBlock();
-      blocks.push({
-        type: 'header',
-        tag: headerMatch[1],
-        content: format(headerMatch[2])
-      });
-      continue;
-    }
+    // --- Simple headers (title, name) ---
+  const headerMatch = trimmed.match(/^\\(title|name)\{(.+?)\}$/);
+  if (headerMatch) {
+    flushCurrentBlock();
+    blocks.push({
+      type: 'header',
+      tag: headerMatch[1],
+      content: format(headerMatch[2])
+    });
+    continue;
+  }
+
+    // --- Sections (e.g., Learning Objectives, Content, Process)
+    const sectionMatch = trimmed.match(/^\\section\*?\{(.+?)\}$/);
+  if (sectionMatch) {
+    flushCurrentBlock();
+    blocks.push({
+      type: 'section',
+      name: format(sectionMatch[1]),
+      content: []      // you may later collect nested blocks here if you want true sub‐trees
+    });
+    continue;
+  }
+ 
+  
 
     // --- Group start ---
     if (trimmed.startsWith('\\questiongroup{')) {
@@ -234,12 +244,65 @@ export function renderBlocks(blocks, options = {}) {
   return blocks.map((block, index) => {
     if (hiddenTypesInRun.includes(block.type) && mode !== 'preview') {
       return null;
-    } 
+    }
+
     if (block.type === 'endGroup') {
       return mode === 'preview'
         ? <hr key={`endgroup-${index}`} className="my-4" />
         : <div key={`endgroup-${index}`} data-type="endGroup" />;
     }
+
+    if (block.type === 'header') {
+      const Tag = block.tag === 'title' ? 'h2' : block.tag === 'section' ? 'h4' : 'p';
+      return ( 
+        <Tag key={`header-${index}`} className="my-3 font-bold">
+          {block.content}
+        </Tag>
+      );
+    }
+
+    if (block.type === 'text') {
+      return (
+        <p key={`text-${index}`} className="my-2">
+          <span dangerouslySetInnerHTML={{ __html: block.content }} />
+        </p>
+      );
+    }
+
+    if (block.type === 'list') {
+      const ListTag = block.listType === 'ul' ? 'ul' : 'ol';
+      return (
+        <ListTag key={`list-${index}`} className="my-2 list-disc list-inside">
+          {block.items.map((item, i) => (
+            <li key={`list-item-${i}`}>
+              <span dangerouslySetInnerHTML={{ __html: item }} />
+            </li>
+          ))}
+        </ListTag>
+      );
+    }
+
+    if (block.type === 'groupIntro') {
+      return (
+        <div key={`group-intro-${index}`} className="my-4 border-t pt-4">
+          <h3 className="text-lg font-semibold">
+            <span dangerouslySetInnerHTML={{ __html: block.content }} />
+          </h3>
+        </div>
+      );
+    }
+
+    if (block.type === 'section') {
+      return (
+        <div key={`section-${index}`} className="my-4">
+          <h4 className="font-semibold">{block.name}</h4>
+          {block.content && block.content.length > 0 && (
+            renderBlocks(block.content, options)
+          )}
+        </div>
+      );
+    }
+
     if (block.type === 'python') {
       return (
         <ActivityPythonBlock
@@ -253,12 +316,15 @@ export function renderBlocks(blocks, options = {}) {
         />
       );
     }
+
     if (block.type === 'question') {
       return (
         <div key={`q-${block.id}`} className="mb-3">
-          <p><strong>{block.label}</strong> {block.prompt}</p>
+          <p>
+            <strong>{block.label}</strong>{' '}
+            <span dangerouslySetInnerHTML={{ __html: block.prompt }} />
+          </p>
 
-          {/* Python code blocks (if any) */}
           {block.pythonBlocks?.map((py, i) => (
             <ActivityPythonBlock
               key={`q-${block.id}-py-${i}`}
@@ -271,15 +337,14 @@ export function renderBlocks(blocks, options = {}) {
             />
           ))}
 
-          {/* Text input */}
           <Form.Control
             as="textarea"
             rows={block.responseLines || 1}
             defaultValue=""
             readOnly={!editable}
+            className="mt-2"
           />
 
-          {/* Render metadata ONLY in preview mode */}
           {mode === 'preview' && (
             <>
               {block.samples?.length > 0 && (
@@ -311,6 +376,9 @@ export function renderBlocks(blocks, options = {}) {
         </div>
       );
     }
+
+    console.warn(`Unhandled block type: ${block.type}`, block);
+    return null;
   });
 }
-//End of parseSheet.jsx
+//End parseSheet.jsx
