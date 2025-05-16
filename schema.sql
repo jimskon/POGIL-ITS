@@ -1,16 +1,18 @@
--- USERS
+-- POGIL ITS Database Schema
+
+-- Users
 CREATE TABLE users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role ENUM('root', 'creator', 'instructor', 'student', 'grader') DEFAULT 'student',
+  role ENUM('root', 'creator', 'instructor', 'student', 'grader') NOT NULL DEFAULT 'student',
   created_by INT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
--- POGIL CLASSES
+-- POGIL Classes
 CREATE TABLE pogil_classes (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(191) NOT NULL UNIQUE,
@@ -19,7 +21,7 @@ CREATE TABLE pogil_classes (
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
--- COURSES (within a class)
+-- Courses
 CREATE TABLE courses (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -30,22 +32,22 @@ CREATE TABLE courses (
   instructor_id INT,
   class_id INT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY (code, section, semester, year),
-  FOREIGN KEY (instructor_id) REFERENCES users(id) ON DELETE SET NULL,
-  FOREIGN KEY (class_id) REFERENCES pogil_classes(id) ON DELETE SET NULL
+  UNIQUE (code, section, semester, year),
+  FOREIGN KEY (instructor_id) REFERENCES users(id),
+  FOREIGN KEY (class_id) REFERENCES pogil_classes(id) ON DELETE CASCADE
 );
 
--- COURSE ENROLLMENTS
+-- Course Enrollments
 CREATE TABLE course_enrollments (
   id INT AUTO_INCREMENT PRIMARY KEY,
   course_id INT NOT NULL,
   student_id INT NOT NULL,
-  UNIQUE(course_id, student_id),
+  UNIQUE (course_id, student_id),
   FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
   FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- POGIL ACTIVITIES (metadata per class)
+-- POGIL Activities
 CREATE TABLE pogil_activities (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(191) NOT NULL,
@@ -59,57 +61,57 @@ CREATE TABLE pogil_activities (
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
--- ACTIVITY INSTANCES (one per course+activity run)
+-- Activity Instances (1 per group)
 CREATE TABLE activity_instances (
   id INT AUTO_INCREMENT PRIMARY KEY,
   activity_id INT NOT NULL,
   course_id INT NOT NULL,
-  active_student_id INT DEFAULT NULL,
   start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   status ENUM('in_progress', 'completed') DEFAULT 'in_progress',
+  active_student_id INT,
   FOREIGN KEY (activity_id) REFERENCES pogil_activities(id),
   FOREIGN KEY (course_id) REFERENCES courses(id),
   FOREIGN KEY (active_student_id) REFERENCES users(id)
 );
 
--- ACTIVITY GROUPS (per instance, regrouped every time)
+-- Groups per instance
 CREATE TABLE activity_groups (
   id INT AUTO_INCREMENT PRIMARY KEY,
   activity_instance_id INT NOT NULL,
   group_number INT NOT NULL,
-  UNIQUE(activity_instance_id, group_number),
+  UNIQUE (activity_instance_id, group_number),
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE
 );
 
--- GROUP MEMBERS (roles within group per activity instance)
+-- Group members
 CREATE TABLE group_members (
   id INT AUTO_INCREMENT PRIMARY KEY,
   activity_group_id INT NOT NULL,
   student_id INT NOT NULL,
   role ENUM('facilitator', 'spokesperson', 'analyst', 'qc') NOT NULL,
-  last_heartbeat DATETIME DEFAULT NULL,
-  UNIQUE(activity_group_id, role),
+  last_heartbeat DATETIME,
+  UNIQUE (activity_group_id, role),
   FOREIGN KEY (activity_group_id) REFERENCES activity_groups(id) ON DELETE CASCADE,
   FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- RESPONSES
+-- Responses
 CREATE TABLE responses (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  activity_instance_id INT NOT NULL,
+  activity_instance_id INT,
   question_id TEXT NOT NULL,
   response_type ENUM('text', 'python', 'cpp') DEFAULT 'text',
   response TEXT NOT NULL,
   submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  group_id INT NOT NULL,
-  answered_by_user_id INT NOT NULL,
+  group_id INT,
+  answered_by_user_id INT,
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id),
   FOREIGN KEY (group_id) REFERENCES activity_groups(id),
   FOREIGN KEY (answered_by_user_id) REFERENCES users(id)
 );
 
--- FEEDBACK
+-- Feedback
 CREATE TABLE feedback (
   id INT AUTO_INCREMENT PRIMARY KEY,
   response_id INT,
@@ -118,7 +120,7 @@ CREATE TABLE feedback (
   FOREIGN KEY (response_id) REFERENCES responses(id)
 );
 
--- FOLLOWUPS
+-- Followups
 CREATE TABLE followups (
   id INT AUTO_INCREMENT PRIMARY KEY,
   response_id INT,
@@ -128,7 +130,7 @@ CREATE TABLE followups (
   FOREIGN KEY (response_id) REFERENCES responses(id)
 );
 
--- EVENT LOGGING
+-- Event log
 CREATE TABLE event_log (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT,
@@ -140,13 +142,13 @@ CREATE TABLE event_log (
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE
 );
 
--- HEARTBEAT TRACKING
+-- Heartbeats
 CREATE TABLE activity_heartbeats (
   id INT AUTO_INCREMENT PRIMARY KEY,
   activity_instance_id INT NOT NULL,
   user_id INT NOT NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  UNIQUE(activity_instance_id, user_id),
+  UNIQUE (activity_instance_id, user_id),
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
