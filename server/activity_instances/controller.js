@@ -1,3 +1,4 @@
+//activity_instances/controller.js
 const db = require('../db');
 const fetch = require('node-fetch');
 const { JSDOM } = require('jsdom');
@@ -139,14 +140,14 @@ async function createActivityInstance(req, res) {
     if (!activity) return res.status(404).json({ error: 'Activity not found' });
 
     const [[instance]] = await db.query(
-      `SELECT id FROM activity_instances WHERE activity_id = ? AND course_id = ? AND group_number IS NULL`,
+      `SELECT id FROM activity_instances WHERE activity_id = ? AND course_id = ?`,
       [activity.id, courseId]
     );
 
     if (instance) return res.json({ instanceId: instance.id });
 
     const [result] = await db.query(
-      `INSERT INTO activity_instances (activity_id, course_id, group_number) VALUES (?, ?, NULL)`,
+      `INSERT INTO activity_instances (activity_id, course_id) VALUES (?, ?)`,
       [activity.id, courseId]
     );
 
@@ -223,22 +224,82 @@ async function recordHeartbeat(req, res) {
 }
 
 async function getActiveStudent(req, res) {
+  console.log("📥 getActiveStudent called with instanceId:", req.params.instanceId);
+
   const { instanceId } = req.params;
+  const userId = req.user?.id; // You need to ensure userId is available in the request (e.g., via middleware)
 
   try {
-    const [rows] = await db.query(
-      'SELECT active_student_id FROM activity_instances WHERE id = ?',
+    // Step 1: If already set and valid, return it
+    const [[row]] = await db.query(
+      `SELECT active_student_id FROM activity_instances WHERE id = ?`,
       [instanceId]
     );
+    console.log("📥 Row:", row);
+    if (row?.active_student_id) {
+      // Check if this student is in the correct group
+      const [[valid]] = await db.query(
+        `SELECT 1 FROM group_members gm
+         JOIN activity_groups ag ON gm.activity_group_id = ag.id
+         WHERE ag.activity_instance_id = ? AND gm.student_id = ?`,
+        [instanceId, row.active_student_id]
+      );
+      console.log("📥 Valid:", valid);
+      if (valid) {
+        return res.json({ activeStudentId: row.active_student_id });
+      }
+    }
 
-    if (!rows.length) return res.status(404).json({ error: 'Activity instance not found' });
+    // Step 2: Get the group for this user
+    const [[groupRow]] = await db.query(
+      `SELECT ag.id AS group_id
+       FROM activity_groups ag
+       JOIN group_members gm ON ag.id = gm.activity_group_id
+       WHERE ag.activity_instance_id = ? AND gm.student_id = ?`,
+      [instanceId, userId]
+    );
+    console.log("📥 Group row:", groupRow);
 
-    res.json({ activeStudentId: rows[0].active_student_id });
+    if (!groupRow) {
+      return res.status(404).json({ error: 'User is not in any group for this activity instance' });
+    }
+
+    const groupId = groupRow.group_id;
+
+    // Step 3: Get all recently active users in the group (last 30s)
+    const [members] = await db.query(
+      `SELECT gm.student_id
+       FROM group_members gm
+       WHERE gm.activity_group_id = ?
+         AND gm.last_heartbeat IS NOT NULL
+         AND gm.last_heartbeat > NOW() - INTERVAL 30 SECOND`,
+      [groupId]
+    );
+
+    if (members.length === 0) {
+      return res.status(404).json({ error: 'No currently present group members' });
+    }
+
+    const selected = members.length === 1
+      ? members[0]
+      : members[Math.floor(Math.random() * members.length)];
+
+    await db.query(
+      `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+      [selected.student_id, instanceId]
+    );
+
+    return res.json({ activeStudentId: selected.student_id });
+
   } catch (err) {
-    console.error("❌ Failed to get active student:", err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error("❌ Failed to get/set active student:", err);
+    return res.status(500).json({ error: 'Internal server error' });
   }
 }
+
+
+
+
 
 async function setActiveStudent(req, res) {
   const { instanceId } = req.params;
@@ -338,6 +399,95 @@ async function setupGroupsForInstance(req, res) {
   }
 }
 
+async function submitGroup(req, res) {
+  const { instanceId } = req.params;
+  const { groupId, groupIndex, studentId, answers } = req.body;
+
+  try {
+    const groupStateId = `${groupIndex + 1}state`;
+
+    // ✅ Check if already complete
+    const [[existing]] = await db.query(`
+      SELECT response FROM responses
+      WHERE activity_instance_id = ? AND group_id = ? AND question_id = ?
+    `, [instanceId, groupId, groupStateId]);
+
+    if (existing && existing.response === 'complete') {
+      return res.status(400).json({ error: 'This group has already completed this section.' });
+    }
+
+    // 🔁 Save individual question responses
+    const responseEntries = Object.entries(answers);
+    for (const [key, value] of responseEntries) {
+      const questionId = `${groupIndex + 1}${key}`;
+      const responseType = key.endsWith('code') ? 'python' : 'text';
+
+      await db.query(
+        `INSERT INTO responses (activity_instance_id, question_id, response_type, response, group_id, answered_by_user_id)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
+        [instanceId, questionId, responseType, value, groupId, studentId]
+      );
+    }
+
+    // ✅ Mark group as complete
+    await db.query(
+      `INSERT INTO responses (activity_instance_id, question_id, response_type, response, group_id, answered_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
+      [instanceId, groupStateId, 'text', 'complete', groupId, studentId]
+    );
+// 🎯 Rotate to next active student in this group
+const [members] = await db.query(
+  `SELECT student_id FROM group_members WHERE activity_group_id = ?`,
+  [groupId]
+);
+
+if (members.length > 1) {
+  const others = members.filter(m => m.student_id !== studentId);
+  const next = others.length > 0
+    ? others[Math.floor(Math.random() * others.length)]
+    : members[0]; // fallback to self if solo
+
+  await db.query(
+    `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+    [next.student_id, instanceId]
+  );
+}
+    res.json({ success: true });
+  } catch (err) {
+    console.error('❌ Failed to save responses:', err);
+    res.status(500).json({ error: 'Failed to save responses' });
+  }
+}
+
+
+async function getGroupResponses(req, res) {
+  const { instanceId, groupId } = req.params;
+
+  try {
+    const [rows] = await db.query(
+      `SELECT question_id, response, response_type FROM responses
+       WHERE activity_instance_id = ? AND group_id = ?`,
+      [instanceId, groupId]
+    );
+
+    const result = {};
+    for (const row of rows) {
+      result[row.question_id] = {
+        response: row.response,
+        type: row.response_type
+      };
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error("❌ Failed to get group responses:", err);
+    res.status(500).json({ error: 'Failed to fetch group responses' });
+  }
+}
+
+
 module.exports = {
   getParsedActivityDoc,
   createActivityInstance,
@@ -347,5 +497,7 @@ module.exports = {
   getActiveStudent,
   setActiveStudent,
   rotateActiveStudent,
-  setupGroupsForInstance
+  setupGroupsForInstance,
+  submitGroup,
+  getGroupResponses
 };

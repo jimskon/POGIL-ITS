@@ -57,6 +57,7 @@ exports.getResponsesByQuestionId = async (req, res) => {
     res.status(500).json({ error: "Failed to fetch responses" });
   }
 };
+
 exports.getResponsesByAnsweredBy = async (req, res) => {
   const { instanceId, answeredBy } = req.params;
 
@@ -71,3 +72,31 @@ exports.getResponsesByAnsweredBy = async (req, res) => {
     res.status(500).json({ error: "Failed to fetch responses" });
   }
 };
+
+// responses/controller.js
+exports.getGroupResponses = async (req, res) => {
+  const { instanceId, groupId } = req.params;
+
+  try {
+    const [rows] = await db.query(
+      `SELECT question_id, response, response_type FROM responses
+       WHERE activity_instance_id = ? AND group_id = ?`,
+      [instanceId, groupId]
+    );
+
+    const result = {};
+    for (const row of rows) {
+      result[row.question_id] = {
+        response: row.response,
+        type: row.response_type
+      };
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error("❌ Failed to get group responses:", err);
+    res.status(500).json({ error: 'Failed to fetch group responses' });
+  }
+}
+
+
