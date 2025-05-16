@@ -175,6 +175,26 @@ async function enrollByCode(req, res) {
   }
 }
 
+async function getStudentsForCourse(req, res) {
+  const { courseId } = req.params;
+
+  try {
+    const [students] = await db.query(
+      `SELECT u.id, u.name, u.email
+       FROM course_enrollments ce
+       JOIN users u ON ce.student_id = u.id
+       WHERE ce.course_id = ? AND u.role = 'student'`,
+      [courseId]
+    );
+
+    res.json(students);
+  } catch (err) {
+    console.error("❌ Failed to fetch students for course:", err);
+    res.status(500).json({ error: 'Failed to fetch students' });
+  }
+}
+
+
 module.exports = {
   getAllCourses,
   createCourse,
@@ -182,5 +202,6 @@ module.exports = {
   getCourseActivities,
   getUserEnrollments,
   enrollByCode,
-  getCourseEnrollments
+  getCourseEnrollments,
+  getStudentsForCourse
 };

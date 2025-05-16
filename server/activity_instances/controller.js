@@ -1,3 +1,4 @@
+// activity_instances/controller.js
 const db = require('../db');
 const fetch = require('node-fetch');
 const { JSDOM } = require('jsdom');
@@ -436,6 +437,59 @@ async function setupGroupsForInstance(req, res) {
   }
 }
 
+async function setupMultipleGroupInstances(req, res) {
+  const { activityId, courseId, groups } = req.body;
+  console.log("📥 Received setup request:", { activityId, courseId, groups });
+
+  if (!activityId || !courseId || !Array.isArray(groups) || groups.length === 0) {
+    return res.status(400).json({ error: 'Missing or invalid activityId, courseId, or groups' });
+  }
+
+  try {
+    const instanceIds = [];
+
+    for (let i = 0; i < groups.length; i++) {
+      const group = groups[i];
+
+      // 1. Create a new activity_instance for this group
+      const [instanceResult] = await db.query(
+        `INSERT INTO activity_instances (activity_id, course_id) VALUES (?, ?)`,
+        [activityId, courseId]
+      );
+      const instanceId = instanceResult.insertId;
+      instanceIds.push(instanceId);
+
+      // 2. Create one activity_group for this instance
+      const [groupResult] = await db.query(
+        `INSERT INTO activity_groups (activity_instance_id, group_number) VALUES (?, ?)`,
+        [instanceId, 1]
+      );
+      const groupId = groupResult.insertId;
+
+      // 3. Insert group_members with roles
+      for (const member of group.members) {
+        await db.query(
+          `INSERT INTO group_members (activity_group_id, student_id, role)
+           VALUES (?, ?, ?)`,
+          [groupId, member.student_id, member.role]
+        );
+      }
+
+      // 4. Assign one active student (random)
+      const random = group.members[Math.floor(Math.random() * group.members.length)];
+      await db.query(
+        `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+        [random.student_id, instanceId]
+      );
+    }
+
+    res.json({ success: true, instanceIds });
+  } catch (err) {
+    console.error('❌ Failed to setup multiple activity instances:', err);
+    res.status(500).json({ error: 'Failed to setup group instances' });
+  }
+}
+
 async function submitGroupResponses(req, res) {
   const { instanceId } = req.params;
   const { groupId, groupIndex, studentId, answers } = req.body;
@@ -567,6 +621,7 @@ module.exports = {
   getGroupResponses,
   rotateActiveStudent,
   setupGroupsForInstance,
+  setupMultipleGroupInstances,
   submitGroupResponses,
   getInstanceGroups
 };

@@ -37,4 +37,7 @@ router.get('/:instanceId/group/:groupId/responses', controller.getGroupResponses
 // ✅ Get all groups and their members for an instance
 router.get('/:instanceId/groups', controller.getInstanceGroups);
 
+// ✅ New: Create one activity instance per group
+router.post('/setup-groups', controller.setupMultipleGroupInstances);
+
 module.exports = router;

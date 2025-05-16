@@ -29,11 +29,11 @@ function AppRoutes() {
         <Route path="/manage-courses" element={<ManageCoursesPage />} />
         <Route path="/class/:id" element={<ManageActivitiesPage />} />
         <Route path="/preview/:activityId" element={<ActivityPreview />} />
-	<Route path="/admin/users" element={<AdminUsersPage />} />
+	      <Route path="/admin/users" element={<AdminUsersPage />} />
         <Route path="/courses/:courseId/activities" element={<CourseActivitiesPage />} />  
         <Route path="/run/:instanceId" element={<RunActivityPage />} />
-        <Route path="/setup-groups/:courseId/:instanceId" element={<GroupSetupPage />} />
-        <Route path="/view-groups/:courseId/:instanceId" element={<ViewGroupsPage />} />
+        <Route path="/setup-groups/:courseId/:activityId" element={<GroupSetupPage />} />
+        <Route path="/view-groups/:courseId/:activityId" element={<ViewGroupsPage />} />
 
      </Routes>
     </>

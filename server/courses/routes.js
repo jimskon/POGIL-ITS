@@ -23,4 +23,7 @@ router.post('/', controller.createCourse);
 // Delete a course
 router.delete('/:id', controller.deleteCourse);
 
+router.get('/:courseId/students', controller.getStudentsForCourse);
+
+
 module.exports = router;
