@@ -1,4 +1,4 @@
-// By James Skon
+// /coureses/controller.js
 const db = require('../db');
 
 // GET all courses
@@ -70,33 +70,29 @@ async function getCourseActivities(req, res) {
   console.log("🔍 courseId param:", courseId);
 
   try {
-const [activities] = await db.query(`
-  SELECT 
-    a.id AS activity_id,
-    a.name AS activity_name,
-    a.order_index AS activity_index,
-    ai.id AS instance_id,
-    ai.status,
-    COUNT(DISTINCT gm.id) AS group_member_count,
-    COUNT(DISTINCT ag.id) > 0 AS has_groups
-  FROM pogil_activities a
-  JOIN courses c ON a.class_id = c.class_id
-  LEFT JOIN activity_instances ai 
-    ON ai.activity_id = a.id AND ai.course_id = ?
-  LEFT JOIN activity_groups ag 
-    ON ag.activity_instance_id = ai.id
-  LEFT JOIN group_members gm 
-    ON gm.activity_group_id = ag.id
-  WHERE c.id = ?
-  GROUP BY a.id, ai.id
-  ORDER BY a.order_index ASC
-`, [courseId, courseId]);
+    const [rows] = await db.query(
+      `SELECT 
+         a.id AS activity_id,
+         a.name AS activity_name,
+         a.order_index AS activity_index,
+         COUNT(ai.id) AS instance_count,
+         MAX(ai.status) AS latest_status
+       FROM pogil_activities a
+       JOIN courses c ON a.class_id = c.class_id
+       LEFT JOIN activity_instances ai 
+         ON ai.activity_id = a.id AND ai.course_id = ?
+       WHERE c.id = ?
+       GROUP BY a.id
+       ORDER BY a.order_index ASC`,
+      [courseId, courseId]
+    );
 
-    const withFlags = activities.map(a => ({
+    const withFlags = rows.map(a => ({
       ...a,
-      is_ready: a.instance_id && a.group_member_count >= 4,
-      has_groups: !!a.has_groups // ensures it's a boolean (0 → false, 1 → true)
+      is_ready: a.instance_count > 0 && a.latest_status === 'in_progress',
+      has_groups: a.instance_count > 0
     }));
+    
 
     res.json(withFlags);
   } catch (err) {

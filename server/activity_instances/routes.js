@@ -1,38 +1,40 @@
-//activity_instances/routes.js
 const express = require('express');
 const router = express.Router();
 const controller = require('./controller');
+
 console.log("✅ Registering activity_instances routes");
-// Create new activity instance
+
+// ✅ Create a new activity instance
 router.post('/', controller.createActivityInstance);
 
-// Get instance details
+// ✅ Get details of an activity instance
 router.get('/:id', controller.getActivityInstanceById);
 
-// Group setup and enrollment
-router.post('/:id/setup-groups', controller.setupGroupsForInstance);
-router.get('/:id/setup-groups', controller.getEnrolledStudents);
-router.get('/:id/enrolled-students', controller.getEnrolledStudents);
-
-// Heartbeat tracking
-router.post('/:instanceId/heartbeat', controller.recordHeartbeat);
-
-// Active student access and rotation
-router.get('/:instanceId/group/:groupId/active-student', controller.getActiveStudent);
-router.get('/:instanceId/active-student', controller.getActiveStudent);
-router.post('/:instanceId/rotate-active-student', controller.rotateActiveStudent);
-
-// Activity preview doc (parsed)
+// ✅ Parse and fetch the activity sheet content
 router.get('/:instanceId/preview-doc', controller.getParsedActivityDoc);
 
-// Activity instance data submit
-router.post('/:instanceId/submit-group', controller.submitGroup);
+// ✅ Group setup: assign students into groups
+router.post('/:id/setup-groups', controller.setupGroupsForInstance);
 
-// Activity instance data retrieval
+// ✅ Get all enrolled students in the course for this activity instance
+router.get('/:id/enrolled-students', controller.getEnrolledStudents);
+
+// ✅ Heartbeat tracking to monitor presence
+router.post('/:instanceId/heartbeat', controller.recordHeartbeat);
+
+// ✅ Get the current active student in a group (or auto-assign)
+router.get('/:instanceId/active-student', controller.getActiveStudent);
+
+// ✅ Rotate to next active student
+router.post('/:instanceId/rotate-active-student', controller.rotateActiveStudent);
+
+// ✅ Submit group responses
+router.post('/:instanceId/submit-group', controller.submitGroupResponses);
+
+// ✅ Get all responses for a specific group in an activity instance
 router.get('/:instanceId/group/:groupId/responses', controller.getGroupResponses);
 
-// Activity instance data retrieval by question
-router.get('/responses/:instanceId/:groupId', controller.getGroupResponses);
-
+// ✅ Get all groups and their members for an instance
+router.get('/:instanceId/groups', controller.getInstanceGroups);
 
 module.exports = router;
