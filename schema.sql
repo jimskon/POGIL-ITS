@@ -1,10 +1,16 @@
--- Users
+
+-- ============================================
+-- POGIL-ITS Cleaned Database Schema (v2025)
+-- One activity_instance per group model
+-- ============================================
+
+-- Users table
 CREATE TABLE IF NOT EXISTS users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  role ENUM('root', 'creator', 'instructor', 'student', 'grader') NOT NULL DEFAULT 'student',
+  role ENUM('root','creator','instructor','student','grader') NOT NULL DEFAULT 'student',
   created_by INT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
@@ -25,17 +31,17 @@ CREATE TABLE IF NOT EXISTS courses (
   name TEXT NOT NULL,
   code TEXT NOT NULL,
   section TEXT NOT NULL,
-  semester ENUM('fall', 'spring', 'summer') NOT NULL,
+  semester ENUM('fall','spring','summer') NOT NULL,
   year INT NOT NULL,
   instructor_id INT,
   class_id INT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE KEY unique_course (code, section, semester, year),
+  UNIQUE KEY unique_course (code(255), section(255), semester, year),
   FOREIGN KEY (instructor_id) REFERENCES users(id) ON DELETE SET NULL,
   FOREIGN KEY (class_id) REFERENCES pogil_classes(id) ON DELETE SET NULL
 );
 
--- Course Enrollments
+-- Enrollments
 CREATE TABLE IF NOT EXISTS course_enrollments (
   id INT AUTO_INCREMENT PRIMARY KEY,
   course_id INT NOT NULL,
@@ -45,7 +51,7 @@ CREATE TABLE IF NOT EXISTS course_enrollments (
   FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- POGIL Activities
+-- Activities
 CREATE TABLE IF NOT EXISTS pogil_activities (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(191) NOT NULL,
@@ -54,25 +60,25 @@ CREATE TABLE IF NOT EXISTS pogil_activities (
   class_id INT NOT NULL,
   order_index INT NOT NULL DEFAULT 0,
   created_by INT,
-  last_loaded TIMESTAMP,
+  last_loaded TIMESTAMP NULL DEFAULT NULL,
   FOREIGN KEY (class_id) REFERENCES pogil_classes(id) ON DELETE CASCADE,
   FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
 );
 
--- Activity Instances (one per group of students working on an activity)
+-- Activity Instances
 CREATE TABLE IF NOT EXISTS activity_instances (
   id INT AUTO_INCREMENT PRIMARY KEY,
   activity_id INT NOT NULL,
   course_id INT NOT NULL,
-  status ENUM('in_progress', 'completed') DEFAULT 'in_progress',
+  status ENUM('in_progress','completed') DEFAULT 'in_progress',
   active_student_id INT DEFAULT NULL,
   start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (activity_id) REFERENCES pogil_activities(id) ON DELETE CASCADE,
-  FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
-  FOREIGN KEY (active_student_id) REFERENCES users(id) ON DELETE SET NULL
+  FOREIGN KEY (activity_id) REFERENCES pogil_activities(id),
+  FOREIGN KEY (course_id) REFERENCES courses(id),
+  FOREIGN KEY (active_student_id) REFERENCES users(id)
 );
 
--- Activity Groups (each instance has exactly one group, but preserved for compatibility)
+-- Activity Groups
 CREATE TABLE IF NOT EXISTS activity_groups (
   id INT AUTO_INCREMENT PRIMARY KEY,
   activity_instance_id INT NOT NULL,
@@ -80,32 +86,31 @@ CREATE TABLE IF NOT EXISTS activity_groups (
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE
 );
 
--- Group Members (each student and role assigned to a group)
+-- Group Members
 CREATE TABLE IF NOT EXISTS group_members (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  activity_group_id INT NOT NULL,
   student_id INT NOT NULL,
-  role ENUM('facilitator', 'spokesperson', 'analyst', 'qc') NOT NULL,
+  role ENUM('facilitator','spokesperson','analyst','qc') NOT NULL,
   last_heartbeat DATETIME DEFAULT NULL,
+  activity_group_id INT NOT NULL,
   FOREIGN KEY (activity_group_id) REFERENCES activity_groups(id) ON DELETE CASCADE,
-  FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+  FOREIGN KEY (student_id) REFERENCES users(id)
 );
 
--- Responses (answers to individual questions by group)
+-- Responses
 CREATE TABLE IF NOT EXISTS responses (
   id INT AUTO_INCREMENT PRIMARY KEY,
-  activity_instance_id INT NOT NULL,
-  question_id VARCHAR(20) NOT NULL,
-  response_type ENUM('text', 'python', 'cpp') NOT NULL DEFAULT 'text',
+  activity_instance_id INT,
+  question_id TEXT NOT NULL,
+  response_type ENUM('text','python','cpp') NOT NULL DEFAULT 'text',
   response TEXT NOT NULL,
   group_id INT NOT NULL,
-  answered_by_user_id INT NOT NULL,
   submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE,
-  FOREIGN KEY (group_id) REFERENCES activity_groups(id) ON DELETE CASCADE,
-  FOREIGN KEY (answered_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
-  UNIQUE KEY unique_response (activity_instance_id, question_id, group_id)
+  answered_by_user_id INT NOT NULL,
+  FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id),
+  FOREIGN KEY (answered_by_user_id) REFERENCES users(id),
+  FOREIGN KEY (group_id) REFERENCES activity_groups(id) ON DELETE CASCADE
 );
 
 -- AI Feedback
@@ -114,7 +119,7 @@ CREATE TABLE IF NOT EXISTS feedback (
   response_id INT,
   feedback_text TEXT NOT NULL,
   generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE
+  FOREIGN KEY (response_id) REFERENCES responses(id)
 );
 
 -- AI Follow-ups
@@ -124,10 +129,10 @@ CREATE TABLE IF NOT EXISTS followups (
   followup_prompt TEXT NOT NULL,
   followup_generated TEXT NOT NULL,
   generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (response_id) REFERENCES responses(id) ON DELETE CASCADE
+  FOREIGN KEY (response_id) REFERENCES responses(id)
 );
 
--- Heartbeats
+-- Activity Heartbeats
 CREATE TABLE IF NOT EXISTS activity_heartbeats (
   id INT AUTO_INCREMENT PRIMARY KEY,
   activity_instance_id INT NOT NULL,
