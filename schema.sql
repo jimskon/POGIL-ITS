@@ -79,7 +79,9 @@ CREATE TABLE IF NOT EXISTS activity_groups (
   id INT AUTO_INCREMENT PRIMARY KEY,
   activity_instance_id INT NOT NULL,
   group_number INT NOT NULL,
-  FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE
+  FOREIGN KEY (activity_instance_id)
+    REFERENCES activity_instances(id)
+    ON DELETE CASCADE
 );
 
 -- Group Members (students in a single activity_instance)
