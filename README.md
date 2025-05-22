@@ -383,7 +383,7 @@ npm install
 rm -rf node_modules package-lock.json
 npm install
 ```
-# Backgroud operation
+# Background operation
 ```
 nohup npm start > out.log 2>&1 &
 ```
