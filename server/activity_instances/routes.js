@@ -40,4 +40,8 @@ router.get('/:instanceId/groups', controller.getInstanceGroups);
 // ✅ New: Create one activity instance per group
 router.post('/setup-groups', controller.setupMultipleGroupInstances);
 
+// ✅ New: Get all activity instances for a specific course
+router.get('/by-activity/:courseId/:activityId', controller.getInstancesForActivityInCourse);
+
+
 module.exports = router;

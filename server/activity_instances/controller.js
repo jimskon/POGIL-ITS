@@ -453,9 +453,10 @@ async function setupMultipleGroupInstances(req, res) {
 
       // 1. Create a new activity_instance for this group
       const [instanceResult] = await db.query(
-        `INSERT INTO activity_instances (activity_id, course_id) VALUES (?, ?)`,
-        [activityId, courseId]
+        `INSERT INTO activity_instances (activity_id, course_id, group_number) VALUES (?, ?, ?)`,
+        [activityId, courseId, i + 1]  // group numbers: 1, 2, 3, ...
       );
+      
       const instanceId = instanceResult.insertId;
       instanceIds.push(instanceId);
 
@@ -610,6 +611,69 @@ async function getInstanceGroups(req, res) {
   }
 }
 
+async function getInstancesByActivity(req, res) {
+  const { courseId, activityId } = req.params;
+
+  try {
+    const [instances] = await db.query(
+      `SELECT id AS instance_id, group_number
+       FROM activity_instances
+       WHERE course_id = ? AND activity_id = ?
+       ORDER BY group_number`,
+      [courseId, activityId]
+    );
+
+    res.json(instances);
+  } catch (err) {
+    console.error("❌ Failed to fetch instances by activity:", err);
+    res.status(500).json({ error: 'Failed to fetch activity instances' });
+  }
+}
+
+// GET /api/activity-instances/by-activity/:courseId/:activityId
+async function getInstancesForActivityInCourse(req, res) {
+  const { courseId, activityId } = req.params;
+
+  try {
+    const [instances] = await db.query(
+      `SELECT ai.id AS instance_id, ai.group_number, ag.id AS group_id
+       FROM activity_instances ai
+       JOIN activity_groups ag ON ag.activity_instance_id = ai.id
+       WHERE ai.course_id = ? AND ai.activity_id = ?
+       ORDER BY ai.group_number ASC`,
+      [courseId, activityId]
+    );
+
+    const grouped = [];
+
+    for (const instance of instances) {
+      const [members] = await db.query(
+        `SELECT gm.student_id, gm.role, u.name AS student_name
+         FROM group_members gm
+         JOIN users u ON gm.student_id = u.id
+         WHERE gm.activity_group_id = ?
+         ORDER BY gm.role`,
+        [instance.group_id]
+      );
+
+      grouped.push({
+        instance_id: instance.instance_id,
+        group_number: instance.group_number,
+        members: members.map(m => ({
+          student_id: m.student_id,
+          name: m.student_name,
+          role: m.role
+        }))
+      });
+    }
+
+    res.json({ groups: grouped });
+  } catch (err) {
+    console.error("❌ Failed to get groups for activity in course:", err);
+    res.status(500).json({ error: "Failed to fetch groups" });
+  }
+}
+
 
 module.exports = {
   getParsedActivityDoc,
@@ -623,5 +687,7 @@ module.exports = {
   setupGroupsForInstance,
   setupMultipleGroupInstances,
   submitGroupResponses,
-  getInstanceGroups
+  getInstanceGroups,
+  getInstancesByActivity,
+  getInstancesForActivityInCourse
 };

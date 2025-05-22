@@ -46,13 +46,16 @@ export default function CourseActivitiesPage() {
   }, [activities]);
 
   const handleDoActivity = (activity, isInstructor = false) => {
-    const activityId = activity.activity_id; // ✅ use the correct property
+    const activityId = activity.activity_id;      // ✅ use activity ID
+    const instanceId = activity.instance_id;      // ✅ only for students
+
     console.log("🧠 FULL activity object:", activity);
-    console.log("🔍 courseId:", courseId, "activityId:", activityId);
-  
+    console.log("🔍 courseId:", courseId, "activityId:", activityId, "instanceId:", instanceId);
+
     const path = isInstructor
-      ? `/setup-groups/${courseId}/${activityId}`
-      : `/start/${courseId}/${activityId}`;
+      ? `/setup-groups/${courseId}/${activityId}`  // ✅ this is correct
+      : `/start/${courseId}/${instanceId}`;        // ✅ students use instanceId
+
     navigate(path);
   };
 
@@ -82,29 +85,19 @@ export default function CourseActivitiesPage() {
 
                 <td>
                   {user.role === 'student' && activity.is_ready ? (
-                    <Button
-                      variant="success"
-                      type="button"
-                      onClick={() => handleDoActivity(activity)}
-                    >
+                    <Button variant="success" onClick={() => handleDoActivity(activity)}>
                       Start
                     </Button>
-
                   ) : (user.role === 'instructor' || user.role === 'root') ? (
                     <>
-                      <Button
-                        variant="primary"
-                        className="me-2"
-                        onClick={() => handleDoActivity(activity, true)}
-                      >
-                        Setup Groups
-                      </Button>
-
-                      {activity.instance_id && activity.is_ready && (
-                        <Button
-                          variant="secondary"
-                          onClick={() => navigate(`/view-groups/${courseId}/${activity.instance_id}`)}
-                        >
+                      {!activity.has_groups ? (
+                        <Button variant="primary" onClick={() => handleDoActivity(activity, true)}>
+                          Setup Groups
+                        </Button>
+                      ) : (
+                        <Button variant="secondary" onClick={() =>
+                          navigate(`/view-groups/${courseId}/${activity.activity_id}`)
+                        }>
                           View Groups
                         </Button>
                       )}
@@ -112,6 +105,7 @@ export default function CourseActivitiesPage() {
                   ) : (
                     <span>Not available</span>
                   )}
+
                 </td>
 
               </tr>

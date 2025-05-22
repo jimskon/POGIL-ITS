@@ -91,43 +91,40 @@ exports.assignRoles = async (req, res) => {
 */
 // POST /api/activity-instances/:id/setup-groups
 exports.setupGroups = async (req, res) => {
-  const { id } = req.params;
-  const { groups } = req.body;
+  const { activity_id, course_id, groups } = req.body;
 
-  const db = require('../db');
-  const conn = await db.getConnection(); // Use transaction-safe connection
+  const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
 
-    // Delete existing group_members and activity_groups for this instance
-    const [existingGroups] = await conn.query(
-      `SELECT id FROM activity_groups WHERE activity_instance_id = ?`,
-      [id]
+    // 🔄 Delete old activity_instances and their members
+    const [oldInstances] = await conn.query(
+      `SELECT id FROM activity_instances WHERE course_id = ? AND activity_id = ?`,
+      [course_id, activity_id]
     );
-    const groupIds = existingGroups.map(row => row.id);
-    if (groupIds.length > 0) {
-      await conn.query(
-        `DELETE FROM group_members WHERE activity_group_id IN (?)`,
-        [groupIds]
-      );
-      await conn.query(
-        `DELETE FROM activity_groups WHERE activity_instance_id = ?`,
-        [id]
-      );
+    const instanceIds = oldInstances.map(r => r.id);
+    if (instanceIds.length > 0) {
+      await conn.query(`DELETE FROM group_members WHERE activity_instance_id IN (?)`, [instanceIds]);
+      await conn.query(`DELETE FROM activity_instances WHERE id IN (?)`, [instanceIds]);
     }
 
-    // Insert new groups
-    for (let group of groups) {
-      const [result] = await conn.query(
-        `INSERT INTO activity_groups (activity_instance_id) VALUES (?)`,
-        [id]
+    // ➕ Create new activity_instances (one per group)
+    for (let i = 0; i < groups.length; i++) {
+      const group = groups[i];
+      const group_number = i + 1;
+
+      const [instanceResult] = await conn.query(
+        `INSERT INTO activity_instances (course_id, activity_id, status, group_number)
+         VALUES (?, ?, ?, ?)`,
+        [course_id, activity_id, 'in_progress', group_number]
       );
-      const groupId = result.insertId;
+      const instanceId = instanceResult.insertId;
 
       for (let member of group.members) {
         await conn.query(
-          `INSERT INTO group_members (activity_group_id, student_id, role) VALUES (?, ?, ?)`,
-          [groupId, member.studentId, member.role]
+          `INSERT INTO group_members (activity_instance_id, student_id, role)
+           VALUES (?, ?, ?)`,
+          [instanceId, member.studentId, member.role]
         );
       }
     }
@@ -136,12 +133,13 @@ exports.setupGroups = async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     await conn.rollback();
-    console.error("❌ Error saving groups:", err);
-    res.status(500).json({ error: "Failed to save groups" });
+    console.error("❌ Error setting up groups:", err);
+    res.status(500).json({ error: 'Failed to setup groups' });
   } finally {
     conn.release();
   }
 };
+
 
 // GET /api/activity-instances/:id/setup-groups
 exports.getSetupGroups = async (req, res) => {

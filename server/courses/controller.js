@@ -1,4 +1,4 @@
-// /coureses/controller.js
+// /courses/controller.js
 const db = require('../db');
 
 // GET all courses
@@ -65,9 +65,10 @@ async function deleteCourse(req, res) {
 }
 
 // GET activities for a course, with student instance info
+// GET activities for a course, returning one row per activity_instance (i.e. per group)
 async function getCourseActivities(req, res) {
   const { courseId } = req.params;
-  console.log("🔍 courseId param:", courseId);
+  console.log("🔍 getCourseActivities courseId param:", courseId);
 
   try {
     const [rows] = await db.query(
@@ -75,31 +76,37 @@ async function getCourseActivities(req, res) {
          a.id AS activity_id,
          a.name AS activity_name,
          a.order_index AS activity_index,
-         COUNT(ai.id) AS instance_count,
-         MAX(ai.status) AS latest_status
+         MIN(ai.id) AS instance_id,  -- any one instance ID, to check if one exists
+         COUNT(ai.id) AS group_count,
+         MAX(ai.status = 'in_progress') AS is_ready
        FROM pogil_activities a
        JOIN courses c ON a.class_id = c.class_id
-       LEFT JOIN activity_instances ai 
-         ON ai.activity_id = a.id AND ai.course_id = ?
+       LEFT JOIN activity_instances ai
+         ON ai.activity_id = a.id AND ai.course_id = c.id
        WHERE c.id = ?
        GROUP BY a.id
        ORDER BY a.order_index ASC`,
-      [courseId, courseId]
+      [courseId]
     );
+    console.log("🧪 getCourseActivities result:", rows);
 
-    const withFlags = rows.map(a => ({
-      ...a,
-      is_ready: a.instance_count > 0 && a.latest_status === 'in_progress',
-      has_groups: a.instance_count > 0
+    const activities = rows.map(row => ({
+      activity_id: row.activity_id,
+      title: row.activity_name,
+      order_index: row.activity_index,
+      instance_id: row.instance_id || null,
+      is_ready: !!row.is_ready,
+      has_groups: row.group_count > 0
     }));
-    
 
-    res.json(withFlags);
+    res.json(activities);
   } catch (err) {
-    console.error("Error fetching activities for course:", err);
+    console.error("❌ Error fetching activities for course:", err);
     res.status(500).json({ error: "Failed to fetch activities" });
   }
 }
+
+
 
 // GET all courses a user is enrolled in
 async function getUserEnrollments(req, res) {

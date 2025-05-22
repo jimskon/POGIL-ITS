@@ -1,35 +1,50 @@
+// src/pages/ViewGroupsPage.jsx
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { Container, Card, Spinner, Alert } from 'react-bootstrap';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Container, Card, Spinner, Alert, Button } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
-import { Link } from 'react-router-dom';
-import { LinkContainer } from 'react-router-bootstrap';
-import { Button } from 'react-bootstrap';
 
 export default function ViewGroupsPage() {
-  const { courseId, instanceId } = useParams();
+  const { courseId, activityId } = useParams();
+  const navigate = useNavigate();
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/groups/instance/${instanceId}`)
-      .then(res => res.json())
-      .then(data => setGroups(data.groups || []))
-      .catch(err => {
+    console.log("📘 ViewGroupsPage mounted", { courseId, activityId });
+  
+    const fetchGroups = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/activity-instances/by-activity/${courseId}/${activityId}`);
+        const data = await res.json();
+  
+        if (!Array.isArray(data.groups)) {
+          throw new Error("Bad response format");
+        }
+  
+        setGroups(data.groups);
+      } catch (err) {
         console.error("❌ Error loading groups:", err);
         setError("Could not load groups.");
-      })
-      .finally(() => setLoading(false));
-  }, [instanceId]);
+      } finally {
+        setLoading(false);
+      }
+    };
+  
+    fetchGroups();
+  }, [courseId, activityId]);
 
   return (
     <Container className="mt-4">
-      <h2>Groups for Activity Instance {instanceId}</h2>
+      <h2>Groups for Activity</h2>
+
       {loading ? (
         <Spinner animation="border" />
       ) : error ? (
         <Alert variant="danger">{error}</Alert>
+      ) : groups.length === 0 ? (
+        <Alert variant="info">No groups available.</Alert>
       ) : (
         groups.map((group, idx) => (
           <Card key={idx} className="mb-3">
@@ -40,9 +55,12 @@ export default function ViewGroupsPage() {
                   <li key={i}>{m.role}: {m.name}</li>
                 ))}
               </ul>
-		<LinkContainer to={`/run/${instanceId}`}>
-                   <Button variant="primary">View Activity</Button>
-                </LinkContainer>
+              <Button
+                variant="primary"
+                onClick={() => navigate(`/run/${group.instance_id}`)}
+              >
+                View Activity
+              </Button>
             </Card.Body>
           </Card>
         ))
