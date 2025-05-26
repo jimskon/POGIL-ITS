@@ -79,14 +79,6 @@ CREATE TABLE IF NOT EXISTS activity_instances (
   FOREIGN KEY (active_student_id) REFERENCES users(id)
 );
 
--- Activity Groups
-CREATE TABLE IF NOT EXISTS activity_groups (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  activity_instance_id INT NOT NULL,
-  group_number INT NOT NULL,
-  FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE
-);
-
 -- Group membership with roles, linked to activity_instances
 CREATE TABLE IF NOT EXISTS group_members (
   id INT AUTO_INCREMENT PRIMARY KEY,
