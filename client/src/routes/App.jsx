@@ -42,10 +42,10 @@ function AppRoutes() {
 
 export default function App() {
   return (
-    <UserProvider>
-      <Router>
+    <Router>
+      <UserProvider>
         <AppRoutes />
-      </Router>
-    </UserProvider>
+      </UserProvider>
+    </Router>
   );
 }

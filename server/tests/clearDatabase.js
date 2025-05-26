@@ -10,7 +10,6 @@ async function clearDatabase() {
     'feedback',
     'responses',
     'group_members',
-    'activity_groups',
     'activity_instances',
     'pogil_activities',
     'course_enrollments',

@@ -44,7 +44,7 @@ export default function ActivityPreview() {
       
           if (window.Sk && window.Sk.builtinFiles) {
             console.log('✅ Skulpt is ready');
-            setSkulptLoaded(true); // ✅ <--- You need this!
+            setSkulptLoaded(true); 
           } else {
             console.warn('⚠️ Skulpt scripts loaded, but core objects not initialized');
           }

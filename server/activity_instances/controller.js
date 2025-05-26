@@ -1,17 +1,17 @@
-// activity_instances/controller.js
+//server/activity_instances/controller.js
 const db = require('../db');
 const fetch = require('node-fetch');
 const { JSDOM } = require('jsdom');
 const { google } = require('googleapis');
 const { authorize } = require('../utils/googleAuth');
 
+// ========== DOC PARSING ==========
 function parseGoogleDocHTML(html) {
   const dom = new JSDOM(html);
   const body = dom.window.document.body;
   const blocks = [];
 
   let currentEnv = null, envBuffer = [], currentQuestion = null;
-  let currentField = 'text';
 
   const formatText = (text) =>
     text.replace(/\\textit\{([^}]+)\}/g, '<em>$1</em>')
@@ -84,9 +84,10 @@ function parseGoogleDocHTML(html) {
   return blocks;
 }
 
+// ========== ROUTE CONTROLLERS ==========
+
 async function getParsedActivityDoc(req, res) {
   const { instanceId } = req.params;
-
   try {
     const [rows] = await db.query(`
       SELECT a.sheet_url
@@ -99,8 +100,7 @@ async function getParsedActivityDoc(req, res) {
       return res.status(404).json({ error: 'No sheet_url found' });
     }
 
-    const sheetUrl = rows[0].sheet_url;
-    const docId = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1];
+    const docId = rows[0].sheet_url.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1];
     if (!docId) throw new Error('Invalid sheet_url');
 
     const auth = authorize();
@@ -123,13 +123,11 @@ async function getParsedActivityDoc(req, res) {
 
 async function createActivityInstance(req, res) {
   const { activityId, courseId } = req.body;
-  console.log("Creating activity instance with:", { activityId, courseId });
   try {
     const [result] = await db.query(
       `INSERT INTO activity_instances (activity_id, course_id) VALUES (?, ?)`,
       [activityId, courseId]
     );
-
     res.status(201).json({ instanceId: result.insertId });
   } catch (err) {
     console.error("❌ Failed to create activity instance:", err);
@@ -139,7 +137,6 @@ async function createActivityInstance(req, res) {
 
 async function getActivityInstanceById(req, res) {
   const { id } = req.params;
-
   try {
     const [[instance]] = await db.query(
       `SELECT ai.id, ai.course_id, ai.activity_id, a.name AS activity_name, a.sheet_url
@@ -148,9 +145,7 @@ async function getActivityInstanceById(req, res) {
        WHERE ai.id = ?`,
       [id]
     );
-
     if (!instance) return res.status(404).json({ error: 'Instance not found' });
-
     res.json(instance);
   } catch (err) {
     console.error("❌ Failed to fetch activity instance:", err);
@@ -160,43 +155,33 @@ async function getActivityInstanceById(req, res) {
 
 async function getEnrolledStudents(req, res) {
   const { id } = req.params;
-
   try {
-    const [[instance]] = await db.query(
-      `SELECT course_id FROM activity_instances WHERE id = ?`,
-      [id]
-    );
-
-    if (!instance) return res.status(404).json({ error: 'Activity instance not found' });
+    const [[instance]] = await db.query(`SELECT course_id FROM activity_instances WHERE id = ?`, [id]);
+    if (!instance) return res.status(404).json({ error: 'Instance not found' });
 
     const [students] = await db.query(
-      `SELECT u.id, u.name, u.email
-       FROM course_enrollments ce
-       JOIN users u ON ce.student_id = u.id
+      `SELECT u.id, u.name, u.email FROM course_enrollments ce JOIN users u ON ce.student_id = u.id
        WHERE ce.course_id = ? AND u.role = 'student'`,
       [instance.course_id]
     );
-
     res.json({ students });
   } catch (err) {
-    console.error("❌ Failed to fetch enrolled students:", err);
+    console.error("❌ getEnrolledStudents:", err);
     res.status(500).json({ error: 'Failed to fetch students' });
   }
 }
-// Update student heartbeat timestamp
+
 async function recordHeartbeat(req, res) {
   const { instanceId } = req.params;
-  const { userId, groupId } = req.body;
+  const { userId } = req.body;
 
-  if (!userId || !groupId) {
-    return res.status(400).json({ error: 'Missing userId or groupId' });
-  }
+  if (!userId) return res.status(400).json({ error: 'Missing userId' });
 
   try {
     await db.query(
       `UPDATE group_members SET last_heartbeat = NOW()
        WHERE student_id = ? AND activity_instance_id = ?`,
-      [userId, groupId]
+      [userId, instanceId]
     );
     res.json({ success: true });
   } catch (err) {
@@ -205,79 +190,202 @@ async function recordHeartbeat(req, res) {
   }
 }
 
+// In getActiveStudent function in controller.js
+
 async function getActiveStudent(req, res) {
   const { instanceId } = req.params;
-  const userId = req.user?.id;
-
-  if (!userId) {
-    return res.status(401).json({ error: 'Unauthorized: No user ID' });
-  }
 
   try {
-    // Step 1: Return active student if already assigned and valid
     const [[instance]] = await db.query(
       `SELECT active_student_id FROM activity_instances WHERE id = ?`,
       [instanceId]
     );
 
-    if (instance?.active_student_id) {
-      const [[valid]] = await db.query(`
-        SELECT 1
-        FROM group_members gm
-        JOIN activity_groups ag ON gm.activity_group_id = ag.id
-        WHERE ag.activity_instance_id = ?
-          AND gm.student_id = ?`,
-        [instanceId, instance.active_student_id]
+    if (!instance) {
+      return res.status(404).json({ error: 'Activity instance not found' });
+    }
+
+    const activeStudentId = instance.active_student_id;
+
+    res.json({ activeStudentId });
+  } catch (err) {
+    console.error("❌ getActiveStudent error:", err);
+    res.status(500).json({ error: 'Failed to fetch active student' });
+  }
+}
+
+
+async function rotateActiveStudent(req, res) {
+  const { instanceId } = req.params;
+  const { currentStudentId } = req.body;
+
+  if (!currentStudentId) return res.status(400).json({ error: 'Missing currentStudentId' });
+
+  try {
+    const [members] = await db.query(`SELECT student_id FROM group_members WHERE activity_instance_id = ?`, [instanceId]);
+
+    if (!members.length) return res.status(404).json({ error: 'No group members' });
+
+    const others = members.filter(m => m.student_id !== currentStudentId);
+    const next = others.length ? others[Math.floor(Math.random() * others.length)] : members[0];
+
+    await db.query(`UPDATE activity_instances SET active_student_id = ? WHERE id = ?`, [next.student_id, instanceId]);
+    res.json({ activeStudentId: next.student_id });
+  } catch (err) {
+    console.error("❌ rotateActiveStudent:", err);
+    res.status(500).json({ error: 'Failed to rotate' });
+  }
+}
+
+async function setupMultipleGroupInstances(req, res) {
+  const { activityId, courseId, groups } = req.body;
+  if (!activityId || !courseId || !groups?.length) {
+    return res.status(400).json({ error: 'Missing data' });
+  }
+
+  try {
+    const instanceIds = [];
+    for (let i = 0; i < groups.length; i++) {
+      const group = groups[i];
+      const [result] = await db.query(
+        `INSERT INTO activity_instances (activity_id, course_id, group_number) VALUES (?, ?, ?)`,
+        [activityId, courseId, i + 1]
       );
+      const instanceId = result.insertId;
+      instanceIds.push(instanceId);
 
-      if (valid) {
-        return res.json({ activeStudentId: instance.active_student_id });
+      for (const member of group.members) {
+        await db.query(`INSERT INTO group_members (activity_instance_id, student_id, role) VALUES (?, ?, ?)`,
+          [instanceId, member.student_id, member.role]);
       }
-    }
 
-    // Step 2: Find user's group for this instance
-    const [[groupRow]] = await db.query(`
-      SELECT ag.id AS group_id
-      FROM activity_groups ag
-      JOIN group_members gm ON gm.activity_group_id = ag.id
-      WHERE ag.activity_instance_id = ? AND gm.student_id = ?`,
-      [instanceId, userId]
+      const random = group.members[Math.floor(Math.random() * group.members.length)];
+      await db.query(`UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+        [random.student_id, instanceId]);
+    }
+    res.json({ success: true, instanceIds });
+  } catch (err) {
+    console.error("❌ setupMultipleGroupInstances:", err);
+    res.status(500).json({ error: 'Failed to setup instances' });
+  }
+}
+
+async function submitGroupResponses(req, res) {
+  const { instanceId } = req.params;
+  const { studentId, groupIndex, answers } = req.body;
+
+  if (!instanceId || !studentId || !answers || typeof groupIndex !== 'number') {
+    return res.status(400).json({ error: 'Missing data' });
+  }
+
+  try {
+    const groupStateId = `${groupIndex + 1}state`;
+    const [[existing]] = await db.query(
+      `SELECT response FROM responses WHERE activity_instance_id = ? AND question_id = ?`,
+      [instanceId, groupStateId]
     );
-
-    if (!groupRow) {
-      return res.status(404).json({ error: 'User is not in any group for this activity' });
+    if (existing?.response === 'complete') {
+      return res.status(400).json({ error: 'Already completed' });
     }
 
-    const groupId = groupRow.group_id;
-
-    // Step 3: Find group members with recent heartbeat (last 30s)
-    const [members] = await db.query(`
-      SELECT gm.student_id
-      FROM group_members gm
-      WHERE gm.activity_group_id = ?
-        AND (gm.last_heartbeat IS NULL OR gm.last_heartbeat > NOW() - INTERVAL 30 SECOND)`,
-      [groupId]
-    );
-
-    if (!members.length) {
-      return res.status(404).json({ error: 'No currently present group members' });
+    for (const [key, value] of Object.entries(answers)) {
+      const questionId = `${groupIndex + 1}${key}`;
+      const type = key.endsWith('code') ? 'python' : 'text';
+      await db.query(
+        `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
+         VALUES (?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
+        [instanceId, questionId, type, value, studentId]
+      );
     }
-
-    // Step 4: Pick one (only or random)
-    const selected = members.length === 1
-      ? members[0]
-      : members[Math.floor(Math.random() * members.length)];
 
     await db.query(
-      `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
-      [selected.student_id, instanceId]
+      `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
+       VALUES (?, ?, 'text', 'complete', ?)
+       ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
+      [instanceId, groupStateId, studentId]
     );
 
-    res.json({ activeStudentId: selected.student_id });
+    const [members] = await db.query(`SELECT student_id FROM group_members WHERE activity_instance_id = ?`, [instanceId]);
+    if (members.length > 1) {
+      const others = members.filter(m => m.student_id !== studentId);
+      const next = others.length ? others[Math.floor(Math.random() * others.length)] : members[0];
+      await db.query(`UPDATE activity_instances SET active_student_id = ? WHERE id = ?`, [next.student_id, instanceId]);
+    }
 
+    res.json({ success: true });
   } catch (err) {
-    console.error("❌ Failed in getActiveStudent:", err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error("❌ submitGroupResponses:", err);
+    res.status(500).json({ error: 'Failed to save responses' });
+  }
+}
+
+async function getInstanceGroups(req, res) {
+  const { instanceId } = req.params;
+  try {
+    const [rows] = await db.query(
+      `SELECT gm.student_id, gm.role, u.name AS student_name, u.email AS student_email
+       FROM group_members gm
+       JOIN users u ON gm.student_id = u.id
+       WHERE gm.activity_instance_id = ?
+       ORDER BY gm.role`,
+      [instanceId]
+    );
+
+    res.json({
+      groups: [{
+        group_id: instanceId,
+        group_number: 1,
+        members: rows.map(r => ({
+          student_id: r.student_id,
+          name: r.student_name,
+          email: r.student_email,
+          role: r.role
+        }))
+      }]
+    });
+  } catch (err) {
+    console.error("❌ getInstanceGroups:", err);
+    res.status(500).json({ error: 'Failed to fetch group' });
+  }
+}
+
+async function getInstancesForActivityInCourse(req, res) {
+  const { courseId, activityId } = req.params;
+  try {
+    const [instances] = await db.query(
+      `SELECT id AS instance_id, group_number
+       FROM activity_instances
+       WHERE course_id = ? AND activity_id = ?
+       ORDER BY group_number`,
+      [courseId, activityId]
+    );
+
+    const groups = [];
+    for (const inst of instances) {
+      const [members] = await db.query(
+        `SELECT gm.student_id, gm.role, u.name AS student_name, u.email AS student_email
+         FROM group_members gm
+         JOIN users u ON gm.student_id = u.id
+         WHERE gm.activity_instance_id = ?
+         ORDER BY gm.role`,
+        [inst.instance_id]
+      );
+      groups.push({
+        instance_id: inst.instance_id,
+        group_number: inst.group_number,
+        members: members.map(m => ({
+          student_id: m.student_id,
+          name: m.student_name,
+          email: m.student_email,
+          role: m.role
+        }))
+      });
+    }
+    res.json({ groups });
+  } catch (err) {
+    console.error("❌ getInstancesForActivityInCourse:", err);
+    res.status(500).json({ error: 'Failed to fetch instances' });
   }
 }
 
@@ -288,393 +396,28 @@ async function getGroupResponses(req, res) {
     const [rows] = await db.query(
       `SELECT question_id, response, response_type
        FROM responses
-       WHERE activity_instance_id = ? AND group_id = ?`,
-      [instanceId, groupId]
+       WHERE activity_instance_id = ? AND answered_by_user_id IN (
+         SELECT student_id FROM group_members WHERE activity_instance_id = ?
+       )`,
+      [instanceId, instanceId]
     );
 
-    const result = {};
+    const responses = {};
     for (const row of rows) {
-      result[row.question_id] = {
+      responses[row.question_id] = {
         response: row.response,
         type: row.response_type
       };
     }
 
-    res.json(result);
+    res.json(responses);
   } catch (err) {
-    console.error("❌ Failed to fetch group responses:", err);
-    res.status(500).json({ error: 'Failed to fetch group responses' });
+    console.error("❌ getGroupResponses error:", err);
+    res.status(500).json({ error: 'Failed to fetch responses' });
   }
 }
 
-
-async function rotateActiveStudent(req, res) {
-  const { instanceId } = req.params;
-  const { currentStudentId } = req.body;
-
-  if (!currentStudentId) {
-    return res.status(400).json({ error: 'Missing currentStudentId' });
-  }
-
-  try {
-    // Find the group associated with this activity instance
-    const [[group]] = await db.query(
-      `SELECT id FROM activity_groups WHERE activity_instance_id = ?`,
-      [instanceId]
-    );
-
-    if (!group) {
-      return res.status(404).json({ error: 'No group found for this instance' });
-    }
-
-    // Get all group members
-    const [members] = await db.query(
-      `SELECT student_id FROM group_members WHERE activity_group_id = ?`,
-      [group.id]
-    );
-
-    if (!members.length) {
-      return res.status(404).json({ error: 'No members in group' });
-    }
-
-    // Pick a new student different from the current one
-    const others = members.filter(m => m.student_id !== currentStudentId);
-    const next = others.length > 0
-      ? others[Math.floor(Math.random() * others.length)]
-      : members[0]; // fallback to current if alone
-
-    // Update active student
-    await db.query(
-      `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
-      [next.student_id, instanceId]
-    );
-
-    res.json({ activeStudentId: next.student_id });
-
-  } catch (err) {
-    console.error("❌ Failed to rotate active student:", err);
-    res.status(500).json({ error: 'Failed to rotate active student' });
-  }
-}
-
-/**
- * POST /api/activity-instances/:id/setup-groups
- * Request body:
- * {
- *   students: [ { id: number, name: string, email: string } ]
- * }
- *
- * This controller function:
- * - Takes a list of selected students.
- * - Randomizes and splits them into groups of 4 (or fewer, with fallback).
- * - Creates one activity_group per group.
- * - Assigns roles: facilitator, spokesperson, analyst, qc (reused or merged for small groups).
- * - Inserts group_members.
- * - Sets one random student per group as active_student_id in the instance table.
- */
-
-async function setupGroupsForInstance(req, res) {
-  const { id: instanceId } = req.params;
-  const { students } = req.body;
-
-  if (!Array.isArray(students) || students.length === 0) {
-    return res.status(400).json({ error: 'Student list is empty or invalid' });
-  }
-
-  try {
-    // 1. Shuffle students randomly
-    const shuffled = students.sort(() => Math.random() - 0.5);
-
-    // 2. Break into groups of 4
-    const groups = [];
-    while (shuffled.length) {
-      groups.push(shuffled.splice(0, 4));
-    }
-
-    // 3. Cleanup any existing groups
-    const [existingGroups] = await db.query(
-      'SELECT id FROM activity_groups WHERE activity_instance_id = ?',
-      [instanceId]
-    );
-    const groupIds = existingGroups.map(g => g.id);
-    if (groupIds.length) {
-      await db.query('DELETE FROM group_members WHERE activity_group_id IN (?)', [groupIds]);
-      await db.query('DELETE FROM activity_groups WHERE activity_instance_id = ?', [instanceId]);
-    }
-
-    // 4. Role assignment logic
-    const roleSets = {
-      1: ['facilitator'],
-      2: ['facilitator', 'analyst'],
-      3: ['facilitator', 'spokesperson', 'analyst'],
-      4: ['facilitator', 'spokesperson', 'analyst', 'qc']
-    };
-
-    // 5. Create new groups
-    for (let i = 0; i < groups.length; i++) {
-      const group = groups[i];
-      const [result] = await db.query(
-        'INSERT INTO activity_groups (activity_instance_id, group_number) VALUES (?, ?)',
-        [instanceId, i + 1]
-      );
-      const groupId = result.insertId;
-      const roles = roleSets[group.length] || roleSets[4];
-
-      for (let j = 0; j < group.length; j++) {
-        const student = group[j];
-        const role = roles[j % roles.length];
-        await db.query(
-          'INSERT INTO group_members (activity_group_id, student_id, role) VALUES (?, ?, ?)',
-          [groupId, student.id, role]
-        );
-      }
-    }
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error('❌ Failed to set up groups:', err);
-    res.status(500).json({ error: 'Failed to set up groups' });
-  }
-}
-
-async function setupMultipleGroupInstances(req, res) {
-  const { activityId, courseId, groups } = req.body;
-  console.log("📥 Received setup request:", { activityId, courseId, groups });
-
-  if (!activityId || !courseId || !Array.isArray(groups) || groups.length === 0) {
-    return res.status(400).json({ error: 'Missing or invalid activityId, courseId, or groups' });
-  }
-
-  try {
-    const instanceIds = [];
-
-    for (let i = 0; i < groups.length; i++) {
-      const group = groups[i];
-
-      // 1. Create a new activity_instance for this group
-      const [instanceResult] = await db.query(
-        `INSERT INTO activity_instances (activity_id, course_id, group_number) VALUES (?, ?, ?)`,
-        [activityId, courseId, i + 1]  // group numbers: 1, 2, 3, ...
-      );
-      
-      const instanceId = instanceResult.insertId;
-      instanceIds.push(instanceId);
-
-      // 2. Create one activity_group for this instance
-      const [groupResult] = await db.query(
-        `INSERT INTO activity_groups (activity_instance_id, group_number) VALUES (?, ?)`,
-        [instanceId, 1]
-      );
-      const groupId = groupResult.insertId;
-
-      // 3. Insert group_members with roles
-      for (const member of group.members) {
-        await db.query(
-          `INSERT INTO group_members (activity_group_id, student_id, role)
-           VALUES (?, ?, ?)`,
-          [groupId, member.student_id, member.role]
-        );
-      }
-
-      // 4. Assign one active student (random)
-      const random = group.members[Math.floor(Math.random() * group.members.length)];
-      await db.query(
-        `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
-        [random.student_id, instanceId]
-      );
-    }
-
-    res.json({ success: true, instanceIds });
-  } catch (err) {
-    console.error('❌ Failed to setup multiple activity instances:', err);
-    res.status(500).json({ error: 'Failed to setup group instances' });
-  }
-}
-
-async function submitGroupResponses(req, res) {
-  const { instanceId } = req.params;
-  const { groupId, groupIndex, studentId, answers } = req.body;
-
-  if (!instanceId || !groupId || !studentId || !answers || typeof groupIndex !== 'number') {
-    return res.status(400).json({ error: 'Missing required submission fields' });
-  }
-
-  try {
-    const groupStateId = `${groupIndex + 1}state`;
-
-    // Check if already completed
-    const [[existing]] = await db.query(
-      `SELECT response FROM responses
-       WHERE activity_instance_id = ? AND group_id = ? AND question_id = ?`,
-      [instanceId, groupId, groupStateId]
-    );
-
-    if (existing?.response === 'complete') {
-      return res.status(400).json({ error: 'This group has already completed this section.' });
-    }
-
-    // Save each question response
-    const responseEntries = Object.entries(answers);
-    for (const [key, value] of responseEntries) {
-      const questionId = `${groupIndex + 1}${key}`;
-      const responseType = key.endsWith('code') ? 'python' : 'text';
-
-      await db.query(
-        `INSERT INTO responses (activity_instance_id, question_id, response_type, response, group_id, answered_by_user_id)
-         VALUES (?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
-        [instanceId, questionId, responseType, value, groupId, studentId]
-      );
-    }
-
-    // Mark group as complete
-    await db.query(
-      `INSERT INTO responses (activity_instance_id, question_id, response_type, response, group_id, answered_by_user_id)
-       VALUES (?, ?, 'text', 'complete', ?, ?)
-       ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
-      [instanceId, groupStateId, groupId, studentId]
-    );
-
-    // Rotate to next active student
-    const [members] = await db.query(
-      `SELECT student_id FROM group_members WHERE activity_group_id = ?`,
-      [groupId]
-    );
-
-    if (members.length > 1) {
-      const others = members.filter(m => m.student_id !== studentId);
-      const next = others.length > 0
-        ? others[Math.floor(Math.random() * others.length)]
-        : members[0];
-
-      await db.query(
-        `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
-        [next.student_id, instanceId]
-      );
-    }
-
-    res.json({ success: true });
-  } catch (err) {
-    console.error('❌ Failed to submit group responses:', err);
-    res.status(500).json({ error: 'Failed to submit group responses' });
-  }
-}
-
-async function getInstanceGroups(req, res) {
-  const { instanceId } = req.params;
-
-  if (!instanceId) {
-    return res.status(400).json({ error: 'Missing instanceId' });
-  }
-
-  try {
-    // Query group and member info
-    const [rows] = await db.query(
-      `SELECT 
-         ag.id AS group_id,
-         ag.group_number,
-         gm.student_id,
-         gm.role,
-         u.name AS student_name,
-         u.email AS student_email
-       FROM activity_groups ag
-       JOIN group_members gm ON gm.activity_group_id = ag.id
-       JOIN users u ON u.id = gm.student_id
-       WHERE ag.activity_instance_id = ?
-       ORDER BY ag.group_number, gm.role`,
-      [instanceId]
-    );
-
-    // Group by group_number
-    const groups = {};
-    for (const row of rows) {
-      if (!groups[row.group_number]) {
-        groups[row.group_number] = {
-          group_id: row.group_id,
-          group_number: row.group_number,
-          members: []
-        };
-      }
-      groups[row.group_number].members.push({
-        student_id: row.student_id,
-        name: row.student_name,
-        email: row.student_email,
-        role: row.role
-      });
-    }
-
-    const result = Object.values(groups);
-    res.json({ groups: result });
-  } catch (err) {
-    console.error('❌ Failed to get instance groups:', err);
-    res.status(500).json({ error: 'Failed to fetch instance groups' });
-  }
-}
-
-async function getInstancesByActivity(req, res) {
-  const { courseId, activityId } = req.params;
-
-  try {
-    const [instances] = await db.query(
-      `SELECT id AS instance_id, group_number
-       FROM activity_instances
-       WHERE course_id = ? AND activity_id = ?
-       ORDER BY group_number`,
-      [courseId, activityId]
-    );
-
-    res.json(instances);
-  } catch (err) {
-    console.error("❌ Failed to fetch instances by activity:", err);
-    res.status(500).json({ error: 'Failed to fetch activity instances' });
-  }
-}
-
-// GET /api/activity-instances/by-activity/:courseId/:activityId
-async function getInstancesForActivityInCourse(req, res) {
-  const { courseId, activityId } = req.params;
-
-  try {
-    const [instances] = await db.query(
-      `SELECT ai.id AS instance_id, ai.group_number, ag.id AS group_id
-       FROM activity_instances ai
-       JOIN activity_groups ag ON ag.activity_instance_id = ai.id
-       WHERE ai.course_id = ? AND ai.activity_id = ?
-       ORDER BY ai.group_number ASC`,
-      [courseId, activityId]
-    );
-
-    const grouped = [];
-
-    for (const instance of instances) {
-      const [members] = await db.query(
-        `SELECT gm.student_id, gm.role, u.name AS student_name
-         FROM group_members gm
-         JOIN users u ON gm.student_id = u.id
-         WHERE gm.activity_group_id = ?
-         ORDER BY gm.role`,
-        [instance.group_id]
-      );
-
-      grouped.push({
-        instance_id: instance.instance_id,
-        group_number: instance.group_number,
-        members: members.map(m => ({
-          student_id: m.student_id,
-          name: m.student_name,
-          role: m.role
-        }))
-      });
-    }
-
-    res.json({ groups: grouped });
-  } catch (err) {
-    console.error("❌ Failed to get groups for activity in course:", err);
-    res.status(500).json({ error: "Failed to fetch groups" });
-  }
-}
-
-
+// Export it as part of the module
 module.exports = {
   getParsedActivityDoc,
   createActivityInstance,
@@ -682,12 +425,10 @@ module.exports = {
   getEnrolledStudents,
   recordHeartbeat,
   getActiveStudent,
-  getGroupResponses,
   rotateActiveStudent,
-  setupGroupsForInstance,
   setupMultipleGroupInstances,
   submitGroupResponses,
   getInstanceGroups,
-  getInstancesByActivity,
-  getInstancesForActivityInCourse
+  getInstancesForActivityInCourse,
+  getGroupResponses 
 };

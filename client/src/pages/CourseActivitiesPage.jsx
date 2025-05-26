@@ -53,9 +53,9 @@ export default function CourseActivitiesPage() {
     console.log("🔍 courseId:", courseId, "activityId:", activityId, "instanceId:", instanceId);
 
     const path = isInstructor
-      ? `/setup-groups/${courseId}/${activityId}`  // ✅ this is correct
-      : `/start/${courseId}/${instanceId}`;        // ✅ students use instanceId
-
+    ? `/setup-groups/${courseId}/${activityId}`
+    : `/run/${instanceId}`;
+  
     navigate(path);
   };
 

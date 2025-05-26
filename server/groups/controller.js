@@ -176,54 +176,47 @@ console.log("👥 students fetched:", students);
 };
 
 // GET /api/groups/instance/:id
+// GET /api/groups/instance/:id
 exports.getGroupsByInstance = async (req, res) => {
   const { id: instanceId } = req.params;
 
   try {
+    // Fetch group member details for this activity instance
     const [rows] = await db.query(`
-      SELECT 
-        g.id AS group_id,
-        g.group_number,
-        u.id AS student_id,
-        u.name,
-        gm.role
-      FROM activity_groups g
-      JOIN group_members gm ON gm.activity_group_id = g.id
+      SELECT
+        gm.student_id,
+        gm.role,
+        u.name AS student_name,
+        u.email AS student_email,
+        ai.group_number
+      FROM group_members gm
       JOIN users u ON gm.student_id = u.id
-      WHERE g.activity_instance_id = ?
-      ORDER BY g.group_number, gm.role
+      JOIN activity_instances ai ON gm.activity_instance_id = ai.id
+      WHERE gm.activity_instance_id = ?
+      ORDER BY gm.role
     `, [instanceId]);
 
-    // Structure the result
-const grouped = {};
-for (const row of rows) {
-  const groupNum = row.group_number;
+    if (!rows.length) {
+      return res.json({ groups: [] });
+    }
 
-  if (!grouped[groupNum]) {
-    grouped[groupNum] = {
-      group_id: row.group_id,
-      members: []
+    // Since one instance = one group, structure it accordingly
+    const group = {
+      group_number: rows[0].group_number,
+      members: rows.map(row => ({
+        student_id: row.student_id,
+        name: row.student_name,
+        email: row.student_email,
+        role: row.role
+      }))
     };
-  }
 
-  grouped[groupNum].members.push({
-    student_id: row.student_id,
-    name: row.name,
-    role: row.role
-  });
-}
-
-const formatted = Object.entries(grouped).map(([group_number, data]) => ({
-  group_number,
-  group_id: data.group_id,
-  members: data.members
-}));
-
-res.json({ groups: formatted });
-
+    res.json({ groups: [group] });
 
   } catch (err) {
-    console.error("❌ Failed to fetch group view data:", err);
-    res.status(500).json({ error: "Failed to fetch group data" });
+    console.error("❌ Failed to fetch group members:", err);
+    res.status(500).json({ error: "Failed to fetch group members" });
   }
 };
+
+
