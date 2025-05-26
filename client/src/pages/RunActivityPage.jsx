@@ -10,8 +10,6 @@ import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
 import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet.jsx';
 
-
-
 export default function RunActivityPage() {
   const { instanceId } = useParams();
   const { user } = useUser();
@@ -25,54 +23,74 @@ export default function RunActivityPage() {
   const [activeStudentName, setActiveStudentName] = useState('');
   const [preamble, setPreamble] = useState([]);
   const [existingAnswers, setExistingAnswers] = useState({});
+  const [skulptLoaded, setSkulptLoaded] = useState(false);
 
   const isActive = user.id === activeStudentId;
 
-  const [skulptLoaded, setSkulptLoaded] = useState(false);
-
-useEffect(() => {
+  useEffect(() => {
     const loadScript = (src) =>
       new Promise((resolve, reject) => {
         if (document.querySelector(`script[src="${src}"]`)) {
-          resolve(); // already loaded
+          resolve();
           return;
         }
         const script = document.createElement('script');
         script.src = src;
         script.async = true;
-        script.onload = () => {
-          console.log(`✅ Loaded ${src}`);
-          resolve();
-        };
-        script.onerror = () => {
-          console.error(`❌ Failed to load ${src}`);
-          reject(new Error(`Failed to load script ${src}`));
-        };
-        document.head.appendChild(script); // use <head> for better priority
+        script.onload = () => resolve();
+        script.onerror = () => reject(new Error(`Failed to load script ${src}`));
+        document.head.appendChild(script);
       });
-  
-      const loadSkulpt = async () => {
-        try {
-          await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
-          await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
-      
-          if (window.Sk && window.Sk.builtinFiles) {
-            console.log('✅ Skulpt is ready');
-            setSkulptLoaded(true); 
-          } else {
-            console.warn('⚠️ Skulpt scripts loaded, but core objects not initialized');
-          }
-        } catch (err) {
-          console.error('🚨 Skulpt failed to load', err);
+
+    const loadSkulpt = async () => {
+      try {
+        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
+        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
+        if (window.Sk && window.Sk.builtinFiles) {
+          setSkulptLoaded(true);
         }
-      };
-  
+      } catch (err) {
+        console.error('Skulpt failed to load', err);
+      }
+    };
+
     loadSkulpt();
   }, []);
-    
+
   useEffect(() => {
-    loadActivity(); 
+    loadActivity();
   }, []);
+
+  useEffect(() => {
+  // 🔍 Fetch the activity_instance data and extract the activity_id
+  const fetchInstanceData = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
+      const data = await res.json();
+      console.log("📘 Instance data:", data);
+      setActivity(data); // includes activity_id, course_id, etc.
+    } catch (err) {
+      console.error("❌ Failed to fetch instance metadata:", err);
+    }
+  };
+
+  fetchInstanceData();
+}, [instanceId]);
+
+  useEffect(() => {
+    if (!activeStudentId) return;
+    let student = groupMembers.find(m => String(m.student_id) === String(activeStudentId));
+    if (!student) {
+      fetch(`${API_BASE_URL}/api/users/${activeStudentId}`)
+        .then(res => res.json())
+        .then(userData => {
+          setActiveStudentName(userData.name || '(unknown)');
+        })
+        .catch(() => setActiveStudentName('(unknown)'));
+    } else {
+      setActiveStudentName(student.name);
+    }
+  }, [activeStudentId, groupMembers]);
 
   useEffect(() => {
     Prism.highlightAll();
@@ -80,59 +98,39 @@ useEffect(() => {
 
   async function loadActivity() {
     try {
-      
-      console.log("🔍 Fetching instance");
       const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
       const instanceData = await instanceRes.json();
-      console.log("✅ Instance data", instanceData);
-  
-      setActivity(instanceData); // Fix: ensure activity is set early
-  
-      // Fetch active student (move this up so the ID is available earlier)
-      console.log("🔍 Fetching active student");
-      const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`, {
-        credentials: 'include'
-      });
-      
+      setActivity(instanceData);
+
+      const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`, { credentials: 'include' });
       const activeData = await res.json();
       setActiveStudentId(activeData.activeStudentId);
-      console.log("✅ Active student ID:", activeData.activeStudentId);
-  
-      console.log("🔍 Fetching groups for instance", instanceId);
+
       const groupRes = await fetch(`${API_BASE_URL}/api/groups/instance/${instanceId}`);
       const groupData = await groupRes.json();
-      console.log("✅ Group data", groupData);
-  
+
       const userGroup = groupData.groups.find(g =>
         g.members.some(m => m.student_id === user.id)
       );
-      console.log("👤 Matched user group", userGroup);
-  
+
       if (userGroup) {
         setGroupId(userGroup.group_id);
         setGroupMembers(userGroup.members);
-  
-        console.log("🔍 Fetching responses for group", userGroup.group_id);
+
         const answersRes = await fetch(`${API_BASE_URL}/api/responses/${instanceId}/${userGroup.group_id}`);
         const answersData = await answersRes.json();
         setExistingAnswers(Object.fromEntries(
           Object.entries(answersData).map(([qid, val]) => [qid, val.response])
         ));
-      } else {
-        console.warn("⚠️ User is not assigned to any group!");
       }
-  
-      console.log("🔍 Fetching document lines");
+
       const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(instanceData.sheet_url)}`);
       const { lines } = await docRes.json();
-      console.log("✅ Document lines fetched", lines.length);
-  
       const blocks = parseSheetToBlocks(lines);
-      console.log("🧱 Parsed blocks", blocks.length);
-  
+
       const grouped = [], preamble = [];
       let currentGroup = null;
-  
+
       for (let block of blocks) {
         if (block.type === 'groupIntro') {
           if (currentGroup) grouped.push(currentGroup);
@@ -145,40 +143,29 @@ useEffect(() => {
           preamble.push(block);
         }
       }
-  
+
       setGroups(grouped);
       setPreamble(preamble);
     } catch (err) {
-      console.error('❌ Error loading activity data', err);
+      console.error('Failed to load activity data', err);
     }
   }
-  
 
   useEffect(() => {
-    async function refreshActiveStudent() {
+    const interval = setInterval(async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
         const data = await res.json();
         setActiveStudentId(data.activeStudentId);
-      } catch (err) {
-        console.error("Failed to refresh active student:", err);
-      }
-    }
-
-    const interval = setInterval(refreshActiveStudent, 10000);
+      } catch {}
+    }, 10000);
     return () => clearInterval(interval);
   }, [instanceId]);
-
-  useEffect(() => {
-    if (!activeStudentId || groupMembers.length === 0) return;
-    const student = groupMembers.find(m => String(m.student_id) === String(activeStudentId));
-    setActiveStudentName(student?.name || '(unknown)');
-  }, [activeStudentId, groupMembers]);
 
   const activeIndex = useMemo(() => {
     return groups.findIndex((_, i) => {
       const stateKey = `${i + 1}state`;
-      return existingAnswers && existingAnswers[stateKey] !== 'complete';
+      return existingAnswers[stateKey] !== 'complete';
     });
   }, [groups, existingAnswers]);
 
@@ -193,7 +180,7 @@ useEffect(() => {
     });
 
     if (Object.keys(answers).length === 0) {
-      alert("⚠️ No answers found to submit.");
+      alert("No answers found to submit.");
       return;
     }
 
@@ -214,7 +201,7 @@ useEffect(() => {
   if (activeStudentId == null) {
     return (
       <Container className="mt-4">
-        <Alert variant="warning">⏳ Waiting for an active student to be assigned...</Alert>
+        <Alert variant="warning">Waiting for an active student to be assigned...</Alert>
       </Container>
     );
   }
@@ -223,8 +210,10 @@ useEffect(() => {
     <Container className="mt-4">
       <h2>Run Activity: {activity?.title || activity?.name}</h2>
       {isActive
-        ? <Alert variant="success">✅ You are the active student. You may submit responses.</Alert>
-        : <Alert variant="info">⏳ You are currently observing. The active student is {activeStudentName || 'loading'}.</Alert>
+        ? <Alert variant="success">You are the active student. You may submit responses.</Alert>
+        : <Alert variant="info">
+            You are currently observing. The active student is {activeStudentName || '(unknown)'}.
+          </Alert>
       }
 
       {renderBlocks(preamble, { editable: false, isActive: false, mode: 'run' })}
@@ -257,7 +246,7 @@ useEffect(() => {
       })}
 
       {fallbackIndex === groups.length && (
-        <Alert variant="success">🎉 All groups complete! Review your responses above.</Alert>
+        <Alert variant="success">All groups complete! Review your responses above.</Alert>
       )}
     </Container>
   );
