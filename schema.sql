@@ -87,15 +87,16 @@ CREATE TABLE IF NOT EXISTS activity_groups (
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE
 );
 
--- Group Members
+-- Group membership with roles, linked to activity_instances
 CREATE TABLE IF NOT EXISTS group_members (
   id INT AUTO_INCREMENT PRIMARY KEY,
+  activity_instance_id INT NOT NULL,
   student_id INT NOT NULL,
-  role ENUM('facilitator','spokesperson','analyst','qc') NOT NULL,
+  role ENUM('facilitator', 'spokesperson', 'analyst', 'qc') NOT NULL,
   last_heartbeat DATETIME DEFAULT NULL,
-  activity_group_id INT NOT NULL,
-  FOREIGN KEY (activity_group_id) REFERENCES activity_groups(id) ON DELETE CASCADE,
-  FOREIGN KEY (student_id) REFERENCES users(id)
+  UNIQUE KEY unique_member_role (activity_instance_id, role),
+  FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE,
+  FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 -- Responses
