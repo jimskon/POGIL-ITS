@@ -1,4 +1,3 @@
-// utils/parseSheet.js
 import ActivityQuestionBlock from '../components/activity/ActivityQuestionBlock';
 import ActivityHeader from '../components/activity/ActivityHeader';
 import ActivityEnvironment from '../components/activity/ActivityEnvironment';
@@ -67,60 +66,75 @@ export function parseSheetToBlocks(lines) {
     }
 
     // --- Python block ---
-// --- Python block ---
-if (trimmed === '\\python') {
-  flushCurrentBlock();
-  currentField = 'python';
-  if (currentQuestion && currentQuestion.type === 'question') {
-    if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
-    currentQuestion.pythonBlocks.push([]);
-  } else {
-    currentQuestion = { type: 'python', lines: [] };
-  }
-  continue;
-}
-
-if (trimmed === '\\endpython') {
-  if (currentField === 'python') {
-    if (currentQuestion?.type === 'python') {
-      blocks.push({
-        type: 'python',
-        content: currentQuestion.lines.join('\n')
-      });
-      currentQuestion = null;
-    } else if (currentQuestion?.pythonBlocks?.length > 0) {
-      const lines = currentQuestion.pythonBlocks.pop();
-      currentQuestion.pythonBlocks.push({
-        type: 'python',
-        content: lines.join('\n')
-      });
-    }
-    currentField = 'prompt';
-  }
-  continue;
-}
-
-if (currentField === 'python') {
-  if (currentQuestion?.type === 'python') {
-    currentQuestion.lines.push(line);
-  } else if (currentQuestion?.pythonBlocks?.length > 0) {
-    currentQuestion.pythonBlocks[currentQuestion.pythonBlocks.length - 1].push(line);
-  }
-  continue;
-}
-
-    
-    // --- Headers ---
-    const headerMatch = trimmed.match(/^\\(title|name|section)\{(.+?)\}$/);
-    if (headerMatch) {
+    if (trimmed === '\\python') {
       flushCurrentBlock();
-      blocks.push({
-        type: 'header',
-        tag: headerMatch[1],
-        content: format(headerMatch[2])
-      });
+      currentField = 'python';
+
+      if (currentQuestion && currentQuestion.type === 'question') {
+        if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
+        currentQuestion.pythonBlocks.push({ lines: [] });
+      } else {
+        currentQuestion = { type: 'python', lines: [] };
+      }
       continue;
     }
+
+    if (trimmed === '\\endpython') {
+      if (currentField === 'python') {
+        if (currentQuestion?.type === 'python') {
+          blocks.push({
+            type: 'python',
+            content: currentQuestion.lines.join('\n')
+          });
+          currentQuestion = null;
+        } else if (currentQuestion?.pythonBlocks?.length > 0) {
+          const block = currentQuestion.pythonBlocks.pop();
+          currentQuestion.pythonBlocks.push({
+            type: 'python',
+            content: block.lines.join('\n')
+          });
+        }
+        currentField = 'prompt';
+      }
+      continue;
+    }
+
+    if (currentField === 'python') {
+      if (currentQuestion?.type === 'python') {
+        currentQuestion.lines.push(line);
+      } else if (currentQuestion?.pythonBlocks?.length > 0) {
+        const lastBlock = currentQuestion.pythonBlocks[currentQuestion.pythonBlocks.length - 1];
+        lastBlock.lines.push(line);
+      }
+      continue;
+    }
+
+    // --- Headers ---
+    // --- Simple headers (title, name) ---
+  const headerMatch = trimmed.match(/^\\(title|name)\{(.+?)\}$/);
+  if (headerMatch) {
+    flushCurrentBlock();
+    blocks.push({
+      type: 'header',
+      tag: headerMatch[1],
+      content: format(headerMatch[2])
+    });
+    continue;
+  }
+
+    // --- Sections (e.g., Learning Objectives, Content, Process)
+    const sectionMatch = trimmed.match(/^\\section\*?\{(.+?)\}$/);
+  if (sectionMatch) {
+    flushCurrentBlock();
+    blocks.push({
+      type: 'section',
+      name: format(sectionMatch[1]),
+      content: []      // you may later collect nested blocks here if you want true sub‐trees
+    });
+    continue;
+  }
+ 
+  
 
     // --- Group start ---
     if (trimmed.startsWith('\\questiongroup{')) {
@@ -199,7 +213,7 @@ if (currentField === 'python') {
       continue;
     }
 
-    // --- \\textbf as line ---
+    // --- \textbf as line ---
     const textbfMatch = trimmed.match(/^\\textbf\{(.+?)\}$/);
     if (textbfMatch) {
       flushCurrentBlock();
@@ -235,23 +249,59 @@ export function renderBlocks(blocks, options = {}) {
       return null;
     }
 
-    if (block.type === 'question') {
-      const groupPrefix = block.groupId || ''; // ensure consistent ID format
-      const questionKey = `${groupPrefix}${block.id}`;
-      const saved = prefill[questionKey]?.response || '';
+    if (block.type === 'endGroup') {
+      return mode === 'preview'
+        ? <hr key={`endgroup-${index}`} className="my-4" />
+        : <div key={`endgroup-${index}`} data-type="endGroup" />;
+    }
 
+    if (block.type === 'header') {
+      const Tag = block.tag === 'title' ? 'h2' : block.tag === 'section' ? 'h4' : 'p';
+      return ( 
+        <Tag key={`header-${index}`} className="my-3 font-bold">
+          {block.content}
+        </Tag>
+      );
+    }
+
+    if (block.type === 'text') {
       return (
-        <div key={`q-${block.id}`} className="mb-3">
-          <p><strong>{block.label}</strong> {block.prompt}</p>
+        <p key={`text-${index}`} className="my-2">
+          <span dangerouslySetInnerHTML={{ __html: block.content }} />
+        </p>
+      );
+    }
 
-          {/* Text input with saved response */}
-          <Form.Control
-            as="textarea"
-            rows={block.responseLines || 1}
-            defaultValue={options.prefill?.[block.groupId + block.id] || ''}
-            data-question-id={block.id}
-            readOnly={!options.editable}
-/>
+    if (block.type === 'list') {
+      const ListTag = block.listType === 'ul' ? 'ul' : 'ol';
+      return (
+        <ListTag key={`list-${index}`} className="my-2 list-disc list-inside">
+          {block.items.map((item, i) => (
+            <li key={`list-item-${i}`}>
+              <span dangerouslySetInnerHTML={{ __html: item }} />
+            </li>
+          ))}
+        </ListTag>
+      );
+    }
+
+    if (block.type === 'groupIntro') {
+      return (
+        <div key={`group-intro-${index}`} className="my-4 border-t pt-4">
+          <h3 className="text-lg font-semibold">
+            <span dangerouslySetInnerHTML={{ __html: block.content }} />
+          </h3>
+        </div>
+      );
+    }
+
+    if (block.type === 'section') {
+      return (
+        <div key={`section-${index}`} className="my-4">
+          <h4 className="font-semibold">{block.name}</h4>
+          {block.content && block.content.length > 0 && (
+            renderBlocks(block.content, options)
+          )}
         </div>
       );
     }
@@ -271,36 +321,68 @@ export function renderBlocks(blocks, options = {}) {
       );
     }
 
-    // Other types (headers, lists, text, etc.)
-    if (block.type === 'header') {
-      return <ActivityHeader key={`h-${index}`} {...{ [block.tag]: block.content }} />;
-    }
-
-    if (block.type === 'groupIntro') {
-      return <p key={`g-${block.groupId}`}><strong>{block.groupId}.</strong> {block.content}</p>;
-    }
-
-    if (block.type === 'text') {
-      return <p key={`text-${index}`} dangerouslySetInnerHTML={{ __html: block.content }} />;
-    }
-
-    if (block.type === 'list') {
-      const ListTag = block.listType === 'ul' ? 'ul' : 'ol';
+    if (block.type === 'question') {
       return (
-        <ListTag key={`list-${index}`} className="ms-4">
-          {block.items.map((item, i) => (
-            <li key={i} dangerouslySetInnerHTML={{ __html: item }} />
+        <div key={`q-${block.id}`} className="mb-3">
+          <p>
+            <strong>{block.label}</strong>{' '}
+            <span dangerouslySetInnerHTML={{ __html: block.prompt }} />
+          </p>
+
+          {block.pythonBlocks?.map((py, i) => (
+            <ActivityPythonBlock
+              key={`q-${block.id}-py-${i}`}
+              code={py.content}
+              blockIndex={`${index}-${i}`}
+              editable={editable}
+              isActive={isActive}
+              onSave={onSave}
+              onSubmit={onSubmit}
+            />
           ))}
-        </ListTag>
+
+          <Form.Control
+            as="textarea"
+            rows={block.responseLines || 1}
+            defaultValue=""
+            readOnly={!editable}
+            className="mt-2"
+          />
+
+          {mode === 'preview' && (
+            <>
+              {block.samples?.length > 0 && (
+                <div className="mt-2 text-muted small">
+                  <strong>Sample Responses:</strong>
+                  <ul>
+                    {block.samples.map((s, i) => <li key={i}>{s}</li>)}
+                  </ul>
+                </div>
+              )}
+              {block.feedback?.length > 0 && (
+                <div className="mt-2 text-muted small">
+                  <strong>Feedback Prompts:</strong>
+                  <ul>
+                    {block.feedback.map((f, i) => <li key={i}>{f}</li>)}
+                  </ul>
+                </div>
+              )}
+              {block.followups?.length > 0 && (
+                <div className="mt-2 text-muted small">
+                  <strong>Follow-up Prompts:</strong>
+                  <ul>
+                    {block.followups.map((f, i) => <li key={i}>{f}</li>)}
+                  </ul>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       );
     }
 
-    if (block.type === 'endGroup') {
-      return mode === 'preview'
-        ? <hr key={`endgroup-${index}`} className="my-4" />
-        : <div key={`endgroup-${index}`} data-type="endGroup" />;
-    }
-
-    return <div key={index}>[Unknown block type: {block.type}]</div>;
+    console.warn(`Unhandled block type: ${block.type}`, block);
+    return null;
   });
 }
+//End parseSheet.jsx
