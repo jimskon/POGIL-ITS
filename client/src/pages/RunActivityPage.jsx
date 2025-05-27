@@ -40,7 +40,7 @@ export default function RunActivityPage() {
         if (data.activeStudentId !== activeStudentId) {
           await loadActivity();
         }
-      } catch {}
+      } catch { }
     }, 10000);
 
     return () => clearInterval(interval);
@@ -201,9 +201,13 @@ export default function RunActivityPage() {
         const stateKey = `${index + 1}state`;
         const complete = existingAnswers[stateKey] === 'complete';
         const isCurrent = index === fallbackIndex;
-        const editable = isCurrent && isActive && !complete;
+        const isFuture = index > fallbackIndex;
 
-        if (!complete && !isCurrent) return null;
+        // ❌ Skip future groups for everyone
+        if (isFuture) return null;
+
+        // ✅ Only the active student can edit current group if it's not complete
+        const editable = isActive && isCurrent && !complete;
 
         return (
           <div
@@ -220,6 +224,7 @@ export default function RunActivityPage() {
               prefill: existingAnswers,
               currentGroupIndex: index
             })}
+
             {editable && (
               <div className="mt-2">
                 <Button onClick={handleSubmit}>Submit and Continue</Button>

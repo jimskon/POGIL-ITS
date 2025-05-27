@@ -247,11 +247,6 @@ async function rotateActiveStudent(req, res) {
 
 async function setupMultipleGroupInstances(req, res) {
   const { activityId, courseId, groups } = req.body;
-  const [members] = await db.query(
-    `SELECT student_id FROM group_members
-     WHERE activity_instance_id = ? AND connected = TRUE`,
-    [instanceId]
-  );
 
   if (!activityId || !courseId || !groups?.length) {
     return res.status(400).json({ error: 'Missing data' });
@@ -319,13 +314,6 @@ async function submitGroupResponses(req, res) {
        ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
       [instanceId, groupStateId, studentId]
     );
-
-    const [members] = await db.query(`SELECT student_id FROM group_members WHERE activity_instance_id = ?`, [instanceId]);
-    if (members.length > 1) {
-      const others = members.filter(m => m.student_id !== studentId);
-      const next = others.length ? others[Math.floor(Math.random() * others.length)] : members[0];
-      await db.query(`UPDATE activity_instances SET active_student_id = ? WHERE id = ?`, [next.student_id, instanceId]);
-    }
 
     res.json({ success: true });
   } catch (err) {
