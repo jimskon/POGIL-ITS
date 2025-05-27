@@ -24,23 +24,23 @@ export default function RunActivityPage() {
 
   const isActive = user && user.id === activeStudentId;
 
-const currentQuestionGroupIndex = useMemo(() => {
-  console.log("🧩 existingAnswers snapshot:", existingAnswers);
+  const currentQuestionGroupIndex = useMemo(() => {
+    console.log("🧩 existingAnswers snapshot:", existingAnswers);
 
-  if (!existingAnswers || Object.keys(existingAnswers).length === 0) {
-    console.log("⚠️ existingAnswers not ready yet");
-    return 0;
-  }
+    if (!existingAnswers || Object.keys(existingAnswers).length === 0) {
+      console.log("⚠️ existingAnswers not ready yet");
+      return 0;
+    }
 
-  let count = 0;
-  while (existingAnswers[`${count + 1}state`]?.response === 'complete') {
-    console.log(`✅ Skipping group ${count + 1} as complete`);
-    count++;
-  }
+    let count = 0;
+    while (existingAnswers[`${count + 1}state`]?.response === 'complete') {
+      console.log(`✅ Skipping group ${count + 1} as complete`);
+      count++;
+    }
 
-  console.log(`✅ currentQuestionGroupIndex after skipping:`, count);
-  return count;
-}, [existingAnswers]);
+    console.log(`✅ currentQuestionGroupIndex after skipping:`, count);
+    return count;
+  }, [existingAnswers]);
 
 
   if (!user) {
@@ -140,11 +140,12 @@ const currentQuestionGroupIndex = useMemo(() => {
       const userGroup = groupData.groups.find(g => g.members.some(m => m.student_id === user.id));
       if (userGroup) {
         setGroupMembers(userGroup.members);
-
-        const answersRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/responses`);
-        const answersData = await answersRes.json();
-        setExistingAnswers(answersData);
       }
+
+      // Always load answers, even if user is not in a group
+      const answersRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/responses`);
+      const answersData = await answersRes.json();
+      setExistingAnswers(answersData);
 
       const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(instanceData.sheet_url)}`);
       const { lines } = await docRes.json();
@@ -232,7 +233,7 @@ const currentQuestionGroupIndex = useMemo(() => {
             className="mb-4"
             data-current-group={editable ? "true" : undefined}
           >
-            <p><strong>Group {activity.group_number}.</strong> {group.intro.content}</p>
+            <p><strong>{index + 1}.</strong> {group.intro.content}</p>
             {renderBlocks(group.content, {
               editable,
               isActive,
