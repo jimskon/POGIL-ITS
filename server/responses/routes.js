@@ -5,6 +5,10 @@ const controller = require('./controller');
 // POST /api/responses
 router.post('/', controller.createResponse);
 
-router.get('/:instanceId/:groupId', controller.getGroupResponses);
+// GET responses for all members in the instance's group (no group_id field)
+router.get('/:instanceId/group', controller.getGroupResponses);
+
+// Optional: keep if you still use this route format, else remove
+// router.get('/:instanceId/:groupId', controller.getGroupResponses);
 
 module.exports = router;

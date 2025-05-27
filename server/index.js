@@ -8,6 +8,8 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 require('dotenv').config();
+require('./heartbeatCleaner');
+
 
 const db = require('./db'); // Make sure db is accessible
 

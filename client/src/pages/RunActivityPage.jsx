@@ -8,16 +8,13 @@ import 'prismjs/components/prism-python';
 
 import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
-import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet.jsx';
+import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
 
 export default function RunActivityPage() {
   const { instanceId } = useParams();
   const { user } = useUser();
-  console.log("🔍 User data:", user);
-
   const [activity, setActivity] = useState(null);
   const [groups, setGroups] = useState([]);
-  const [groupId, setGroupId] = useState(null);
   const [groupMembers, setGroupMembers] = useState([]);
   const [activeStudentId, setActiveStudentId] = useState(null);
   const [activeStudentName, setActiveStudentName] = useState('');
@@ -25,14 +22,54 @@ export default function RunActivityPage() {
   const [existingAnswers, setExistingAnswers] = useState({});
   const [skulptLoaded, setSkulptLoaded] = useState(false);
 
-  const isActive = user.id === activeStudentId;
+  const isActive = user && user.id === activeStudentId;
+  if (!user) {
+    return (
+      <Container className="mt-4">
+        <Alert variant="danger">User not loaded. Please log in again.</Alert>
+      </Container>
+    );
+  }
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
+        const data = await res.json();
+
+        if (data.activeStudentId !== activeStudentId) {
+          await loadActivity();
+        }
+      } catch {}
+    }, 10000);
+
+    return () => clearInterval(interval);
+  }, [instanceId, activeStudentId]);
+
+  useEffect(() => {
+    const sendHeartbeat = async () => {
+      if (!user?.id || !instanceId) return;
+      try {
+        await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/heartbeat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.id })
+        });
+      } catch (err) {
+        console.error('❌ Heartbeat failed:', err);
+      }
+    };
+
+    sendHeartbeat();
+    const interval = setInterval(sendHeartbeat, 20000);
+    return () => clearInterval(interval);
+  }, [user?.id, instanceId]);
 
   useEffect(() => {
     const loadScript = (src) =>
       new Promise((resolve, reject) => {
         if (document.querySelector(`script[src="${src}"]`)) {
-          resolve();
-          return;
+          resolve(); return;
         }
         const script = document.createElement('script');
         script.src = src;
@@ -46,9 +83,7 @@ export default function RunActivityPage() {
       try {
         await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
         await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
-        if (window.Sk && window.Sk.builtinFiles) {
-          setSkulptLoaded(true);
-        }
+        if (window.Sk && window.Sk.builtinFiles) setSkulptLoaded(true);
       } catch (err) {
         console.error('Skulpt failed to load', err);
       }
@@ -57,25 +92,7 @@ export default function RunActivityPage() {
     loadSkulpt();
   }, []);
 
-  useEffect(() => {
-    loadActivity();
-  }, []);
-
-  useEffect(() => {
-  // 🔍 Fetch the activity_instance data and extract the activity_id
-  const fetchInstanceData = async () => {
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
-      const data = await res.json();
-      console.log("📘 Instance data:", data);
-      setActivity(data); // includes activity_id, course_id, etc.
-    } catch (err) {
-      console.error("❌ Failed to fetch instance metadata:", err);
-    }
-  };
-
-  fetchInstanceData();
-}, [instanceId]);
+  useEffect(() => { loadActivity(); }, []);
 
   useEffect(() => {
     if (!activeStudentId) return;
@@ -83,18 +100,14 @@ export default function RunActivityPage() {
     if (!student) {
       fetch(`${API_BASE_URL}/api/users/${activeStudentId}`)
         .then(res => res.json())
-        .then(userData => {
-          setActiveStudentName(userData.name || '(unknown)');
-        })
+        .then(userData => setActiveStudentName(userData.name || '(unknown)'))
         .catch(() => setActiveStudentName('(unknown)'));
     } else {
       setActiveStudentName(student.name);
     }
   }, [activeStudentId, groupMembers]);
 
-  useEffect(() => {
-    Prism.highlightAll();
-  }, [groups]);
+  useEffect(() => { Prism.highlightAll(); }, [groups]);
 
   async function loadActivity() {
     try {
@@ -109,19 +122,13 @@ export default function RunActivityPage() {
       const groupRes = await fetch(`${API_BASE_URL}/api/groups/instance/${instanceId}`);
       const groupData = await groupRes.json();
 
-      const userGroup = groupData.groups.find(g =>
-        g.members.some(m => m.student_id === user.id)
-      );
-
+      const userGroup = groupData.groups.find(g => g.members.some(m => m.student_id === user.id));
       if (userGroup) {
-        setGroupId(userGroup.group_id);
         setGroupMembers(userGroup.members);
 
-        const answersRes = await fetch(`${API_BASE_URL}/api/responses/${instanceId}/${userGroup.group_id}`);
+        const answersRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/responses`);
         const answersData = await answersRes.json();
-        setExistingAnswers(Object.fromEntries(
-          Object.entries(answersData).map(([qid, val]) => [qid, val.response])
-        ));
+        setExistingAnswers(answersData);
       }
 
       const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(instanceData.sheet_url)}`);
@@ -151,51 +158,26 @@ export default function RunActivityPage() {
     }
   }
 
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
-        const data = await res.json();
-        setActiveStudentId(data.activeStudentId);
-      } catch {}
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [instanceId]);
-
-  const activeIndex = useMemo(() => {
-    return groups.findIndex((_, i) => {
-      const stateKey = `${i + 1}state`;
-      return existingAnswers[stateKey] !== 'complete';
-    });
-  }, [groups, existingAnswers]);
-
+  const activeIndex = useMemo(() => groups.findIndex((_, i) => existingAnswers[`${i + 1}state`] !== 'complete'), [groups, existingAnswers]);
   const fallbackIndex = activeIndex === -1 ? groups.length : activeIndex;
 
   async function handleSubmit() {
-    const answerInputs = document.querySelectorAll('[data-question-id]');
+    const container = document.querySelector('[data-current-group="true"]');
+    const answerInputs = container?.querySelectorAll('[data-question-id]') || [];
     const answers = {};
     answerInputs.forEach(el => {
       const qid = el.getAttribute('data-question-id');
       if (qid) answers[qid] = el.value;
     });
-
     if (Object.keys(answers).length === 0) {
       alert("No answers found to submit.");
       return;
     }
-
     await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        groupId,
-        groupIndex: fallbackIndex,
-        studentId: user.id,
-        answers
-      })
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groupIndex: fallbackIndex, studentId: user.id, answers })
     });
-
-    window.location.reload();
+    await loadActivity();
   }
 
   if (activeStudentId == null) {
@@ -211,10 +193,7 @@ export default function RunActivityPage() {
       <h2>Run Activity: {activity?.title || activity?.name}</h2>
       {isActive
         ? <Alert variant="success">You are the active student. You may submit responses.</Alert>
-        : <Alert variant="info">
-            You are currently observing. The active student is {activeStudentName || '(unknown)'}.
-          </Alert>
-      }
+        : <Alert variant="info">You are currently observing. The active student is {activeStudentName || '(unknown)'}</Alert>}
 
       {renderBlocks(preamble, { editable: false, isActive: false, mode: 'run' })}
 
@@ -224,17 +203,22 @@ export default function RunActivityPage() {
         const isCurrent = index === fallbackIndex;
         const editable = isCurrent && isActive && !complete;
 
-        if (!isActive && !complete && !isCurrent) return null;
-        if (isActive && index > fallbackIndex) return null;
+        if (!complete && !isCurrent) return null;
 
         return (
-          <div key={`group-${index}`} className="mb-4">
-            <p><strong>{group.intro.groupId}.</strong> {group.intro.content}</p>
+          <div
+            key={`group-${index}`}
+            className="mb-4"
+            data-current-group={editable ? "true" : undefined}
+          >
+            <p><strong>Group {activity.group_number}.</strong> {group.intro.content}</p>
+
             {renderBlocks(group.content, {
               editable,
               isActive,
               mode: 'run',
-              prefill: existingAnswers
+              prefill: existingAnswers,
+              currentGroupIndex: index
             })}
             {editable && (
               <div className="mt-2">

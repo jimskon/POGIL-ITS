@@ -3,9 +3,6 @@ const express = require('express');
 const router = express.Router();
 const controller = require('./controller');
 
-console.log("✅ Registering activity_instances routes");
-console.log("📦 controller keys:", Object.keys(controller));
-
 // ✅ Create a new activity instance
 router.post('/', controller.createActivityInstance);
 
@@ -34,7 +31,7 @@ router.post('/:instanceId/rotate-active-student', controller.rotateActiveStudent
 router.post('/:instanceId/submit-group', controller.submitGroupResponses);
 
 // ✅ Get all saved responses for a specific group in an instance
-router.get('/:instanceId/group/:groupId/responses', controller.getGroupResponses);
+router.get('/:instanceId/responses', controller.getInstanceResponses);
 
 // ✅ Get student group members in an activity instance
 router.get('/:instanceId/groups', controller.getInstanceGroups);

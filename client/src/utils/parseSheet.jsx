@@ -111,30 +111,30 @@ export function parseSheetToBlocks(lines) {
 
     // --- Headers ---
     // --- Simple headers (title, name) ---
-  const headerMatch = trimmed.match(/^\\(title|name)\{(.+?)\}$/);
-  if (headerMatch) {
-    flushCurrentBlock();
-    blocks.push({
-      type: 'header',
-      tag: headerMatch[1],
-      content: format(headerMatch[2])
-    });
-    continue;
-  }
+    const headerMatch = trimmed.match(/^\\(title|name)\{(.+?)\}$/);
+    if (headerMatch) {
+      flushCurrentBlock();
+      blocks.push({
+        type: 'header',
+        tag: headerMatch[1],
+        content: format(headerMatch[2])
+      });
+      continue;
+    }
 
     // --- Sections (e.g., Learning Objectives, Content, Process)
     const sectionMatch = trimmed.match(/^\\section\*?\{(.+?)\}$/);
-  if (sectionMatch) {
-    flushCurrentBlock();
-    blocks.push({
-      type: 'section',
-      name: format(sectionMatch[1]),
-      content: []      // you may later collect nested blocks here if you want true sub‐trees
-    });
-    continue;
-  }
- 
-  
+    if (sectionMatch) {
+      flushCurrentBlock();
+      blocks.push({
+        type: 'section',
+        name: format(sectionMatch[1]),
+        content: []      // you may later collect nested blocks here if you want true sub‐trees
+      });
+      continue;
+    }
+
+
 
     // --- Group start ---
     if (trimmed.startsWith('\\questiongroup{')) {
@@ -173,7 +173,7 @@ export function parseSheetToBlocks(lines) {
       };
       continue;
     }
-    
+
 
     if (trimmed === '\\endquestion') {
       if (currentQuestion !== null) {
@@ -232,36 +232,27 @@ export function parseSheetToBlocks(lines) {
   return blocks;
 }
 
+
 export function renderBlocks(blocks, options = {}) {
   const {
     editable = false,
     isActive = false,
-    onSave = () => {},
-    onSubmit = () => {},
+    prefill = {},
     mode = 'preview',
-    prefill = {} // ✅ New option for saved answers
+    currentGroupIndex = null // only used in 'run' mode
   } = options;
 
-  const hiddenTypesInRun = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
+  console.log("🧪 prefill keys:", Object.keys(prefill));
+
+  const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
 
   return blocks.map((block, index) => {
-    if (hiddenTypesInRun.includes(block.type) && mode !== 'preview') {
-      return null;
-    }
+    if (hiddenTypes.includes(block.type) && mode !== 'preview') return null;
 
-    if (block.type === 'endGroup') {
-      return mode === 'preview'
-        ? <hr key={`endgroup-${index}`} className="my-4" />
-        : <div key={`endgroup-${index}`} data-type="endGroup" />;
-    }
+    if (block.type === 'endGroup') return null;
 
-    if (block.type === 'header') {
-      const Tag = block.tag === 'title' ? 'h2' : block.tag === 'section' ? 'h4' : 'p';
-      return ( 
-        <Tag key={`header-${index}`} className="my-3 font-bold">
-          {block.content}
-        </Tag>
-      );
+    if (mode === 'run' && currentGroupIndex !== null && block.groupId && block.groupId !== currentGroupIndex + 1) {
+      return null; // hide blocks outside current group
     }
 
     if (block.type === 'text') {
@@ -277,9 +268,7 @@ export function renderBlocks(blocks, options = {}) {
       return (
         <ListTag key={`list-${index}`} className="my-2 list-disc list-inside">
           {block.items.map((item, i) => (
-            <li key={`list-item-${i}`}>
-              <span dangerouslySetInnerHTML={{ __html: item }} />
-            </li>
+            <li key={`list-item-${i}`}>{item}</li>
           ))}
         </ListTag>
       );
@@ -287,102 +276,53 @@ export function renderBlocks(blocks, options = {}) {
 
     if (block.type === 'groupIntro') {
       return (
-        <div key={`group-intro-${index}`} className="my-4 border-t pt-4">
-          <h3 className="text-lg font-semibold">
-            <span dangerouslySetInnerHTML={{ __html: block.content }} />
-          </h3>
-        </div>
-      );
-    }
-
-    if (block.type === 'section') {
-      return (
-        <div key={`section-${index}`} className="my-4">
-          <h4 className="font-semibold">{block.name}</h4>
-          {block.content && block.content.length > 0 && (
-            renderBlocks(block.content, options)
-          )}
+        <div key={`groupIntro-${index}`} className="mb-2">
+          <strong>{block.content}</strong>
         </div>
       );
     }
 
     if (block.type === 'python') {
-      const saved = prefill[block.id]?.response || '';
       return (
         <ActivityPythonBlock
-          key={index}
-          code={saved || block.content}
+          key={`py-${index}`}
+          code={block.content}
           blockIndex={index}
-          editable={editable}
-          isActive={isActive}
-          onSave={onSave}
-          onSubmit={onSubmit}
+          editable={editable && isActive}
         />
       );
     }
 
     if (block.type === 'question') {
+      const responseKey = `${block.groupId}${block.id}`;
       return (
-        <div key={`q-${block.id}`} className="mb-3">
-          <p>
-            <strong>{block.label}</strong>{' '}
-            <span dangerouslySetInnerHTML={{ __html: block.prompt }} />
-          </p>
-
+        <div key={`q-${block.id}`} className="mb-4">
+          <p><strong>{block.label}</strong> <span dangerouslySetInnerHTML={{ __html: block.prompt }} /></p>
           {block.pythonBlocks?.map((py, i) => (
             <ActivityPythonBlock
               key={`q-${block.id}-py-${i}`}
               code={py.content}
               blockIndex={`${index}-${i}`}
-              editable={editable}
-              isActive={isActive}
-              onSave={onSave}
-              onSubmit={onSubmit}
+              editable={editable && isActive}
             />
           ))}
 
           <Form.Control
             as="textarea"
             rows={block.responseLines || 1}
-            defaultValue=""
+            defaultValue={typeof prefill?.[responseKey] === 'string'
+              ? prefill[responseKey]
+              : prefill?.[responseKey]?.response || ''}
             readOnly={!editable}
+            data-question-id={responseKey}
             className="mt-2"
           />
-
-          {mode === 'preview' && (
-            <>
-              {block.samples?.length > 0 && (
-                <div className="mt-2 text-muted small">
-                  <strong>Sample Responses:</strong>
-                  <ul>
-                    {block.samples.map((s, i) => <li key={i}>{s}</li>)}
-                  </ul>
-                </div>
-              )}
-              {block.feedback?.length > 0 && (
-                <div className="mt-2 text-muted small">
-                  <strong>Feedback Prompts:</strong>
-                  <ul>
-                    {block.feedback.map((f, i) => <li key={i}>{f}</li>)}
-                  </ul>
-                </div>
-              )}
-              {block.followups?.length > 0 && (
-                <div className="mt-2 text-muted small">
-                  <strong>Follow-up Prompts:</strong>
-                  <ul>
-                    {block.followups.map((f, i) => <li key={i}>{f}</li>)}
-                  </ul>
-                </div>
-              )}
-            </>
-          )}
         </div>
       );
     }
 
-    console.warn(`Unhandled block type: ${block.type}`, block);
     return null;
   });
 }
+
 //End parseSheet.jsx

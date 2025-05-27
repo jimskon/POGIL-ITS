@@ -15,7 +15,7 @@ function parseGoogleDocHTML(html) {
 
   const formatText = (text) =>
     text.replace(/\\textit\{([^}]+)\}/g, '<em>$1</em>')
-        .replace(/\\textbf\{([^}]+)\}/g, '<strong>$1</strong>');
+      .replace(/\\textbf\{([^}]+)\}/g, '<strong>$1</strong>');
 
   const finalizeEnvironment = () => {
     if (currentEnv) {
@@ -139,7 +139,7 @@ async function getActivityInstanceById(req, res) {
   const { id } = req.params;
   try {
     const [[instance]] = await db.query(
-      `SELECT ai.id, ai.course_id, ai.activity_id, a.name AS activity_name, a.sheet_url
+      `SELECT ai.id, ai.course_id, ai.activity_id, ai.group_number, a.name AS activity_name, a.sheet_url
        FROM activity_instances ai
        JOIN pogil_activities a ON ai.activity_id = a.id
        WHERE ai.id = ?`,
@@ -179,7 +179,8 @@ async function recordHeartbeat(req, res) {
 
   try {
     await db.query(
-      `UPDATE group_members SET last_heartbeat = NOW()
+      `UPDATE group_members
+       SET last_heartbeat = NOW(), connected = TRUE
        WHERE student_id = ? AND activity_instance_id = ?`,
       [userId, instanceId]
     );
@@ -189,6 +190,7 @@ async function recordHeartbeat(req, res) {
     res.status(500).json({ error: 'Failed to record heartbeat' });
   }
 }
+
 
 // In getActiveStudent function in controller.js
 
@@ -219,6 +221,12 @@ async function rotateActiveStudent(req, res) {
   const { instanceId } = req.params;
   const { currentStudentId } = req.body;
 
+  const [members] = await db.query(
+    `SELECT student_id FROM group_members
+   WHERE activity_instance_id = ? AND connected = TRUE`,
+    [instanceId]
+  );
+
   if (!currentStudentId) return res.status(400).json({ error: 'Missing currentStudentId' });
 
   try {
@@ -239,6 +247,12 @@ async function rotateActiveStudent(req, res) {
 
 async function setupMultipleGroupInstances(req, res) {
   const { activityId, courseId, groups } = req.body;
+  const [members] = await db.query(
+    `SELECT student_id FROM group_members
+     WHERE activity_instance_id = ? AND connected = TRUE`,
+    [instanceId]
+  );
+
   if (!activityId || !courseId || !groups?.length) {
     return res.status(400).json({ error: 'Missing data' });
   }
@@ -288,16 +302,16 @@ async function submitGroupResponses(req, res) {
       return res.status(400).json({ error: 'Already completed' });
     }
 
-    for (const [key, value] of Object.entries(answers)) {
-      const questionId = `${groupIndex + 1}${key}`;
-      const type = key.endsWith('code') ? 'python' : 'text';
+    for (const [questionId, value] of Object.entries(answers)) {
+      const type = questionId.endsWith('code') ? 'python' : 'text';
       await db.query(
         `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-         VALUES (?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
         [instanceId, questionId, type, value, studentId]
       );
     }
+
 
     await db.query(
       `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
@@ -389,17 +403,16 @@ async function getInstancesForActivityInCourse(req, res) {
   }
 }
 
-async function getGroupResponses(req, res) {
-  const { instanceId, groupId } = req.params;
+// NEW route: GET /api/responses/:instanceId
+async function getInstanceResponses(req, res) {
+  const { instanceId } = req.params;
 
   try {
     const [rows] = await db.query(
       `SELECT question_id, response, response_type
        FROM responses
-       WHERE activity_instance_id = ? AND answered_by_user_id IN (
-         SELECT student_id FROM group_members WHERE activity_instance_id = ?
-       )`,
-      [instanceId, instanceId]
+       WHERE activity_instance_id = ?`,
+      [instanceId]
     );
 
     const responses = {};
@@ -412,7 +425,7 @@ async function getGroupResponses(req, res) {
 
     res.json(responses);
   } catch (err) {
-    console.error("❌ getGroupResponses error:", err);
+    console.error("❌ getInstanceResponses error:", err);
     res.status(500).json({ error: 'Failed to fetch responses' });
   }
 }
@@ -430,5 +443,5 @@ module.exports = {
   submitGroupResponses,
   getInstanceGroups,
   getInstancesForActivityInCourse,
-  getGroupResponses 
+  getInstanceResponses
 };

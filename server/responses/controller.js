@@ -1,13 +1,15 @@
+// /server/responses/controller.js
 const db = require('../db');
 
 exports.createResponse = async (req, res) => {
-  const { instanceId, groupId, questionId, responseText, answeredBy } = req.body;
+  const { instanceId, questionId, responseText, answeredBy } = req.body;
 
   try {
-    await db.query(`
-      INSERT INTO responses (activity_instance_id, group_id, question_id, response_text, answered_by_user_id)
-      VALUES (?, ?, ?, ?, ?)
-    `, [instanceId, groupId, questionId, responseText, answeredBy]);
+    await db.query(
+      `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
+       VALUES (?, ?, 'text', ?, ?)`,
+      [instanceId, questionId, responseText, answeredBy]
+    );
 
     res.json({ success: true });
   } catch (err) {
@@ -15,13 +17,15 @@ exports.createResponse = async (req, res) => {
     res.status(500).json({ error: "Failed to save response" });
   }
 };
+
 exports.getResponsesByInstanceId = async (req, res) => {
   const { instanceId } = req.params;
 
   try {
-    const [rows] = await db.query(`
-      SELECT * FROM responses WHERE activity_instance_id = ?
-    `, [instanceId]);
+    const [rows] = await db.query(
+      `SELECT * FROM responses WHERE activity_instance_id = ?`,
+      [instanceId]
+    );
 
     res.json(rows);
   } catch (err) {
@@ -29,27 +33,15 @@ exports.getResponsesByInstanceId = async (req, res) => {
     res.status(500).json({ error: "Failed to fetch responses" });
   }
 };
-exports.getResponsesByGroupId = async (req, res) => {
-  const { instanceId, groupId } = req.params;
 
-  try {
-    const [rows] = await db.query(`
-      SELECT * FROM responses WHERE activity_instance_id = ? AND group_id = ?
-    `, [instanceId, groupId]);
-
-    res.json(rows);
-  } catch (err) {
-    console.error("❌ Error fetching responses:", err);
-    res.status(500).json({ error: "Failed to fetch responses" });
-  }
-};
 exports.getResponsesByQuestionId = async (req, res) => {
   const { instanceId, questionId } = req.params;
 
   try {
-    const [rows] = await db.query(`
-      SELECT * FROM responses WHERE activity_instance_id = ? AND question_id = ?
-    `, [instanceId, questionId]);
+    const [rows] = await db.query(
+      `SELECT * FROM responses WHERE activity_instance_id = ? AND question_id = ?`,
+      [instanceId, questionId]
+    );
 
     res.json(rows);
   } catch (err) {
@@ -62,9 +54,10 @@ exports.getResponsesByAnsweredBy = async (req, res) => {
   const { instanceId, answeredBy } = req.params;
 
   try {
-    const [rows] = await db.query(`
-      SELECT * FROM responses WHERE activity_instance_id = ? AND answered_by_user_id = ?
-    `, [instanceId, answeredBy]);
+    const [rows] = await db.query(
+      `SELECT * FROM responses WHERE activity_instance_id = ? AND answered_by_user_id = ?`,
+      [instanceId, answeredBy]
+    );
 
     res.json(rows);
   } catch (err) {
@@ -73,15 +66,17 @@ exports.getResponsesByAnsweredBy = async (req, res) => {
   }
 };
 
-// responses/controller.js
+// Updated getGroupResponses function to remove old group_id reference
 exports.getGroupResponses = async (req, res) => {
-  const { instanceId, groupId } = req.params;
+  const { instanceId } = req.params;
 
   try {
     const [rows] = await db.query(
       `SELECT question_id, response, response_type FROM responses
-       WHERE activity_instance_id = ? AND group_id = ?`,
-      [instanceId, groupId]
+       WHERE activity_instance_id = ? AND answered_by_user_id IN (
+         SELECT student_id FROM group_members WHERE activity_instance_id = ?
+       )`,
+      [instanceId, instanceId]
     );
 
     const result = {};
@@ -97,6 +92,4 @@ exports.getGroupResponses = async (req, res) => {
     console.error("❌ Failed to get group responses:", err);
     res.status(500).json({ error: 'Failed to fetch group responses' });
   }
-}
-
-
+};
