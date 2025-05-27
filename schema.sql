@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS group_members (
   activity_instance_id INT NOT NULL,
   student_id INT NOT NULL,
   role ENUM('facilitator', 'spokesperson', 'analyst', 'qc') NOT NULL,
+  connected BOOLEAN DEFAULT FALSE,
   last_heartbeat DATETIME DEFAULT NULL,
   UNIQUE KEY unique_member_role (activity_instance_id, role),
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE,
