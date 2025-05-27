@@ -23,6 +23,26 @@ export default function RunActivityPage() {
   const [skulptLoaded, setSkulptLoaded] = useState(false);
 
   const isActive = user && user.id === activeStudentId;
+
+const currentQuestionGroupIndex = useMemo(() => {
+  console.log("🧩 existingAnswers snapshot:", existingAnswers);
+
+  if (!existingAnswers || Object.keys(existingAnswers).length === 0) {
+    console.log("⚠️ existingAnswers not ready yet");
+    return 0;
+  }
+
+  let count = 0;
+  while (existingAnswers[`${count + 1}state`]?.response === 'complete') {
+    console.log(`✅ Skipping group ${count + 1} as complete`);
+    count++;
+  }
+
+  console.log(`✅ currentQuestionGroupIndex after skipping:`, count);
+  return count;
+}, [existingAnswers]);
+
+
   if (!user) {
     return (
       <Container className="mt-4">
@@ -36,13 +56,11 @@ export default function RunActivityPage() {
       try {
         const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
         const data = await res.json();
-
         if (data.activeStudentId !== activeStudentId) {
           await loadActivity();
         }
       } catch { }
     }, 10000);
-
     return () => clearInterval(interval);
   }, [instanceId, activeStudentId]);
 
@@ -59,7 +77,6 @@ export default function RunActivityPage() {
         console.error('❌ Heartbeat failed:', err);
       }
     };
-
     sendHeartbeat();
     const interval = setInterval(sendHeartbeat, 20000);
     return () => clearInterval(interval);
@@ -78,7 +95,6 @@ export default function RunActivityPage() {
         script.onerror = () => reject(new Error(`Failed to load script ${src}`));
         document.head.appendChild(script);
       });
-
     const loadSkulpt = async () => {
       try {
         await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
@@ -88,7 +104,6 @@ export default function RunActivityPage() {
         console.error('Skulpt failed to load', err);
       }
     };
-
     loadSkulpt();
   }, []);
 
@@ -137,7 +152,6 @@ export default function RunActivityPage() {
 
       const grouped = [], preamble = [];
       let currentGroup = null;
-
       for (let block of blocks) {
         if (block.type === 'groupIntro') {
           if (currentGroup) grouped.push(currentGroup);
@@ -150,7 +164,6 @@ export default function RunActivityPage() {
           preamble.push(block);
         }
       }
-
       setGroups(grouped);
       setPreamble(preamble);
     } catch (err) {
@@ -158,34 +171,43 @@ export default function RunActivityPage() {
     }
   }
 
-  const activeIndex = useMemo(() => groups.findIndex((_, i) => existingAnswers[`${i + 1}state`] !== 'complete'), [groups, existingAnswers]);
-  const fallbackIndex = activeIndex === -1 ? groups.length : activeIndex;
-
   async function handleSubmit() {
     const container = document.querySelector('[data-current-group="true"]');
-    const answerInputs = container?.querySelectorAll('[data-question-id]') || [];
+    if (!container) {
+      alert("Error: No editable group found.");
+      return;
+    }
+    const answerInputs = container.querySelectorAll('[data-question-id]');
     const answers = {};
     answerInputs.forEach(el => {
       const qid = el.getAttribute('data-question-id');
-      if (qid) answers[qid] = el.value;
+      const value = el.value?.trim();
+      if (qid && value !== undefined) answers[qid] = value;
     });
     if (Object.keys(answers).length === 0) {
       alert("No answers found to submit.");
       return;
     }
-    await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groupIndex: fallbackIndex, studentId: user.id, answers })
-    });
-    await loadActivity();
-  }
-
-  if (activeStudentId == null) {
-    return (
-      <Container className="mt-4">
-        <Alert variant="warning">Waiting for an active student to be assigned...</Alert>
-      </Container>
-    );
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          groupIndex: currentQuestionGroupIndex,
+          studentId: user.id,
+          answers
+        })
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        alert(`Submission failed: ${errorData.error || 'Unknown error'}`);
+      } else {
+        await loadActivity();
+      }
+    } catch (err) {
+      console.error("❌ Submission failed:", err);
+      alert("An error occurred during submission.");
+    }
   }
 
   return (
@@ -199,16 +221,11 @@ export default function RunActivityPage() {
 
       {groups.map((group, index) => {
         const stateKey = `${index + 1}state`;
-        const complete = existingAnswers[stateKey] === 'complete';
-        const isCurrent = index === fallbackIndex;
-        const isFuture = index > fallbackIndex;
-
-        // ❌ Skip future groups for everyone
+        const isComplete = existingAnswers[stateKey] === 'complete';
+        const isCurrent = index === currentQuestionGroupIndex;
+        const isFuture = index > currentQuestionGroupIndex;
         if (isFuture) return null;
-
-        // ✅ Only the active student can edit current group if it's not complete
-        const editable = isActive && isCurrent && !complete;
-
+        const editable = isActive && isCurrent && !isComplete;
         return (
           <div
             key={`group-${index}`}
@@ -216,7 +233,6 @@ export default function RunActivityPage() {
             data-current-group={editable ? "true" : undefined}
           >
             <p><strong>Group {activity.group_number}.</strong> {group.intro.content}</p>
-
             {renderBlocks(group.content, {
               editable,
               isActive,
@@ -224,7 +240,6 @@ export default function RunActivityPage() {
               prefill: existingAnswers,
               currentGroupIndex: index
             })}
-
             {editable && (
               <div className="mt-2">
                 <Button onClick={handleSubmit}>Submit and Continue</Button>
@@ -234,7 +249,7 @@ export default function RunActivityPage() {
         );
       })}
 
-      {fallbackIndex === groups.length && (
+      {currentQuestionGroupIndex === groups.length && (
         <Alert variant="success">All groups complete! Review your responses above.</Alert>
       )}
     </Container>

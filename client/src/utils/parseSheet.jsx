@@ -251,10 +251,6 @@ export function renderBlocks(blocks, options = {}) {
 
     if (block.type === 'endGroup') return null;
 
-    if (mode === 'run' && currentGroupIndex !== null && block.groupId && block.groupId !== currentGroupIndex + 1) {
-      return null; // hide blocks outside current group
-    }
-
     if (block.type === 'text') {
       return (
         <p key={`text-${index}`} className="my-2">
@@ -295,6 +291,9 @@ export function renderBlocks(blocks, options = {}) {
 
     if (block.type === 'question') {
       const responseKey = `${block.groupId}${block.id}`;
+      console.log("🔍 prefill:", prefill);
+      console.log("🔍 Looking for key:", responseKey);
+
       return (
         <div key={`q-${block.id}`} className="mb-4">
           <p><strong>{block.label}</strong> <span dangerouslySetInnerHTML={{ __html: block.prompt }} /></p>
@@ -310,9 +309,7 @@ export function renderBlocks(blocks, options = {}) {
           <Form.Control
             as="textarea"
             rows={block.responseLines || 1}
-            defaultValue={typeof prefill?.[responseKey] === 'string'
-              ? prefill[responseKey]
-              : prefill?.[responseKey]?.response || ''}
+            defaultValue={prefill?.[responseKey]?.response || ''}
             readOnly={!editable}
             data-question-id={responseKey}
             className="mt-2"
