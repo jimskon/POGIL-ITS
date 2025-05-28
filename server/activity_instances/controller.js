@@ -178,18 +178,31 @@ async function recordHeartbeat(req, res) {
   if (!userId) return res.status(400).json({ error: 'Missing userId' });
 
   try {
-    await db.query(
-      `UPDATE group_members
-       SET last_heartbeat = NOW(), connected = TRUE
-       WHERE student_id = ? AND activity_instance_id = ?`,
-      [userId, instanceId]
+    // Find the courseId for this instanceId
+    const [[instance]] = await db.query(
+      `SELECT course_id FROM activity_instances WHERE id = ?`,
+      [instanceId]
     );
+    if (!instance) return res.status(404).json({ error: 'Instance not found' });
+
+    const courseId = instance.course_id;
+
+    // Update connected status across all instances for this course
+    await db.query(
+      `UPDATE group_members gm
+       JOIN activity_instances ai ON gm.activity_instance_id = ai.id
+       SET gm.last_heartbeat = NOW(), gm.connected = TRUE
+       WHERE gm.student_id = ? AND ai.course_id = ?`,
+      [userId, courseId]
+    );
+
     res.json({ success: true });
   } catch (err) {
-    console.error('❌ Failed to update heartbeat:', err);
+    console.error('❌ Failed to update heartbeat across instances:', err);
     res.status(500).json({ error: 'Failed to record heartbeat' });
   }
 }
+
 
 
 // In getActiveStudent function in controller.js
@@ -355,8 +368,12 @@ async function getInstanceGroups(req, res) {
 async function getInstancesForActivityInCourse(req, res) {
   const { courseId, activityId } = req.params;
   try {
+    // Fetch course name
+    const [[course]] = await db.query(`SELECT name FROM courses WHERE id = ?`, [courseId]);
+    const courseName = course?.name || 'Unknown Course';
+
     const [instances] = await db.query(
-      `SELECT id AS instance_id, group_number
+      `SELECT id AS instance_id, group_number, active_student_id
        FROM activity_instances
        WHERE course_id = ? AND activity_id = ?
        ORDER BY group_number`,
@@ -366,25 +383,49 @@ async function getInstancesForActivityInCourse(req, res) {
     const groups = [];
     for (const inst of instances) {
       const [members] = await db.query(
-        `SELECT gm.student_id, gm.role, u.name AS student_name, u.email AS student_email
+        `SELECT gm.student_id, gm.role, u.name AS student_name, u.email AS student_email, gm.connected
          FROM group_members gm
          JOIN users u ON gm.student_id = u.id
          WHERE gm.activity_instance_id = ?
          ORDER BY gm.role`,
         [inst.instance_id]
       );
+
+      const [responses] = await db.query(
+        `SELECT question_id, response FROM responses WHERE activity_instance_id = ?`,
+        [inst.instance_id]
+      );
+
+      let progress = '1';
+      for (let i = 1; i <= 10; i++) {  // Check up to 10 groups (adjust if needed)
+        if (!responses.find(r => r.question_id === `${i}state`)) {
+          progress = `${i}`;
+          break;
+        }
+        if (responses.find(r => r.question_id === `${i}state` && r.response === 'complete')) {
+          progress = 'Complete';
+        } else {
+          progress = `${i}`;
+          break;
+        }
+      }
+
       groups.push({
         instance_id: inst.instance_id,
         group_number: inst.group_number,
+        active_student_id: inst.active_student_id,
+        progress,
         members: members.map(m => ({
           student_id: m.student_id,
           name: m.student_name,
           email: m.student_email,
-          role: m.role
+          role: m.role,
+          connected: !!m.connected
         }))
       });
     }
-    res.json({ groups });
+
+    res.json({ courseName, groups });
   } catch (err) {
     console.error("❌ getInstancesForActivityInCourse:", err);
     res.status(500).json({ error: 'Failed to fetch instances' });
