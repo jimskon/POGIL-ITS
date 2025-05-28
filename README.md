@@ -362,7 +362,7 @@ nohup npm start > out.log 2>&1 &
 Or - to run so it restarts if stopped:
 ```
 npm install -g pm2
-pm2 start index.js --name myapp
+pm2 start index.js --name POGIL-ITS
 pm2 save
 pm2 startup
 ```
