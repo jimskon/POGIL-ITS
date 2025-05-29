@@ -113,7 +113,7 @@ export default function ManageCoursesPage() {
               <td>{course.section}</td>
               <td>{course.semester}</td>
               <td>{course.year}</td>
-              <td>{course.instructor_name}</td>
+              <td>{course.instructor_name || 'N/A'}</td>
               <td>{course.class_name || '—'}</td>
               <td>
                 <Button size="sm" variant="danger" onClick={() => handleDelete(course.id)}>Delete</Button>

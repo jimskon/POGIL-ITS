@@ -4,6 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Container, Table, Button, Spinner, Alert } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
 import { useUser } from '../context/UserContext';
+import { useLocation } from 'react-router-dom';
 
 console.log("📘 CourseActivitiesPage mounted");
 
@@ -16,6 +17,8 @@ export default function CourseActivitiesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const { user } = useUser();
+  const location = useLocation();
+  const courseName = location.state?.courseName;
 
   useEffect(() => {
     console.log("📘 Fetching activities for courseId:", courseId);
@@ -62,8 +65,8 @@ export default function CourseActivitiesPage() {
 
   return (
     <Container className="mt-4">
-      <h2>Available Activities</h2>
-
+      <h2>Available Activities for {courseName || 'Course'}</h2>
+      
       {loading ? (
         <Spinner animation="border" />
       ) : error ? (

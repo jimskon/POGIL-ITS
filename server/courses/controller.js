@@ -5,10 +5,14 @@ const db = require('../db');
 async function getAllCourses(req, res) {
   try {
     const [courses] = await db.query(
-      `SELECT c.*, pc.name AS class_name
-         FROM courses c
-         LEFT JOIN pogil_classes pc ON c.class_id = pc.id
-         ORDER BY year DESC, semester ASC`
+      `SELECT 
+         c.*, 
+         u.name AS instructor_name, 
+         pc.name AS class_name
+       FROM courses c
+       LEFT JOIN users u ON c.instructor_id = u.id
+       LEFT JOIN pogil_classes pc ON c.class_id = pc.id
+       ORDER BY year DESC, semester ASC`
     );
     console.log("getAllCourses", courses);
     
