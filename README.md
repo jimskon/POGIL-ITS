@@ -150,6 +150,7 @@ cd ../client
 npm install react-bootstrap bootstrap
 npm install prismjs
 npm install express-session
+npm install react-icons
 
 ```
 
