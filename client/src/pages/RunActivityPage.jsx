@@ -13,6 +13,9 @@ import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
 export default function RunActivityPage() {
   const { instanceId } = useParams();
   const { user, loading } = useUser();
+  const [followupsShown, setFollowupsShown] = useState({}); // { qid: followupQuestion }
+  const [followupAnswers, setFollowupAnswers] = useState({}); // { qid: studentAnswer }
+
   console.log("🔍 User:", user);
 
   if (loading) {
@@ -189,23 +192,116 @@ export default function RunActivityPage() {
     }
   }
 
+
+  async function evaluateResponseWithAI(questionBlock, studentAnswer) {
+    const body = {
+      questionText: questionBlock.prompt,
+      studentAnswer,
+      sampleResponse: questionBlock.samples?.[0] || '',
+      feedbackPrompt: questionBlock.feedback?.[0] || '',
+      followupPrompt: questionBlock.followups?.[0] || '',
+      context: {
+        activityTitle: activity?.title || activity?.name || 'Untitled Activity',
+        studentLevel: 'intro'
+      }
+    };
+
+    console.log('📡 Sending to AI:', body);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/ai/evaluate-response`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      const data = await res.json();
+      console.log('🤖 AI returned:', data);
+      return data.followupQuestion || null;
+    } catch (err) {
+      console.error('❌ AI call failed:', err);
+      return null;
+    }
+  }
+
   async function handleSubmit() {
     const container = document.querySelector('[data-current-group="true"]');
     if (!container) {
       alert("Error: No editable group found.");
       return;
     }
-    const answerInputs = container.querySelectorAll('[data-question-id]');
+
+    const currentGroup = groups[currentQuestionGroupIndex];
+    const blocks = [currentGroup.intro, ...currentGroup.content];
     const answers = {};
-    answerInputs.forEach(el => {
-      const qid = el.getAttribute('data-question-id');
-      const value = el.value?.trim();
-      if (qid && value !== undefined) answers[qid] = value;
-    });
-    if (Object.keys(answers).length === 0) {
-      alert("No answers found to submit.");
-      return;
+    const unanswered = [];
+
+    for (let block of blocks) {
+
+      if (block.type !== 'question') continue;
+
+      const qid = `${block.groupId}${block.id}`;
+      const el = container.querySelector(`[data-question-id="${qid}"]`);
+      if (!el) {
+        unanswered.push(qid);
+        continue;
+      }
+
+      const baseAnswer = el.value?.trim();
+      const followupPrompt = followupsShown[qid];
+      const followupAnswer = followupAnswers[qid]?.trim();
+
+      // 🧠 If follow-up exists and not answered, pause
+      if (followupPrompt && !followupAnswer) {
+        unanswered.push(qid);
+        continue;
+      }
+
+      // 🧠 If follow-up exists and answered, combine both
+      if (baseAnswer && followupPrompt && followupAnswer) {
+        console.log("🧠 Combining base and follow-up answers for QID", qid);
+        console.log("Base answer:", baseAnswer);
+        console.log("Follow-up prompt:", followupPrompt);
+        console.log("Follow-up answer:", followupAnswer);
+        answers[qid] = `${baseAnswer}\n\nFollow-up: ${followupPrompt}\nFollow-up response: ${followupAnswer}`;
+        continue;
+      }
+
+      // 🧠 If follow-up metadata exists and none shown yet, trigger AI
+      if (
+        baseAnswer &&
+        block.followups?.length > 0 &&
+        !followupsShown[qid]
+      ) {
+        console.log("⚡ Will trigger AI for QID", qid);
+
+        const aiFollowup = await evaluateResponseWithAI(block, baseAnswer);
+        if (aiFollowup) {
+          setFollowupsShown(prev => ({ ...prev, [qid]: aiFollowup }));
+          alert(`A follow-up question has been added for ${qid}. Please answer it.`);
+          return; // wait for student to answer
+        }
+        answers[qid] = baseAnswer;
+        continue;
+      }
+
+      // 🧠 No follow-up logic, just base answer
+      if (baseAnswer) {
+        answers[qid] = baseAnswer;
+        continue;
+      }
+
+      unanswered.push(qid); // No valid data
     }
+
+
+    // If there are unanswered questions, we treat this as "inprogress"
+    const groupState = unanswered.length === 0 ? 'complete' : 'inprogress';
+
+    if (groupState === 'inprogress') {
+      alert(`Partial draft saved. Still missing: ${unanswered.join(', ')}`);
+    }
+
     try {
       const response = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`, {
         method: 'POST',
@@ -213,20 +309,25 @@ export default function RunActivityPage() {
         body: JSON.stringify({
           groupIndex: currentQuestionGroupIndex,
           studentId: user.id,
+          groupState,
           answers
         })
       });
+
       if (!response.ok) {
         const errorData = await response.json();
         alert(`Submission failed: ${errorData.error || 'Unknown error'}`);
       } else {
-        await loadActivity();
+        setFollowupsShown({});
+        setFollowupAnswers({});
+        await loadActivity(); // Will advance to the next group if marked complete
       }
     } catch (err) {
       console.error("❌ Submission failed:", err);
       alert("An error occurred during submission.");
     }
   }
+
 
   return (
     <Container className="mt-4">
@@ -256,7 +357,10 @@ export default function RunActivityPage() {
               isActive,
               mode: 'run',
               prefill: existingAnswers,
-              currentGroupIndex: index
+              currentGroupIndex: index,
+              followupsShown,
+              followupAnswers,
+              setFollowupAnswers
             })}
             {editable && (
               <div className="mt-2">

@@ -47,7 +47,7 @@ Return only the follow-up question or "NO_FOLLOWUP".
       temperature: 0.3,
       max_tokens: 100,
     });
-
+    console.log('✅ OpenAI response:', chat.choices[0].message.content.trim());
     const result = chat.choices[0].message.content.trim();
     if (result === 'NO_FOLLOWUP') {
       return res.json({ followupQuestion: null });

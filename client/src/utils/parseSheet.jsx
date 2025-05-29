@@ -38,7 +38,7 @@ export function parseSheetToBlocks(lines) {
 
   for (let line of lines) {
     const trimmed = line.trim();
-    console.log("Processing line:", trimmed);
+    //console.log("Processing line:", trimmed);
 
     // --- Lists ---
     if (trimmed === '\\begin{itemize}' || trimmed === '\\begin{enumerate}') {
@@ -239,10 +239,13 @@ export function renderBlocks(blocks, options = {}) {
     isActive = false,
     prefill = {},
     mode = 'preview',
-    currentGroupIndex = null // only used in 'run' mode
+    currentGroupIndex = null,
+    followupsShown = {},
+    followupAnswers = {},
+    setFollowupAnswers = () => {}
   } = options;
 
-  console.log("🧪 prefill keys:", Object.keys(prefill));
+  //console.log("🧪 prefill keys:", Object.keys(prefill));
 
   const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
 
@@ -291,12 +294,16 @@ export function renderBlocks(blocks, options = {}) {
 
     if (block.type === 'question') {
       const responseKey = `${block.groupId}${block.id}`;
-      console.log("🔍 prefill:", prefill);
-      console.log("🔍 Looking for key:", responseKey);
+      //console.log("🔍 prefill:", prefill);
+      //console.log("🔍 Looking for key:", responseKey);
 
       return (
         <div key={`q-${block.id}`} className="mb-4">
-          <p><strong>{block.label}</strong> <span dangerouslySetInnerHTML={{ __html: block.prompt }} /></p>
+          <p>
+            <strong>{block.label}</strong>{' '}
+            <span dangerouslySetInnerHTML={{ __html: block.prompt }} />
+          </p>
+
           {block.pythonBlocks?.map((py, i) => (
             <ActivityPythonBlock
               key={`q-${block.id}-py-${i}`}
@@ -314,9 +321,32 @@ export function renderBlocks(blocks, options = {}) {
             data-question-id={responseKey}
             className="mt-2"
           />
+
+          {/* Follow-up UI */}
+          {editable && followupsShown?.[responseKey] && (
+            <>
+              <div className="mt-3 mb-1 text-muted">
+                <strong>Follow-up:</strong> {followupsShown[responseKey]}
+              </div>
+              <Form.Control
+                as="textarea"
+                rows={2}
+                value={followupAnswers?.[responseKey] || ''}
+                placeholder="Respond to the follow-up question here..."
+                onChange={(e) =>
+                  setFollowupAnswers((prev) => ({
+                    ...prev,
+                    [responseKey]: e.target.value,
+                  }))
+                }
+                className="mt-1"
+              />
+            </>
+          )}
         </div>
       );
     }
+
 
     return null;
   });

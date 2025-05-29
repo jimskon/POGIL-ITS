@@ -294,7 +294,12 @@ async function setupMultipleGroupInstances(req, res) {
 
 async function submitGroupResponses(req, res) {
   const { instanceId } = req.params;
-  const { studentId, groupIndex, answers } = req.body;
+  const { studentId, groupIndex, answers, groupState } = req.body;
+  console.log("✅ Using groupState:", groupState);
+
+
+  console.log("submitGroupResponses:", { instanceId, studentId, groupIndex, answers });
+
 
   if (!instanceId || !studentId || !answers || typeof groupIndex !== 'number') {
     return res.status(400).json({ error: 'Missing data' });
@@ -310,23 +315,26 @@ async function submitGroupResponses(req, res) {
       return res.status(400).json({ error: 'Already completed' });
     }
 
-    for (const [questionId, value] of Object.entries(answers)) {
-      const type = questionId.endsWith('code') ? 'python' : 'text';
-      await db.query(
-        `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-     VALUES (?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
-        [instanceId, questionId, type, value, studentId]
-      );
-    }
-
 
     await db.query(
       `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-       VALUES (?, ?, 'text', 'complete', ?)
-       ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
-      [instanceId, groupStateId, studentId]
+   VALUES (?, ?, 'text', ?, ?)
+   ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
+      [instanceId, groupStateId, groupState, studentId]
     );
+
+    // Save all question responses
+    for (const [questionId, response] of Object.entries(answers)) {
+      if (questionId.endsWith('state')) continue; // already handled
+
+      await db.query(
+        `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
+     VALUES (?, ?, 'text', ?, ?)
+     ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
+        [instanceId, questionId, response, studentId]
+      );
+    }
+
     // Rotate to a new active student if possible
     const [connected] = await db.query(
       `SELECT student_id FROM group_members

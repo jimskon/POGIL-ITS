@@ -6,6 +6,7 @@ const fs = require('fs');
 const session = require('express-session');
 const app = express();
 const PORT = process.env.PORT || 4000;
+const aiRoutes = require('./ai/routes');
 
 require('dotenv').config();
 require('./heartbeatCleaner');
@@ -15,6 +16,8 @@ const db = require('./db'); // Make sure db is accessible
 
 const staticDir = path.join(__dirname, '../client/dist');
 app.use(express.json());
+
+app.use('/api/ai', aiRoutes);
 
 app.use(session({
   secret: process.env.SESSION_SECRET || 'supersecret',
