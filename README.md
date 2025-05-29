@@ -149,6 +149,7 @@ npm install jsdom
 cd ../client
 npm install react-bootstrap bootstrap
 npm install prismjs
+npm install express-session
 
 ```
 
