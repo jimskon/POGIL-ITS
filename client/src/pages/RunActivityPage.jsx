@@ -1,7 +1,7 @@
 // client/src/pages/RunActivityPage.jsx
 import React, { useEffect, useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
-import { Container, Alert, Button } from 'react-bootstrap';
+import { Container, Alert, Button, Spinner } from 'react-bootstrap';
 import Prism from 'prismjs';
 import 'prismjs/themes/prism.css';
 import 'prismjs/components/prism-python';
@@ -12,7 +12,24 @@ import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
 
 export default function RunActivityPage() {
   const { instanceId } = useParams();
-  const { user } = useUser();
+  const { user, loading } = useUser();
+  console.log("🔍 User:", user);
+
+  if (loading) {
+    return (
+      <Container className="mt-4">
+        <Spinner animation="border" />
+      </Container>
+    );
+  }
+
+  if (!user) {
+    return (
+      <Container className="mt-4">
+        <Alert variant="danger">User not loaded. Please log in again.</Alert>
+      </Container>
+    );
+  }
   const [activity, setActivity] = useState(null);
   const [groups, setGroups] = useState([]);
   const [groupMembers, setGroupMembers] = useState([]);

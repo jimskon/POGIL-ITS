@@ -327,6 +327,24 @@ async function submitGroupResponses(req, res) {
        ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
       [instanceId, groupStateId, studentId]
     );
+    // Rotate to a new active student if possible
+    const [connected] = await db.query(
+      `SELECT student_id FROM group_members
+       WHERE activity_instance_id = ? AND connected = true`,
+      [instanceId]
+    );
+
+    if (connected.length > 0) {
+      // Exclude current student if others are available
+      const eligible = connected.filter(m => m.student_id !== studentId);
+      const pickFrom = eligible.length > 0 ? eligible : connected;
+      const next = pickFrom[Math.floor(Math.random() * pickFrom.length)].student_id;
+
+      await db.query(
+        `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+        [next, instanceId]
+      );
+    }
 
     res.json({ success: true });
   } catch (err) {
