@@ -17,10 +17,14 @@ const staticDir = path.join(__dirname, '../client/dist');
 app.use(express.json());
 
 app.use(session({
-  secret: process.env.SESSION_SECRET,
+  secret: process.env.SESSION_SECRET || 'supersecret',
   resave: false,
-  saveUninitialized: true,
-  cookie: { secure: false } // Set to true if using HTTPS
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: false, // Set to true in production if using HTTPS
+    maxAge: 1000 * 60 * 60 * 24, // 1 day
+  }
 }));
 
 // ✅ Restore req.user from session if available
@@ -33,7 +37,7 @@ app.use(async (req, res, next) => {
       );
       if (user) {
         req.user = user;
-        console.log('✅ req.user restored from session:', req.user);
+        //console.log('✅ req.user restored from session:', req.user);
       }
     } catch (err) {
       console.error('❌ Error restoring user from session:', err);
