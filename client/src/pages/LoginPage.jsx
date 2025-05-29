@@ -22,7 +22,9 @@ export default function LoginPage() {
       const data = await res.json();
       console.log("Login: ", data);
       if (res.ok) {
-        setUser({ name: data.name, role: data.role, id: data.id });
+        const loggedInUser = { name: data.name, role: data.role, id: data.id };
+        localStorage.setItem("user", JSON.stringify(loggedInUser)); // ✅ store persistently
+        setUser(loggedInUser); // update context
         navigate("/dashboard");
       } else {
         setError(data.error || "Login failed.");
