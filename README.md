@@ -376,3 +376,15 @@ pm2 restart
 ```
 ssh-keygen -t rsa -b 4096 -C "your_email@example.com"
 ```
+# Reset Node.js/React Enviornment
+Backend (Node.js):
+```
+rm -rf node_modules package-lock.json
+npm install
+```
+Frontend (React):
+```
+cd client  # or wherever your React app lives
+rm -rf node_modules package-lock.json
+npm install
+```
