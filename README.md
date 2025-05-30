@@ -290,10 +290,7 @@ DB_USER=root
 DB_PASSWORD=yourpassword
 DB_NAME=its_database
 
-# Google API
-GOOGLE_CLIENT_ID=your-google-client-id
-GOOGLE_CLIENT_SECRET=your-google-client-secret
-GOOGLE_REDIRECT_URI=your-google-redirect-uri
+OPENAI_API_KEY=APIKey 
 ```
 
 ## Rebuild:
@@ -325,7 +322,7 @@ GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_REDIRECT_URI=your-google-redirect-uri
 
 # OpenAI API
-OPENAI_API_KEY=APIKey ask for this
+OPENAI_API_KEY=APIKey  --  ask for this
 ```
 
 client/.env
