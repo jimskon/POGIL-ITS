@@ -1,3 +1,5 @@
+// parseSheet.jsx
+
 import ActivityQuestionBlock from '../components/activity/ActivityQuestionBlock';
 import ActivityHeader from '../components/activity/ActivityHeader';
 import ActivityEnvironment from '../components/activity/ActivityEnvironment';
@@ -14,8 +16,6 @@ export function parseSheetToBlocks(lines) {
   let currentQuestion = null;
   let currentField = 'prompt';
   let currentBlock = [];
-  let currentGroupIntro = null;
-
   let inList = false;
   let listType = null;
   let listItems = [];
@@ -31,8 +31,7 @@ export function parseSheetToBlocks(lines) {
   };
 
   const format = (text) =>
-    text
-      .replace(/\\textbf\{(.+?)\}/g, '<strong>$1</strong>')
+    text.replace(/\\textbf\{(.+?)\}/g, '<strong>$1</strong>')
       .replace(/\\textit\{(.+?)\}/g, '<em>$1</em>')
       .replace(/\\text\{(.+?)\}/g, '$1');
 
@@ -40,7 +39,7 @@ export function parseSheetToBlocks(lines) {
     const trimmed = line.trim();
     console.log("Processing line:", trimmed);
 
-    // --- Lists ---
+    // --- Handle lists ---
     if (trimmed === '\\begin{itemize}' || trimmed === '\\begin{enumerate}') {
       inList = true;
       listType = trimmed.includes('itemize') ? 'ul' : 'ol';
@@ -49,11 +48,7 @@ export function parseSheetToBlocks(lines) {
     }
 
     if (trimmed === '\\end{itemize}' || trimmed === '\\end{enumerate}') {
-      blocks.push({
-        type: 'list',
-        listType,
-        items: listItems.map(format)
-      });
+      blocks.push({ type: 'list', listType, items: listItems.map(format) });
       inList = false;
       listType = null;
       listItems = [];
@@ -65,11 +60,10 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // --- Python block ---
+    // --- Handle Python blocks ---
     if (trimmed === '\\python') {
       flushCurrentBlock();
       currentField = 'python';
-
       if (currentQuestion && currentQuestion.type === 'question') {
         if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
         currentQuestion.pythonBlocks.push({ lines: [] });
@@ -82,10 +76,7 @@ export function parseSheetToBlocks(lines) {
     if (trimmed === '\\endpython') {
       if (currentField === 'python') {
         if (currentQuestion?.type === 'python') {
-          blocks.push({
-            type: 'python',
-            content: currentQuestion.lines.join('\n')
-          });
+          blocks.push({ type: 'python', content: currentQuestion.lines.join('\n') });
           currentQuestion = null;
         } else if (currentQuestion?.pythonBlocks?.length > 0) {
           const block = currentQuestion.pythonBlocks.pop();
@@ -109,44 +100,28 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // --- Headers ---
-    // --- Simple headers (title, name) ---
+    // --- Handle headers and sections ---
     const headerMatch = trimmed.match(/^\\(title|name)\{(.+?)\}$/);
     if (headerMatch) {
       flushCurrentBlock();
-      blocks.push({
-        type: 'header',
-        tag: headerMatch[1],
-        content: format(headerMatch[2])
-      });
+      blocks.push({ type: 'header', tag: headerMatch[1], content: format(headerMatch[2]) });
       continue;
     }
 
-    // --- Sections (e.g., Learning Objectives, Content, Process)
     const sectionMatch = trimmed.match(/^\\section\*?\{(.+?)\}$/);
     if (sectionMatch) {
       flushCurrentBlock();
-      blocks.push({
-        type: 'section',
-        name: format(sectionMatch[1]),
-        content: []      // you may later collect nested blocks here if you want true sub‐trees
-      });
+      blocks.push({ type: 'section', name: format(sectionMatch[1]), content: [] });
       continue;
     }
 
-
-
-    // --- Group start ---
+    // --- Handle question groups and questions ---
     if (trimmed.startsWith('\\questiongroup{')) {
       flushCurrentBlock();
       groupNumber++;
       questionLetterCode = 97;
       const content = trimmed.match(/\\questiongroup\{(.+?)\}/)?.[1] || '';
-      blocks.push({
-        type: 'groupIntro',
-        groupId: groupNumber,
-        content: format(content)
-      });
+      blocks.push({ type: 'groupIntro', groupId: groupNumber, content: format(content) });
       continue;
     }
 
@@ -155,46 +130,37 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // --- Question ---
     if (trimmed.startsWith('\\question{')) {
       const content = trimmed.match(/\\question\{(.+?)\}/)?.[1] || '';
       const id = String.fromCharCode(questionLetterCode++);
       currentQuestion = {
         type: 'question',
         id,
-        groupId: groupNumber,              // ✅ Add group number to use in ID
+        groupId: groupNumber,
         label: `${id}.`,
         responseId: responseId++,
         prompt: format(content),
         responseLines: 1,
-        samples: [],
+        samples: [],     // ✅ AI Fields: parsed here
         feedback: [],
         followups: []
       };
       continue;
     }
 
-
     if (trimmed === '\\endquestion') {
-      if (currentQuestion !== null) {
-        blocks.push(currentQuestion);
-      } else {
-        console.warn("⚠️ \\endquestion found without matching \\question");
-      }
+      if (currentQuestion !== null) blocks.push(currentQuestion);
       currentQuestion = null;
       continue;
     }
 
     if (trimmed.startsWith('\\textresponse')) {
       const match = trimmed.match(/\\textresponse\{(\d+)\}/);
-      if (!currentQuestion) {
-        console.warn("⚠️ \\textresponse found outside of a question block");
-        continue;
-      }
-      if (match) currentQuestion.responseLines = parseInt(match[1]);
+      if (match && currentQuestion) currentQuestion.responseLines = parseInt(match[1]);
       continue;
     }
 
+    // ✅ AI Fields parsing
     if (trimmed.startsWith('\\sampleresponses{')) {
       const match = trimmed.match(/\\sampleresponses\{(.+?)\}/);
       if (match && currentQuestion) currentQuestion.samples.push(format(match[1]));
@@ -213,18 +179,15 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // --- \textbf as line ---
+    // --- Simple bold lines ---
     const textbfMatch = trimmed.match(/^\\textbf\{(.+?)\}$/);
     if (textbfMatch) {
       flushCurrentBlock();
-      blocks.push({
-        type: 'text',
-        content: `<strong>${textbfMatch[1]}</strong>`
-      });
+      blocks.push({ type: 'text', content: `<strong>${textbfMatch[1]}</strong>` });
       continue;
     }
 
-    // --- Text fallback ---
+    // --- Default text fallback ---
     currentBlock.push(format(line));
   }
 
@@ -232,22 +195,22 @@ export function parseSheetToBlocks(lines) {
   return blocks;
 }
 
-
 export function renderBlocks(blocks, options = {}) {
   const {
     editable = false,
     isActive = false,
     prefill = {},
-    mode = 'preview',
-    currentGroupIndex = null // only used in 'run' mode
+    mode = 'preview', // ✅ mode controls AI field visibility
+    currentGroupIndex = null
   } = options;
 
   console.log("🧪 prefill keys:", Object.keys(prefill));
 
-  const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
-
   return blocks.map((block, index) => {
-    if (hiddenTypes.includes(block.type) && mode !== 'preview') return null;
+    // ✅ Hide AI fields in run mode, show in preview
+    if (['sampleresponses', 'feedbackprompt', 'followupprompt'].includes(block.type) && mode !== 'preview') {
+      return null;
+    }
 
     if (block.type === 'endGroup') return null;
 
@@ -291,9 +254,6 @@ export function renderBlocks(blocks, options = {}) {
 
     if (block.type === 'question') {
       const responseKey = `${block.groupId}${block.id}`;
-      console.log("🔍 prefill:", prefill);
-      console.log("🔍 Looking for key:", responseKey);
-
       return (
         <div key={`q-${block.id}`} className="mb-4">
           <p><strong>{block.label}</strong> <span dangerouslySetInnerHTML={{ __html: block.prompt }} /></p>
@@ -305,7 +265,6 @@ export function renderBlocks(blocks, options = {}) {
               editable={editable && isActive}
             />
           ))}
-
           <Form.Control
             as="textarea"
             rows={block.responseLines || 1}
@@ -314,6 +273,13 @@ export function renderBlocks(blocks, options = {}) {
             data-question-id={responseKey}
             className="mt-2"
           />
+          {mode === 'preview' && (
+            <>
+              {block.samples?.length > 0 && <p className="text-muted"><em>Sample: {block.samples.join('; ')}</em></p>}
+              {block.feedback?.length > 0 && <p className="text-muted"><em>Feedback: {block.feedback.join('; ')}</em></p>}
+              {block.followups?.length > 0 && <p className="text-muted"><em>Follow-up: {block.followups.join('; ')}</em></p>}
+            </>
+          )}
         </div>
       );
     }
@@ -322,4 +288,4 @@ export function renderBlocks(blocks, options = {}) {
   });
 }
 
-//End parseSheet.jsx
+// End parseSheet.jsx
