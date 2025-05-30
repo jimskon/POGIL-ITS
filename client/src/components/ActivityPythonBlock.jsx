@@ -1,140 +1,42 @@
+// /client/src/components/ActivityPythonBlock.jsx
 import React, { useEffect, useState } from 'react';
-import Prism from 'prismjs';
 import { Form } from 'react-bootstrap';
+import Prism from 'prismjs';
+import 'prismjs/themes/prism.css';
+import 'prismjs/components/prism-python';
 
+export default function ActivityPythonBlock({ code, editable, questionId, codeIndex, setCodeAnswers }) {
+  const [value, setValue] = useState(code || '');
 
-export default function ActivityPythonBlock({ code, blockIndex, editable = false }) {
-  const [output, setOutput] = useState('');
-  const [inputCode, setInputCode] = useState(code);
-
+  // Keep Prism syntax highlighting fresh
   useEffect(() => {
     Prism.highlightAll();
-  }, [inputCode]);
+  }, [value]);
 
-  const runCode = () => {
-    setOutput('');
-    window.Sk.configure({
-      output: (text) => setOutput(prev => prev + text),
-      read: (x) => {
-        if (window.Sk.builtinFiles === undefined || !window.Sk.builtinFiles["files"][x]) {
-          throw new Error(`File not found: '${x}'`);
-        }
-        return window.Sk.builtinFiles["files"][x];
-      }
-    });
+  // Track student input in parent's state
+useEffect(() => {
+  if (editable && setCodeAnswers && questionId && codeIndex !== undefined) {
+    setCodeAnswers(prev => ({
+      ...prev,
+      [`${questionId}CODE${codeIndex + 1}`]: value
+    }));
+  }
+}, [value, editable, questionId, codeIndex, setCodeAnswers]);
 
-    window.Sk.misceval.asyncToPromise(() => window.Sk.importMainWithBody(`<stdin>`, false, inputCode))
-      .catch(err => setOutput(err.toString()));
-  };
 
   return (
-    <div className="mb-4">
-      {editable ? (
-        <Form.Control
-          as="textarea"
-          rows={6}
-          value={inputCode}
-          onChange={e => setInputCode(e.target.value)}
-        />
-      ) : (
-        <pre className="bg-light p-3 rounded">
-          <code className="language-python">{inputCode}</code>
-        </pre>
-      )}
-      <button className="btn btn-primary btn-sm mt-2" onClick={runCode}>Run</button>
-      <pre className="mt-2 bg-dark text-light p-2 rounded">{output}</pre>
+    <div className="mb-3">
+      <Form.Label><strong>Python Code Block</strong></Form.Label>
+      <Form.Control
+        as="textarea"
+        rows={6}
+        className="font-monospace"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        readOnly={!editable}
+        style={{ backgroundColor: '#f9f9f9', resize: 'vertical' }}
+      />
+      <pre className="language-python mt-2"><code className="language-python">{value}</code></pre>
     </div>
   );
 }
-
-/*
-
-export default function ActivityPythonBlock({ code, blockIndex, editable = false }) {
-  const [output, setOutput] = useState('');
-  const [inputCode, setInputCode] = useState(code);
-
-  useEffect(() => {
-    Prism.highlightAll();
-  }, [inputCode]);
-
-  const runCode = () => {
-    setOutput('');
-    window.Sk.configure({
-      output: (text) => setOutput(prev => prev + text),
-      read: (x) => {
-        if (window.Sk.builtinFiles === undefined || !window.Sk.builtinFiles["files"][x]) {
-          throw new Error(`File not found: '${x}'`);
-        }
-        return window.Sk.builtinFiles["files"][x];
-      }
-    });
-
-    window.Sk.misceval.asyncToPromise(() => window.Sk.importMainWithBody(`<stdin>`, false, inputCode))
-      .catch(err => setOutput(err.toString()));
-  };
-
-  return (
-    <div className="mb-4">
-      {editable ? (
-        <Form.Control
-          as="textarea"
-          rows={6}
-          value={inputCode}
-          onChange={e => setInputCode(e.target.value)}
-        />
-      ) : (
-        <pre className="bg-light p-3 rounded">
-          <code className="language-python">{inputCode}</code>
-        </pre>
-      )}
-      <button className="btn btn-primary btn-sm mt-2" onClick={runCode}>Run</button>
-      <pre className="mt-2 bg-dark text-light p-2 rounded">{output}</pre>
-    </div>
-  );
-}
-
-export default function ActivityPythonBlock({ code, blockIndex, editable = false }) {
-  const [output, setOutput] = useState('');
-  const [inputCode, setInputCode] = useState(code);
-
-  useEffect(() => {
-    Prism.highlightAll();
-  }, [inputCode]);
-
-  const runCode = () => {
-    setOutput('');
-    window.Sk.configure({
-      output: (text) => setOutput(prev => prev + text),
-      read: (x) => {
-        if (window.Sk.builtinFiles === undefined || !window.Sk.builtinFiles["files"][x]) {
-          throw new Error(`File not found: '${x}'`);
-        }
-        return window.Sk.builtinFiles["files"][x];
-      }
-    });
-
-    window.Sk.misceval.asyncToPromise(() => window.Sk.importMainWithBody(`<stdin>`, false, inputCode))
-      .catch(err => setOutput(err.toString()));
-  };
-
-  return (
-    <div className="mb-4">
-      {editable ? (
-        <Form.Control
-          as="textarea"
-          rows={6}
-          value={inputCode}
-          onChange={e => setInputCode(e.target.value)}
-        />
-      ) : (
-        <pre className="bg-light p-3 rounded">
-          <code className="language-python">{inputCode}</code>
-        </pre>
-      )}
-      <button className="btn btn-primary btn-sm mt-2" onClick={runCode}>Run</button>
-      <pre className="mt-2 bg-dark text-light p-2 rounded">{output}</pre>
-    </div>
-  );
-}
-
-*/

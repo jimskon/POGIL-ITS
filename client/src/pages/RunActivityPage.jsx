@@ -41,6 +41,8 @@ export default function RunActivityPage() {
   const [preamble, setPreamble] = useState([]);
   const [existingAnswers, setExistingAnswers] = useState({});
   const [skulptLoaded, setSkulptLoaded] = useState(false);
+  const [codeAnswers, setCodeAnswers] = useState({});
+
 
   const isActive = user && user.id === activeStudentId;
   const isInstructor = user?.role === 'instructor' || user?.role === 'root' || user?.role === 'creator';
@@ -67,7 +69,7 @@ export default function RunActivityPage() {
     }
 
     return count;
-    }, [existingAnswers, groups]);
+  }, [existingAnswers, groups]);
 
 
 
@@ -82,7 +84,7 @@ export default function RunActivityPage() {
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
-        console.log("🔄2222 Loading activity instance:", instanceId);  
+        console.log("🔄2222 Loading activity instance:", instanceId);
         const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
         const data = await res.json();
         if (data.activeStudentId !== activeStudentId) {
@@ -155,7 +157,7 @@ export default function RunActivityPage() {
 
   async function loadActivity() {
     try {
-      console.log("🔄 Loading activity instance:", instanceId);      
+      console.log("🔄 Loading activity instance:", instanceId);
       const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
       const instanceData = await instanceRes.json();
       setActivity(instanceData);
@@ -320,6 +322,11 @@ export default function RunActivityPage() {
       alert(`Partial draft saved. Still missing: ${unanswered.join(', ')}`);
     }
 
+    // Merge code answers into the main answers object
+    for (const [key, value] of Object.entries(codeAnswers)) {
+      answers[key] = value.trim();
+    }
+
     try {
       const response = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`, {
         method: 'POST',
@@ -354,8 +361,12 @@ export default function RunActivityPage() {
         ? <Alert variant="success">You are the active student. You may submit responses.</Alert>
         : <Alert variant="info">You are currently observing. The active student is {activeStudentName || '(unknown)'}</Alert>}
 
-      {renderBlocks(preamble, { editable: false, isActive: false, mode: 'run' })}
-
+      {renderBlocks(preamble, {
+        editable: false,
+        isActive: false,
+        mode: 'run',
+        setCodeAnswers: () => { }  // ✅ Provide a harmless default no-op function
+      })}
       {groups.map((group, index) => {
         const stateKey = `${index + 1}state`;
         const isComplete = existingAnswers[stateKey]?.response === 'complete';
@@ -387,7 +398,8 @@ export default function RunActivityPage() {
               currentGroupIndex: index,
               followupsShown,
               followupAnswers,
-              setFollowupAnswers
+              setFollowupAnswers,
+              setCodeAnswers
             })}
             {editable && (
               <div className="mt-2">

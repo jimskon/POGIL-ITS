@@ -204,7 +204,8 @@ export function renderBlocks(blocks, options = {}) {
     currentGroupIndex = null,
     followupsShown = {},
     followupAnswers = {},
-    setFollowupAnswers = () => { }
+    setFollowupAnswers = () => { },
+    setCodeAnswers = () => {} 
   } = options;
 
   const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
@@ -267,11 +268,14 @@ export function renderBlocks(blocks, options = {}) {
           {block.pythonBlocks?.map((py, i) => (
             <ActivityPythonBlock
               key={`q-${block.id}-py-${i}`}
-              code={py.content}
-              blockIndex={`${index}-${i}`}
+              code={prefill?.[`${block.groupId}${block.id}CODE${i + 1}`]?.response || py.content}
               editable={editable && isActive}
+              questionId={`${block.groupId}${block.id}`}
+              codeIndex={i}
+              setCodeAnswers={setCodeAnswers}
             />
           ))}
+
           <Form.Control
             as="textarea"
             rows={Math.max((block.responseLines || 1), 2)}
