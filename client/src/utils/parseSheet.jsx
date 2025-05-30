@@ -242,16 +242,13 @@ export function renderBlocks(blocks, options = {}) {
     currentGroupIndex = null,
     followupsShown = {},
     followupAnswers = {},
-    setFollowupAnswers = () => {}
+    setFollowupAnswers = () => { }
   } = options;
-
-  //console.log("🧪 prefill keys:", Object.keys(prefill));
 
   const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
 
   return blocks.map((block, index) => {
     if (hiddenTypes.includes(block.type) && mode !== 'preview') return null;
-
     if (block.type === 'endGroup') return null;
 
     if (block.type === 'text') {
@@ -294,8 +291,9 @@ export function renderBlocks(blocks, options = {}) {
 
     if (block.type === 'question') {
       const responseKey = `${block.groupId}${block.id}`;
-      //console.log("🔍 prefill:", prefill);
-      //console.log("🔍 Looking for key:", responseKey);
+      const followupQs = Object.entries(prefill)
+        .filter(([key]) => key.startsWith(responseKey + 'F') && !key.includes('FA'))
+        .sort(([a], [b]) => a.localeCompare(b));
 
       return (
         <div key={`q-${block.id}`} className="mb-4">
@@ -315,17 +313,32 @@ export function renderBlocks(blocks, options = {}) {
 
           <Form.Control
             as="textarea"
-            rows={block.responseLines || 1}
+            rows={Math.max((block.responseLines || 1), 2)}
             defaultValue={prefill?.[responseKey]?.response || ''}
-            readOnly={!editable}
+            readOnly={!editable || prefill?.[responseKey + 'S']?.response === 'complete'}
+
             data-question-id={responseKey}
             className="mt-2"
+            style={{ resize: 'vertical' }}
           />
 
-          {/* Follow-up UI */}
-          {editable && followupsShown?.[responseKey] && (
+          {/* Show saved followup Q&A in read-only format */}
+          {followupQs.map(([fqid], i) => {
+            const fq = prefill[fqid]?.response;
+            const faid = fqid.replace('F', 'FA');
+            const fa = prefill[faid]?.response;
+            return (
+              <div key={fqid} className="mt-3">
+                <div className="text-muted"><strong>Follow-up {i + 1}:</strong> {fq}</div>
+                {fa && <div className="bg-light p-2 rounded mt-1">{fa}</div>}
+              </div>
+            );
+          })}
+
+          {/* Show live follow-up if we're mid-response */}
+          {editable && followupsShown?.[responseKey] && !prefill?.[`${responseKey}FA1`] && (
             <>
-              <div className="mt-3 mb-1 text-muted">
+              <div className="mt-3 text-muted">
                 <strong>Follow-up:</strong> {followupsShown[responseKey]}
               </div>
               <Form.Control
@@ -340,13 +353,14 @@ export function renderBlocks(blocks, options = {}) {
                   }))
                 }
                 className="mt-1"
+                style={{ resize: 'vertical' }}
               />
             </>
           )}
+
         </div>
       );
     }
-
 
     return null;
   });

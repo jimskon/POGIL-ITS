@@ -43,6 +43,9 @@ export default function RunActivityPage() {
   const [skulptLoaded, setSkulptLoaded] = useState(false);
 
   const isActive = user && user.id === activeStudentId;
+  const isInstructor = user?.role === 'instructor' || user?.role === 'root' || user?.role === 'creator';
+  console.log("👤 User role:", user.role, "→ isInstructor:", isInstructor);
+
 
   const currentQuestionGroupIndex = useMemo(() => {
     console.log("🧩 existingAnswers snapshot:", existingAnswers);
@@ -53,14 +56,19 @@ export default function RunActivityPage() {
     }
 
     let count = 0;
-    while (existingAnswers[`${count + 1}state`]?.response === 'complete') {
+    while (count < groups.length && existingAnswers[`${count + 1}state`]?.response === 'complete') {
       console.log(`✅ Skipping group ${count + 1} as complete`);
       count++;
     }
 
     console.log(`✅ currentQuestionGroupIndex after skipping:`, count);
+    if (count === groups.length) {
+      console.log("🎉 All groups complete");
+    }
+
     return count;
-  }, [existingAnswers]);
+    }, [existingAnswers, groups]);
+
 
 
   if (!user) {
@@ -263,9 +271,17 @@ export default function RunActivityPage() {
         console.log("Base answer:", baseAnswer);
         console.log("Follow-up prompt:", followupPrompt);
         console.log("Follow-up answer:", followupAnswer);
-        answers[qid] = `${baseAnswer}\n\nFollow-up: ${followupPrompt}\nFollow-up response: ${followupAnswer}`;
-        continue;
+        answers[qid] = baseAnswer; // main answer
+        answers[`${qid}S`] = 'complete'; // state
+        if (followupPrompt) {
+          answers[`${qid}F1`] = followupPrompt;
+        }
+        if (followupAnswer) {
+          answers[`${qid}FA1`] = followupAnswer;
+        } continue;
       }
+      answers[`${qid}S`] = unanswered.includes(qid) ? 'inprogress' : 'complete';
+
 
       // 🧠 If follow-up metadata exists and none shown yet, trigger AI
       if (
@@ -340,11 +356,20 @@ export default function RunActivityPage() {
 
       {groups.map((group, index) => {
         const stateKey = `${index + 1}state`;
-        const isComplete = existingAnswers[stateKey] === 'complete';
+        const isComplete = existingAnswers[stateKey]?.response === 'complete';
         const isCurrent = index === currentQuestionGroupIndex;
         const isFuture = index > currentQuestionGroupIndex;
-        if (isFuture) return null;
+
         const editable = isActive && isCurrent && !isComplete;
+        const showGroup = isInstructor || isComplete || isCurrent;
+
+        console.log(
+          `👁️ Group ${index + 1} -- isInstructor: ${isInstructor}, isComplete: ${isComplete}, isCurrent: ${isCurrent}, isFuture: ${isFuture}, showGroup: ${showGroup}, editable: ${editable}`
+        );
+
+        if (!showGroup) return null;
+        console.log("📦 Total groups loaded:", groups.length);
+
         return (
           <div
             key={`group-${index}`}
@@ -370,6 +395,8 @@ export default function RunActivityPage() {
           </div>
         );
       })}
+
+
 
       {currentQuestionGroupIndex === groups.length && (
         <Alert variant="success">All groups complete! Review your responses above.</Alert>
