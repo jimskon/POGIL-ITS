@@ -82,6 +82,7 @@ export default function RunActivityPage() {
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
+        console.log("🔄2222 Loading activity instance:", instanceId);  
         const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
         const data = await res.json();
         if (data.activeStudentId !== activeStudentId) {
@@ -154,6 +155,7 @@ export default function RunActivityPage() {
 
   async function loadActivity() {
     try {
+      console.log("🔄 Loading activity instance:", instanceId);      
       const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
       const instanceData = await instanceRes.json();
       setActivity(instanceData);

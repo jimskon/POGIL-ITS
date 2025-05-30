@@ -221,7 +221,7 @@ async function getActiveStudent(req, res) {
     }
 
     const activeStudentId = instance.active_student_id;
-
+    console.log("Active student ID for instance", instanceId, "is", activeStudentId);
     res.json({ activeStudentId });
   } catch (err) {
     console.error("❌ getActiveStudent error:", err);
