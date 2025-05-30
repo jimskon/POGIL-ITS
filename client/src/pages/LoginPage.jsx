@@ -68,6 +68,9 @@ export default function LoginPage() {
               <p className="mt-3 text-center">
                 Don't have an account? <Link to="/register">Register here</Link>
               </p>
+              <p className="mt-3 text-center">
+                <Link to="/forgot-password">Forgot password?</Link>
+              </p>
             </Card.Body>
           </Card>
         </Col>

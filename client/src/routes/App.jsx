@@ -14,6 +14,9 @@ import CourseActivitiesPage from '../pages/CourseActivitiesPage';
 import RunActivityPage from '../pages/RunActivityPage';
 import GroupSetupPage from '../pages/GroupSetupPage';
 import ViewGroupsPage from '../pages/ViewGroupsPage';
+import VerifyPage from '../pages/VerifyPage';
+import ForgotPasswordPage from '../pages/ForgotPasswordPage';
+import ResetPasswordPage from '../pages/ResetPasswordPage';
 
 function AppRoutes() {
   const { user } = useUser();
@@ -34,7 +37,9 @@ function AppRoutes() {
         <Route path="/run/:instanceId" element={<RunActivityPage />} />
         <Route path="/setup-groups/:courseId/:activityId" element={<GroupSetupPage />} />
         <Route path="/view-groups/:courseId/:activityId" element={<ViewGroupsPage />} />
-
+        <Route path="/verify" element={<VerifyPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
      </Routes>
     </>
   );
