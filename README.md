@@ -145,6 +145,7 @@ npm install googleapis
 npm install mysql2
 npm install react-router-bootstrap
 npm install jsdom
+npm install openai
 
 cd ../client
 npm install react-bootstrap bootstrap

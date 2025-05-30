@@ -37,7 +37,7 @@ export function parseSheetToBlocks(lines) {
 
   for (let line of lines) {
     const trimmed = line.trim();
-    console.log("Processing line:", trimmed);
+    //console.log("Processing line:", trimmed);
 
     // --- Handle lists ---
     if (trimmed === '\\begin{itemize}' || trimmed === '\\begin{enumerate}') {
@@ -200,17 +200,17 @@ export function renderBlocks(blocks, options = {}) {
     editable = false,
     isActive = false,
     prefill = {},
-    mode = 'preview', // ✅ mode controls AI field visibility
-    currentGroupIndex = null
+    mode = 'preview',
+    currentGroupIndex = null,
+    followupsShown = {},
+    followupAnswers = {},
+    setFollowupAnswers = () => { }
   } = options;
 
-  console.log("🧪 prefill keys:", Object.keys(prefill));
+  const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
 
   return blocks.map((block, index) => {
-    // ✅ Hide AI fields in run mode, show in preview
-    if (['sampleresponses', 'feedbackprompt', 'followupprompt'].includes(block.type) && mode !== 'preview') {
-      return null;
-    }
+    if (hiddenTypes.includes(block.type) && mode !== 'preview') return null;
 
     if (block.type === 'endGroup') return null;
 
@@ -254,9 +254,16 @@ export function renderBlocks(blocks, options = {}) {
 
     if (block.type === 'question') {
       const responseKey = `${block.groupId}${block.id}`;
+      const followupQs = Object.entries(prefill)
+        .filter(([key]) => key.startsWith(responseKey + 'F') && !key.includes('FA'))
+        .sort(([a], [b]) => a.localeCompare(b));
       return (
         <div key={`q-${block.id}`} className="mb-4">
-          <p><strong>{block.label}</strong> <span dangerouslySetInnerHTML={{ __html: block.prompt }} /></p>
+          <p>
+            <strong>{block.label}</strong>{' '}
+            <span dangerouslySetInnerHTML={{ __html: block.prompt }} />
+          </p>
+
           {block.pythonBlocks?.map((py, i) => (
             <ActivityPythonBlock
               key={`q-${block.id}-py-${i}`}
@@ -267,12 +274,15 @@ export function renderBlocks(blocks, options = {}) {
           ))}
           <Form.Control
             as="textarea"
-            rows={block.responseLines || 1}
+            rows={Math.max((block.responseLines || 1), 2)}
             defaultValue={prefill?.[responseKey]?.response || ''}
-            readOnly={!editable}
+            readOnly={!editable || prefill?.[responseKey + 'S']?.response === 'complete'}
+
             data-question-id={responseKey}
             className="mt-2"
+            style={{ resize: 'vertical' }}
           />
+
           {mode === 'preview' && (
             <>
               {block.samples?.length > 0 && <p className="text-muted"><em>Sample: {block.samples.join('; ')}</em></p>}
@@ -280,6 +290,43 @@ export function renderBlocks(blocks, options = {}) {
               {block.followups?.length > 0 && <p className="text-muted"><em>Follow-up: {block.followups.join('; ')}</em></p>}
             </>
           )}
+
+          {/* Show saved followup Q&A in read-only format */}
+          {followupQs.map(([fqid], i) => {
+            const fq = prefill[fqid]?.response;
+            const faid = fqid.replace('F', 'FA');
+            const fa = prefill[faid]?.response;
+            return (
+              <div key={fqid} className="mt-3">
+                <div className="text-muted"><strong>Follow-up {i + 1}:</strong> {fq}</div>
+                {fa && <div className="bg-light p-2 rounded mt-1">{fa}</div>}
+              </div>
+            );
+          })}
+
+          {/* Show live follow-up if we're mid-response */}
+          {editable && followupsShown?.[responseKey] && !prefill?.[`${responseKey}FA1`] && (
+            <>
+              <div className="mt-3 text-muted">
+                <strong>Follow-up:</strong> {followupsShown[responseKey]}
+              </div>
+              <Form.Control
+                as="textarea"
+                rows={2}
+                value={followupAnswers?.[responseKey] || ''}
+                placeholder="Respond to the follow-up question here..."
+                onChange={(e) =>
+                  setFollowupAnswers((prev) => ({
+                    ...prev,
+                    [responseKey]: e.target.value,
+                  }))
+                }
+                className="mt-1"
+                style={{ resize: 'vertical' }}
+              />
+            </>
+          )}
+
         </div>
       );
     }

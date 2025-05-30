@@ -88,7 +88,7 @@ async function getCourseActivities(req, res) {
        ORDER BY a.order_index ASC`,
       [courseId]
     );
-    console.log("🧪 getCourseActivities result:", rows);
+    //console.log("🧪 getCourseActivities result:", rows);
 
     const activities = rows.map(row => ({
       activity_id: row.activity_id,
@@ -122,7 +122,7 @@ async function getUserEnrollments(req, res) {
        WHERE ce.student_id = ?`,
       [userId]
     );
-    console.log("getUserEnrollments:", rows);
+    //console.log("getUserEnrollments:", rows);
     
     res.json(rows.map(r => ({ ...r }))); // ✅ Flatten enrollment rows
   } catch (err) {

@@ -243,9 +243,7 @@ async function rotateActiveStudent(req, res) {
   if (!currentStudentId) return res.status(400).json({ error: 'Missing currentStudentId' });
 
   try {
-    const [members] = await db.query(`SELECT student_id FROM group_members WHERE activity_instance_id = ?`, [instanceId]);
-
-    if (!members.length) return res.status(404).json({ error: 'No group members' });
+    if (!members.length) return res.status(404).json({ error: 'No connected group members' });
 
     const others = members.filter(m => m.student_id !== currentStudentId);
     const next = others.length ? others[Math.floor(Math.random() * others.length)] : members[0];
@@ -256,6 +254,8 @@ async function rotateActiveStudent(req, res) {
     console.error("❌ rotateActiveStudent:", err);
     res.status(500).json({ error: 'Failed to rotate' });
   }
+
+
 }
 
 async function setupMultipleGroupInstances(req, res) {
@@ -294,48 +294,82 @@ async function setupMultipleGroupInstances(req, res) {
 
 async function submitGroupResponses(req, res) {
   const { instanceId } = req.params;
-  const { studentId, groupIndex, answers } = req.body;
+  const { studentId, answers } = req.body;
 
-  if (!instanceId || !studentId || !answers || typeof groupIndex !== 'number') {
+  if (!instanceId || !studentId || !answers) {
     return res.status(400).json({ error: 'Missing data' });
   }
 
   try {
-    const groupStateId = `${groupIndex + 1}state`;
-    const [[existing]] = await db.query(
-      `SELECT response FROM responses WHERE activity_instance_id = ? AND question_id = ?`,
-      [instanceId, groupStateId]
-    );
-    if (existing?.response === 'complete') {
-      return res.status(400).json({ error: 'Already completed' });
+    const responseMap = new Map();
+
+    // Group answers by base question (e.g., 2a)
+    const grouped = {};
+
+    for (const [qid, value] of Object.entries(answers)) {
+      const baseMatch = qid.match(/^([0-9]+[a-zA-Z])/); // e.g., 2a from 2aFA1
+      const base = baseMatch ? baseMatch[1] : null;
+      if (!base) continue;
+
+      if (!grouped[base]) grouped[base] = {};
+      grouped[base][qid] = value;
     }
 
-    for (const [questionId, value] of Object.entries(answers)) {
-      const type = questionId.endsWith('code') ? 'python' : 'text';
+    for (const [base, group] of Object.entries(grouped)) {
+      let hasMain = false;
+      let allFollowupsAnswered = true;
+
+      for (const [qid, value] of Object.entries(group)) {
+        responseMap.set(qid, value);
+
+        if (qid === base && value.trim().length > 0) hasMain = true;
+
+        const fMatch = qid.match(/^([0-9]+[a-zA-Z])F(\d+)$/);
+        if (fMatch) {
+          const followupNum = fMatch[2];
+          const faKey = `${base}FA${followupNum}`;
+          if (!group[faKey] || group[faKey].trim().length === 0) {
+            allFollowupsAnswered = false;
+          }
+        }
+      }
+
+      // Determine per-question and per-group state
+      const isComplete = hasMain && allFollowupsAnswered;
+
+      // Per-question status (e.g., 2aS)
+      responseMap.set(`${base}S`, isComplete ? 'complete' : 'inprogress');
+
+      // Per-group status (e.g., 2state)
+      const groupNum = base.match(/^(\d+)/)?.[1];
+      if (groupNum) {
+        const groupStateKey = `${groupNum}state`;
+        // If no prior state, or if previously inprogress, upgrade if now complete
+        if (!responseMap.has(groupStateKey)) {
+          responseMap.set(groupStateKey, isComplete ? 'complete' : 'inprogress');
+        } else if (responseMap.get(groupStateKey) !== 'complete' && isComplete) {
+          responseMap.set(groupStateKey, 'complete');
+        }
+      }
+    }
+
+    // Perform UPSERT for each response
+    for (const [qid, response] of responseMap.entries()) {
       await db.query(
         `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-     VALUES (?, ?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
-        [instanceId, questionId, type, value, studentId]
+       VALUES (?, ?, 'text', ?, ?)
+       ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
+        [instanceId, qid, response, studentId]
       );
     }
 
-
-    await db.query(
-      `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-       VALUES (?, ?, 'text', 'complete', ?)
-       ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
-      [instanceId, groupStateId, studentId]
-    );
-    // Rotate to a new active student if possible
+    // Rotate to next student (if someone is connected)
     const [connected] = await db.query(
-      `SELECT student_id FROM group_members
-       WHERE activity_instance_id = ? AND connected = true`,
+      `SELECT student_id FROM group_members WHERE activity_instance_id = ? AND connected = true`,
       [instanceId]
     );
 
     if (connected.length > 0) {
-      // Exclude current student if others are available
       const eligible = connected.filter(m => m.student_id !== studentId);
       const pickFrom = eligible.length > 0 ? eligible : connected;
       const next = pickFrom[Math.floor(Math.random() * pickFrom.length)].student_id;
@@ -345,6 +379,9 @@ async function submitGroupResponses(req, res) {
         [next, instanceId]
       );
     }
+
+    console.log("✅ Responses submitted for instance:", instanceId);
+    console.table([...responseMap.entries()]);
 
     res.json({ success: true });
   } catch (err) {
