@@ -250,7 +250,7 @@ export function renderBlocks(blocks, options = {}) {
     if (block.type === 'groupIntro') {
       return (
         <div key={`groupIntro-${index}`} className="mb-2">
-          <strong>{block.content}</strong>
+          <strong>{block.groupId}. {block.content}</strong>
         </div>
       );
     }
