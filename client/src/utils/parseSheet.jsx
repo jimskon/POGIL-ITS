@@ -111,9 +111,14 @@ export function parseSheetToBlocks(lines) {
     const sectionMatch = trimmed.match(/^\\section\*?\{(.+?)\}$/);
     if (sectionMatch) {
       flushCurrentBlock();
-      blocks.push({ type: 'section', name: format(sectionMatch[1]), content: [] });
+      blocks.push({
+        type: 'section',
+        title: format(sectionMatch[1]) // The title of the section to render as an <h2>
+      });
       continue;
     }
+
+
 
     // --- Handle question groups and questions ---
     if (trimmed.startsWith('\\questiongroup{')) {
@@ -213,6 +218,15 @@ export function renderBlocks(blocks, options = {}) {
     if (hiddenTypes.includes(block.type) && mode !== 'preview') return null;
 
     if (block.type === 'endGroup') return null;
+
+    if (block.type === 'section') {
+      return (
+        <h2 key={`section-${index}`} className="my-3">
+          {block.title}
+        </h2>
+      );
+    }
+
 
     if (block.type === 'text') {
       return (
