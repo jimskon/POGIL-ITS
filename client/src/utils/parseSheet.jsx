@@ -258,9 +258,9 @@ export function renderBlocks(blocks, options = {}) {
     if (block.type === 'python') {
       return (
         <ActivityPythonBlock
-          key={`py-${index}`}
+          key={`py-${currentGroupIndex}-${index}`}  // 🟢 Add groupIndex
           code={block.content}
-          blockIndex={index}
+          blockIndex={`py-${currentGroupIndex}-${index}`}  // 🟢 Unique blockIndex!
           editable={editable && isActive}
         />
       );
@@ -280,11 +280,12 @@ export function renderBlocks(blocks, options = {}) {
 
           {block.pythonBlocks?.map((py, i) => (
             <ActivityPythonBlock
-              key={`q-${block.id}-py-${i}`}
+              key={`q-${currentGroupIndex}-${block.id}-${i}`}  // 🟢 Add groupIndex
               code={py.content}
-              blockIndex={`${index}-${i}`}
+              blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}  // 🟢 Unique blockIndex!
               editable={editable && isActive}
             />
+
           ))}
           <Form.Control
             as="textarea"
