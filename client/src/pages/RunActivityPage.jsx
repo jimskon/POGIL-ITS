@@ -67,7 +67,7 @@ export default function RunActivityPage() {
     }
 
     return count;
-    }, [existingAnswers, groups]);
+  }, [existingAnswers, groups]);
 
 
 
@@ -82,7 +82,7 @@ export default function RunActivityPage() {
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
-        console.log("🔄2222 Loading activity instance:", instanceId);  
+        console.log("🔄2222 Loading activity instance:", instanceId);
         const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
         const data = await res.json();
         if (data.activeStudentId !== activeStudentId) {
@@ -155,7 +155,7 @@ export default function RunActivityPage() {
 
   async function loadActivity() {
     try {
-      console.log("🔄 Loading activity instance:", instanceId);      
+      console.log("🔄 Loading activity instance:", instanceId);
       const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
       const instanceData = await instanceRes.json();
       setActivity(instanceData);
@@ -346,6 +346,24 @@ export default function RunActivityPage() {
     }
   }
 
+  async function handleCodeChange(responseKey, updatedCode) {
+    try {
+      await fetch(`${API_BASE_URL}/api/responses/code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question_id: responseKey,
+          activity_instance_id: instanceId,
+          user_id: user?.id,
+          code_response: updatedCode
+        }),
+      });
+      console.log("✅ Code saved for:", responseKey);
+    } catch (err) {
+      console.error("❌ Failed to save code for:", responseKey, err);
+    }
+  }
+
 
   return (
     <Container className="mt-4">
@@ -387,7 +405,8 @@ export default function RunActivityPage() {
               currentGroupIndex: index,
               followupsShown,
               followupAnswers,
-              setFollowupAnswers
+              setFollowupAnswers,
+              onCodeChange: handleCodeChange
             })}
             {editable && (
               <div className="mt-2">

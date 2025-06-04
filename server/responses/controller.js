@@ -18,6 +18,26 @@ exports.createResponse = async (req, res) => {
   }
 };
 
+exports.createOrUpdateCodeResponse = async (req, res) => {
+  const { activity_instance_id, question_id, user_id, code_response } = req.body;
+
+  try {
+    await db.query(
+      `INSERT INTO responses (activity_instance_id, question_id, response_type, response, code_response, answered_by_user_id)
+ VALUES (?, ?, 'python', '', ?, ?)
+ ON DUPLICATE KEY UPDATE code_response = VALUES(code_response)`,
+      [activity_instance_id, question_id, code_response, user_id]
+    );
+
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ Error saving code response:", err);
+    res.status(500).json({ error: "Failed to save code response" });
+  }
+};
+
+
 exports.getResponsesByInstanceId = async (req, res) => {
   const { instanceId } = req.params;
 

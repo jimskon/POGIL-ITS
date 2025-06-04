@@ -209,8 +209,10 @@ export function renderBlocks(blocks, options = {}) {
     currentGroupIndex = null,
     followupsShown = {},
     followupAnswers = {},
-    setFollowupAnswers = () => { }
+    setFollowupAnswers = () => { },
+    onCodeChange = null  // ✅ NEW
   } = options;
+
 
   const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
 
@@ -258,11 +260,14 @@ export function renderBlocks(blocks, options = {}) {
     if (block.type === 'python') {
       return (
         <ActivityPythonBlock
-          key={`py-${currentGroupIndex}-${index}`}  // 🟢 Add groupIndex
+          key={`py-${currentGroupIndex}-${index}`}
           code={block.content}
-          blockIndex={`py-${currentGroupIndex}-${index}`}  // 🟢 Unique blockIndex!
+          blockIndex={`py-${currentGroupIndex}-${index}`}
           editable={editable && isActive}
+          responseKey={`${currentGroupIndex + 1}bcode${index + 1}`}  // ✅ Label like "1bcode1"
+          onCodeChange={onCodeChange}
         />
+
       );
     }
 
@@ -280,11 +285,14 @@ export function renderBlocks(blocks, options = {}) {
 
           {block.pythonBlocks?.map((py, i) => (
             <ActivityPythonBlock
-              key={`q-${currentGroupIndex}-${block.id}-${i}`}  // 🟢 Add groupIndex
+              key={`q-${currentGroupIndex}-${block.id}-${i}`}
               code={py.content}
-              blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}  // 🟢 Unique blockIndex!
+              blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}
               editable={editable && isActive}
+              responseKey={`${block.groupId}${block.id}code${i + 1}`}  // ✅ Label like "1bcode1"
+              onCodeChange={onCodeChange}
             />
+
 
           ))}
           <Form.Control
