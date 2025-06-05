@@ -15,6 +15,8 @@ export default function RunActivityPage() {
   const { user, loading } = useUser();
   const [followupsShown, setFollowupsShown] = useState({}); // { qid: followupQuestion }
   const [followupAnswers, setFollowupAnswers] = useState({}); // { qid: studentAnswer }
+  const [codeFeedbackShown, setCodeFeedbackShown] = useState({}); // { qid: feedback string }
+
 
   console.log("🔍 User:", user);
 
@@ -348,6 +350,7 @@ export default function RunActivityPage() {
 
   async function handleCodeChange(responseKey, updatedCode) {
     try {
+      // Step 1: Save code
       await fetch(`${API_BASE_URL}/api/responses/code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -355,12 +358,38 @@ export default function RunActivityPage() {
           question_id: responseKey,
           activity_instance_id: instanceId,
           user_id: user?.id,
-          code_response: updatedCode
+          code_response: updatedCode,
         }),
       });
       console.log("✅ Code saved for:", responseKey);
+
+      // Step 2: Call AI for feedback
+      const aiRes = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          questionText: "Review the student's code and offer helpful feedback if needed.",
+          studentCode: updatedCode,
+          codeVersion: responseKey,
+        }),
+      });
+
+      const aiData = await aiRes.json();
+      if (aiData.feedback) {
+        console.log(`🤖 AI feedback for ${responseKey}:`, aiData.feedback);
+        setCodeFeedbackShown(prev => ({
+          ...prev,
+          [responseKey]: aiData.feedback,
+        }));
+      } else {
+        console.log(`🤖 No feedback needed for ${responseKey}`);
+        setCodeFeedbackShown(prev => ({
+          ...prev,
+          [responseKey]: null,
+        }));
+      }
     } catch (err) {
-      console.error("❌ Failed to save code for:", responseKey, err);
+      console.error("❌ Failed in handleCodeChange:", responseKey, err);
     }
   }
 
@@ -372,7 +401,12 @@ export default function RunActivityPage() {
         ? <Alert variant="success">You are the active student. You may submit responses.</Alert>
         : <Alert variant="info">You are currently observing. The active student is {activeStudentName || '(unknown)'}</Alert>}
 
-      {renderBlocks(preamble, { editable: false, isActive: false, mode: 'run' })}
+      {renderBlocks(preamble, {
+        editable: false,
+        isActive: false,
+        mode: 'run',
+        codeFeedbackShown, // ✅ FIX added here
+      })}
 
       {groups.map((group, index) => {
         const stateKey = `${index + 1}state`;
@@ -406,8 +440,10 @@ export default function RunActivityPage() {
               followupsShown,
               followupAnswers,
               setFollowupAnswers,
-              onCodeChange: handleCodeChange
+              onCodeChange: handleCodeChange,
+              codeFeedbackShown, // ✅ new prop
             })}
+
             {editable && (
               <div className="mt-2">
                 <Button onClick={handleSubmit}>Submit and Continue</Button>

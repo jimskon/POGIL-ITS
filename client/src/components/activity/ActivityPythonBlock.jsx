@@ -2,9 +2,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Form, Button } from 'react-bootstrap';
 import Prism from 'prismjs';
 
-export default function ActivityPythonBlock({ code: initialCode, blockIndex, responseKey, onCodeChange }) {
+export default function ActivityPythonBlock({
+  code: initialCode,
+  blockIndex,
+  responseKey,
+  onCodeChange,
+  codeFeedbackShown = {}, // ✅ Accept feedback
+}) {
   const [code, setCode] = useState(initialCode);
-  const [savedCode, setSavedCode] = useState(initialCode); // ✅ Track saved version
+  const [savedCode, setSavedCode] = useState(initialCode);
   const [isEditing, setIsEditing] = useState(false);
 
   const outputId = `sk-output-${blockIndex}`;
@@ -17,7 +23,6 @@ export default function ActivityPythonBlock({ code: initialCode, blockIndex, res
     }
   }, [isEditing, code]);
 
-  // Optional: Reset if initialCode changes (e.g., new activity)
   useEffect(() => {
     setCode(initialCode);
     setSavedCode(initialCode);
@@ -52,8 +57,8 @@ export default function ActivityPythonBlock({ code: initialCode, blockIndex, res
   const handleDoneEditing = () => {
     setIsEditing(false);
     if (code !== savedCode && onCodeChange && responseKey) {
-      onCodeChange(responseKey, code);  // 🔥 Trigger backend save
-      setSavedCode(code);              // ✅ Track saved version
+      onCodeChange(responseKey, code);
+      setSavedCode(code);
     }
   };
 
@@ -97,6 +102,14 @@ export default function ActivityPythonBlock({ code: initialCode, blockIndex, res
       )}
 
       <pre id={outputId} className="mt-2 bg-light p-2 border" />
+
+      {/* ✅ AI Feedback block */}
+      {codeFeedbackShown[responseKey] && (
+        <div className="mt-2 p-3 border rounded bg-warning-subtle">
+          <strong>AI Feedback:</strong>
+          <pre className="mb-0">{codeFeedbackShown[responseKey]}</pre>
+        </div>
+      )}
     </div>
   );
 }

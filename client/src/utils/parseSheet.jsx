@@ -210,8 +210,10 @@ export function renderBlocks(blocks, options = {}) {
     followupsShown = {},
     followupAnswers = {},
     setFollowupAnswers = () => { },
-    onCodeChange = null  // ✅ NEW
+    onCodeChange = null,
+    codeFeedbackShown = {}, // ✅ FIXED
   } = options;
+
 
 
   const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
@@ -266,6 +268,7 @@ export function renderBlocks(blocks, options = {}) {
           editable={editable && isActive}
           responseKey={`${currentGroupIndex + 1}bcode${index + 1}`}  // ✅ Label like "1bcode1"
           onCodeChange={onCodeChange}
+          codeFeedbackShown={codeFeedbackShown} // ✅ ADD THIS
         />
 
       );
