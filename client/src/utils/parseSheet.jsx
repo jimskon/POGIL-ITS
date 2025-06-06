@@ -211,16 +211,13 @@ export function renderBlocks(blocks, options = {}) {
     followupAnswers = {},
     setFollowupAnswers = () => { },
     onCodeChange = null,
-    codeFeedbackShown = {}, // ✅ FIXED
+    codeFeedbackShown = {},
   } = options;
-
-
 
   const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
 
   return blocks.map((block, index) => {
     if (hiddenTypes.includes(block.type) && mode !== 'preview') return null;
-
     if (block.type === 'endGroup') return null;
 
     if (block.type === 'section') {
@@ -230,7 +227,6 @@ export function renderBlocks(blocks, options = {}) {
         </h2>
       );
     }
-
 
     if (block.type === 'text') {
       return (
@@ -266,11 +262,10 @@ export function renderBlocks(blocks, options = {}) {
           code={block.content}
           blockIndex={`py-${currentGroupIndex}-${index}`}
           editable={editable && isActive}
-          responseKey={`${currentGroupIndex + 1}bcode${index + 1}`}  // ✅ Label like "1bcode1"
+          responseKey={`${currentGroupIndex + 1}bcode${index + 1}`}
           onCodeChange={onCodeChange}
-          codeFeedbackShown={codeFeedbackShown} // ✅ ADD THIS
+          codeFeedbackShown={codeFeedbackShown}
         />
-
       );
     }
 
@@ -279,11 +274,23 @@ export function renderBlocks(blocks, options = {}) {
       const followupQs = Object.entries(prefill)
         .filter(([key]) => key.startsWith(responseKey + 'F') && !key.includes('FA'))
         .sort(([a], [b]) => a.localeCompare(b));
+      const followupAppeared = !!prefill?.[`${responseKey}F1`] || !!followupsShown?.[responseKey];
+      const groupComplete = prefill?.[`${responseKey}S`] === 'complete';
+
       return (
         <div key={`q-${block.id}`} className="mb-4">
           <p>
             <strong>{block.label}</strong>{' '}
             <span dangerouslySetInnerHTML={{ __html: block.prompt }} />
+            {followupAppeared && (
+              <span
+                className="ms-2"
+                title="Response locked due to follow-up"
+                style={{ color: '#888', cursor: 'not-allowed' }}
+              >
+                🔒
+              </span>
+            )}
           </p>
 
           {block.pythonBlocks?.map((py, i) => (
@@ -292,18 +299,16 @@ export function renderBlocks(blocks, options = {}) {
               code={py.content}
               blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}
               editable={editable && isActive}
-              responseKey={`${block.groupId}${block.id}code${i + 1}`}  // ✅ Label like "1bcode1"
+              responseKey={`${block.groupId}${block.id}code${i + 1}`}
               onCodeChange={onCodeChange}
             />
-
-
           ))}
+
           <Form.Control
             as="textarea"
             rows={Math.max((block.responseLines || 1), 2)}
             defaultValue={prefill?.[responseKey]?.response || ''}
-            readOnly={!editable || prefill?.[responseKey + 'S']?.response === 'complete'}
-
+            readOnly={!editable || groupComplete || followupAppeared}
             data-question-id={responseKey}
             className="mt-2"
             style={{ resize: 'vertical' }}
@@ -330,26 +335,58 @@ export function renderBlocks(blocks, options = {}) {
             );
           })}
 
-          {/* Show live follow-up if we're mid-response */}
-          {editable && followupsShown?.[responseKey] && !prefill?.[`${responseKey}FA1`] && (
+          {/* Follow-up input or locked view */}
+          {/* Follow-up input or locked view */}
+          {followupsShown?.[responseKey] && (
             <>
               <div className="mt-3 text-muted">
                 <strong>Follow-up:</strong> {followupsShown[responseKey]}
+                {(prefill?.[`${responseKey}FA1`] || !editable) && (
+                  <span
+                    className="ms-2"
+                    title="Follow-up response is locked"
+                    style={{ color: '#888', cursor: 'not-allowed' }}
+                  >
+                    🔒
+                  </span>
+                )}
               </div>
-              <Form.Control
-                as="textarea"
-                rows={2}
-                value={followupAnswers?.[responseKey] || ''}
-                placeholder="Respond to the follow-up question here..."
-                onChange={(e) =>
-                  setFollowupAnswers((prev) => ({
-                    ...prev,
-                    [responseKey]: e.target.value,
-                  }))
-                }
-                className="mt-1"
-                style={{ resize: 'vertical' }}
-              />
+
+              {!editable ||
+                prefill[`${responseKey}FA1`] ||
+                Object.keys(followupsShown)
+                  .filter((k) => k !== responseKey)
+                  .some((k) => {
+                    const [kGroup, kLetter] = k.match(/^(\d+)([a-z])/).slice(1);
+                    const [rGroup, rLetter] = responseKey.match(/^(\d+)([a-z])/).slice(1);
+                    return parseInt(kGroup) > parseInt(rGroup) ||
+                      (parseInt(kGroup) === parseInt(rGroup) && kLetter > rLetter);
+                  })
+
+
+
+
+                ? (
+                  <div className="bg-light p-2 rounded mt-1">
+                    {prefill?.[`${responseKey}FA1`] || followupAnswers?.[responseKey] || ''}
+                  </div>
+                ) : (
+                  <Form.Control
+                    as="textarea"
+                    rows={2}
+                    value={followupAnswers?.[responseKey] || ''}
+                    placeholder="Respond to the follow-up question here..."
+                    onChange={(e) =>
+                      setFollowupAnswers((prev) => ({
+                        ...prev,
+                        [responseKey]: e.target.value,
+                      }))
+                    }
+                    className="mt-1"
+                    style={{ resize: 'vertical' }}
+                  />
+                )}
+
             </>
           )}
 
@@ -360,5 +397,6 @@ export function renderBlocks(blocks, options = {}) {
     return null;
   });
 }
+
 
 // End parseSheet.jsx

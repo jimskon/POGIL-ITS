@@ -340,8 +340,9 @@ export default function RunActivityPage() {
       } else {
         setFollowupsShown({});
         setFollowupAnswers({});
-        await loadActivity(); // Will advance to the next group if marked complete
+        await loadActivity(); // ✅ Reload server state
       }
+
     } catch (err) {
       console.error("❌ Submission failed:", err);
       alert("An error occurred during submission.");
