@@ -99,7 +99,6 @@ CREATE TABLE IF NOT EXISTS responses (
   question_id TEXT NOT NULL,
   response_type ENUM('text', 'python', 'cpp') NOT NULL DEFAULT 'text',
   response TEXT NOT NULL,
-  code_response TEXT, 
   submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   answered_by_user_id INT NOT NULL,

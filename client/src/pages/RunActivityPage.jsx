@@ -243,6 +243,17 @@ export default function RunActivityPage() {
       return;
     }
 
+    // 🔄 Save unsaved Python edits before submission
+    const codeTextareas = container.querySelectorAll('textarea[id^="sk-code-"]');
+    for (let textarea of codeTextareas) {
+      const responseKey = textarea.getAttribute('data-response-key');
+      const currentCode = textarea.value.trim();
+      if (responseKey && currentCode) {
+        await handleCodeChange(responseKey, currentCode);
+      }
+    }
+
+
     const currentGroup = groups[currentQuestionGroupIndex];
     const blocks = [currentGroup.intro, ...currentGroup.content];
     const answers = {};

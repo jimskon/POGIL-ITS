@@ -84,11 +84,13 @@ export default function ActivityPythonBlock({
         <Form.Control
           as="textarea"
           id={codeId}
+          data-response-key={responseKey}  // ✅ add this line
           value={code}
           onChange={(e) => setCode(e.target.value)}
           rows={Math.max(6, code.split("\n").length)}
           className="font-monospace bg-dark text-white mt-2"
         />
+
       ) : (
         <pre className="mt-2">
           <code
