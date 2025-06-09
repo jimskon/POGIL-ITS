@@ -214,6 +214,7 @@ export function renderBlocks(blocks, options = {}) {
     codeFeedbackShown = {},
   } = options;
 
+  let standaloneCodeCounter = 1;
   const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
 
   return blocks.map((block, index) => {
@@ -256,18 +257,20 @@ export function renderBlocks(blocks, options = {}) {
     }
 
     if (block.type === 'python') {
+      const groupPrefix = (currentGroupIndex + 1).toString(); // dynamic group number
       return (
         <ActivityPythonBlock
-          key={`py-${currentGroupIndex}-${index}`}
+          key={`py-${groupPrefix}-${index}`}
           code={block.content}
-          blockIndex={`py-${currentGroupIndex}-${index}`}
+          blockIndex={`py-${groupPrefix}-${index}`}
           editable={editable && isActive}
-          responseKey={`${currentGroupIndex + 1}bcode${index + 1}`}
+          responseKey={`${groupPrefix}code${standaloneCodeCounter++}`} // like "2code1"
           onCodeChange={onCodeChange}
           codeFeedbackShown={codeFeedbackShown}
         />
       );
     }
+
 
     if (block.type === 'question') {
       const responseKey = `${block.groupId}${block.id}`;
