@@ -359,7 +359,7 @@ export default function RunActivityPage() {
           question_id: responseKey,
           activity_instance_id: instanceId,
           user_id: user?.id,
-          code_response: updatedCode,
+          response: updatedCode, // ✅ note the key here
         }),
       });
       console.log("✅ Code saved for:", responseKey);

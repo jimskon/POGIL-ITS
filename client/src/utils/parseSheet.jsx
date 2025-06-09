@@ -308,7 +308,7 @@ export function renderBlocks(blocks, options = {}) {
             as="textarea"
             rows={Math.max((block.responseLines || 1), 2)}
             defaultValue={prefill?.[responseKey]?.response || ''}
-            readOnly={!editable || groupComplete || followupAppeared}
+            readOnly={!editable || (prefill?.[`${block.groupId}state`]?.response === 'complete')}
             data-question-id={responseKey}
             className="mt-2"
             style={{ resize: 'vertical' }}
