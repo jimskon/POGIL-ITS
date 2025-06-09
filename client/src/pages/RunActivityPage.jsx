@@ -18,6 +18,8 @@ export default function RunActivityPage() {
   const [codeFeedbackShown, setCodeFeedbackShown] = useState({}); // { qid: feedback string }
 
 
+
+
   console.log("🔍 User:", user);
 
   if (loading) {
@@ -43,6 +45,7 @@ export default function RunActivityPage() {
   const [preamble, setPreamble] = useState([]);
   const [existingAnswers, setExistingAnswers] = useState({});
   const [skulptLoaded, setSkulptLoaded] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false); // ✅ Spinner control
 
   const isActive = user && user.id === activeStudentId;
   const isInstructor = user?.role === 'instructor' || user?.role === 'root' || user?.role === 'creator';
@@ -237,6 +240,8 @@ export default function RunActivityPage() {
   }
 
   async function handleSubmit() {
+    if (isSubmitting) return;        // ✅ Prevent double clicks
+    setIsSubmitting(true);           // ✅ Show spinner
     const container = document.querySelector('[data-current-group="true"]');
     if (!container) {
       alert("Error: No editable group found.");
@@ -310,7 +315,8 @@ export default function RunActivityPage() {
         if (aiFollowup) {
           setFollowupsShown(prev => ({ ...prev, [qid]: aiFollowup }));
           alert(`A follow-up question has been added for ${qid}. Please answer it.`);
-          return; // wait for student to answer
+          setIsSubmitting(false); // ✅ unlock spinner!
+          return;
         }
         answers[qid] = baseAnswer;
         continue;
@@ -357,6 +363,8 @@ export default function RunActivityPage() {
     } catch (err) {
       console.error("❌ Submission failed:", err);
       alert("An error occurred during submission.");
+    } finally {
+      setIsSubmitting(false); // ✅ hide spinner after everything
     }
   }
 
@@ -458,9 +466,19 @@ export default function RunActivityPage() {
 
             {editable && (
               <div className="mt-2">
-                <Button onClick={handleSubmit}>Submit and Continue</Button>
+                <Button onClick={handleSubmit} disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <Spinner animation="border" size="sm" className="me-2" />
+                      Loading...
+                    </>
+                  ) : (
+                    "Submit and Continue"
+                  )}
+                </Button>
               </div>
             )}
+
           </div>
         );
       })}
