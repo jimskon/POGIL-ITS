@@ -51,7 +51,16 @@ export default function ActivityPythonBlock({
         }
         return Sk.builtinFiles["files"][file];
       },
+      inputfun: function (promptText) {
+        const response = window.prompt(promptText || "Please enter input:");
+        if (response === null) {
+          throw new Error("User cancelled input.");
+        }
+        return response;
+      },
+      inputfunTakesPrompt: true,
     });
+
 
     Sk.misceval
       .asyncToPromise(() => Sk.importMainWithBody("__main__", false, code, true))
