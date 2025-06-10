@@ -39,7 +39,7 @@ export default function ActivityPythonBlock({
       return;
     }
 
-    //setOutputText(''); // Clear previous output
+    setOutputText(''); // Clear previous output
 
     Sk.configure({
       output: (text) => {
