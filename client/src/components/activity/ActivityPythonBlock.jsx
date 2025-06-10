@@ -1,20 +1,22 @@
+// ActivityPythonBlock.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { Form, Button } from 'react-bootstrap';
 import Prism from 'prismjs';
 
-export default function ActivityPythonBlock({ code, blockIndex }) {
+export default function ActivityPythonBlock({ code, blockIndex, editable = false, runnable = true }) {
   const [isEditing, setIsEditing] = useState(false);
   const outputId = `sk-output-${blockIndex}`;
   const codeId = `sk-code-${blockIndex}`;
-  const codeRef = useRef(null); // Add a ref to <code>
+  const codeRef = useRef(null);
 
   useEffect(() => {
     if (!isEditing && codeRef.current) {
-      Prism.highlightElement(codeRef.current); // Highlight when shown
+      Prism.highlightElement(codeRef.current);
     }
   }, [isEditing]);
 
   const runPython = () => {
+    if (!runnable) return;
     const userCode = document.getElementById(codeId)?.value || code;
     const outputEl = document.getElementById(outputId);
     if (!outputEl) return;
@@ -38,26 +40,30 @@ export default function ActivityPythonBlock({ code, blockIndex }) {
 
     Sk.misceval
       .asyncToPromise(() => Sk.importMainWithBody("__main__", false, userCode, true))
-      .catch((err) => outputEl.textContent = err.toString());
+      .catch((err) => (outputEl.textContent = err.toString()));
   };
 
   return (
     <div className="mb-4">
-      <Button
-        variant="secondary"
-        className="mb-2 me-2"
-        onClick={() => setIsEditing(!isEditing)}
-      >
-        {isEditing ? "Done Editing" : "Edit Code"}
-      </Button>
+      {editable && runnable && (
+        <Button
+          variant="secondary"
+          className="mb-2 me-2"
+          onClick={() => setIsEditing(!isEditing)}
+        >
+          {isEditing ? "Done Editing" : "Edit Code"}
+        </Button>
+      )}
 
-      <Button
-        variant="primary"
-        className="mb-2"
-        onClick={runPython}
-      >
-        Run Python
-      </Button>
+      {runnable && (
+        <Button
+          variant="primary"
+          className="mb-2"
+          onClick={runPython}
+        >
+          Run Python
+        </Button>
+      )}
 
       {isEditing ? (
         <Form.Control
@@ -79,7 +85,9 @@ export default function ActivityPythonBlock({ code, blockIndex }) {
         </pre>
       )}
 
-      <pre id={outputId} className="mt-2 bg-light p-2 border" />
+      {runnable && (
+        <pre id={outputId} className="mt-2 bg-light p-2 border" />
+      )}
     </div>
   );
 }

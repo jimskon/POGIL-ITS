@@ -33,11 +33,11 @@ export function parseSheetToBlocks(lines) {
   const format = (text) =>
     text.replace(/\\textbf\{(.+?)\}/g, '<strong>$1</strong>')
       .replace(/\\textit\{(.+?)\}/g, '<em>$1</em>')
-      .replace(/\\text\{(.+?)\}/g, '$1');
+      .replace(/\\text\{(.+?)\}/g, '$1')
+      .replace(/\\\\/g, '<br>');
 
   for (let line of lines) {
     const trimmed = line.trim();
-    //console.log("Processing line:", trimmed);
 
     // --- Handle lists ---
     if (trimmed === '\\begin{itemize}' || trimmed === '\\begin{enumerate}') {
@@ -61,28 +61,42 @@ export function parseSheetToBlocks(lines) {
     }
 
     // --- Handle Python blocks ---
-    if (trimmed === '\\python') {
+    const pythonStart = trimmed.match(/^\\python(?:\[(noedit|norun)\])?$/);
+    if (pythonStart) {
       flushCurrentBlock();
       currentField = 'python';
+
+      const tag = pythonStart[1];
+      const editable = tag !== 'noedit' && tag !== 'norun';
+      const runnable = tag !== 'norun';
+
       if (currentQuestion && currentQuestion.type === 'question') {
         if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
-        currentQuestion.pythonBlocks.push({ lines: [] });
+        currentQuestion.pythonBlocks.push({ lines: [], editable, runnable });
       } else {
-        currentQuestion = { type: 'python', lines: [] };
+        currentQuestion = { type: 'python', lines: [], editable, runnable };
       }
       continue;
     }
 
+
     if (trimmed === '\\endpython') {
       if (currentField === 'python') {
         if (currentQuestion?.type === 'python') {
-          blocks.push({ type: 'python', content: currentQuestion.lines.join('\n') });
+          blocks.push({
+            type: 'python',
+            content: currentQuestion.lines.join('\n'),
+            editable: currentQuestion.editable,
+            runnable: currentQuestion.runnable
+          });
           currentQuestion = null;
         } else if (currentQuestion?.pythonBlocks?.length > 0) {
           const block = currentQuestion.pythonBlocks.pop();
           currentQuestion.pythonBlocks.push({
             type: 'python',
-            content: block.lines.join('\n')
+            content: block.lines.join('\n'),
+            editable: block.editable,
+            runnable: block.runnable
           });
         }
         currentField = 'prompt';
@@ -141,7 +155,7 @@ export function parseSheetToBlocks(lines) {
         responseId: responseId++,
         prompt: format(content),
         responseLines: 1,
-        samples: [],     // ✅ AI Fields: parsed here
+        samples: [],
         feedback: [],
         followups: []
       };
@@ -160,7 +174,6 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // ✅ AI Fields parsing
     if (trimmed.startsWith('\\sampleresponses{')) {
       const match = trimmed.match(/\\sampleresponses\{(.+?)\}/);
       if (match && currentQuestion) currentQuestion.samples.push(format(match[1]));
@@ -179,7 +192,6 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // --- Simple bold lines ---
     const textbfMatch = trimmed.match(/^\\textbf\{(.+?)\}$/);
     if (textbfMatch) {
       flushCurrentBlock();
@@ -187,13 +199,13 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // --- Default text fallback ---
     currentBlock.push(format(line));
   }
 
   flushCurrentBlock();
   return blocks;
 }
+
 
 export function renderBlocks(blocks, options = {}) {
   const {
@@ -242,15 +254,19 @@ export function renderBlocks(blocks, options = {}) {
     }
 
     if (block.type === 'python') {
+      console.log(`🧪 Python block flags: editable=${block.editable}, runnable=${block.runnable}`);
+
       return (
         <ActivityPythonBlock
           key={`py-${index}`}
           code={block.content}
           blockIndex={index}
-          editable={editable && isActive}
+          editable={block.editable ?? (editable && isActive)}
+          runnable={block.runnable ?? true}
         />
       );
     }
+
 
     if (block.type === 'question') {
       const responseKey = `${block.groupId}${block.id}`;
