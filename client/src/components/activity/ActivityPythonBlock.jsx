@@ -70,7 +70,6 @@ export default function ActivityPythonBlock({
   };
 
 
-
   return (
     <div className="mb-4">
       <Button

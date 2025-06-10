@@ -102,7 +102,7 @@ export default function RunActivityPage() {
     const interval = setInterval(() => {
       console.log("🔁 Polling activity for all users (code + feedback)");
       loadActivity(); // This will refresh all answers + feedback from the DB
-    }, 3000); // every 10 seconds
+    }, 10000); // every 10 seconds
 
     return () => clearInterval(interval); // cleanup when unmounting
   }, [instanceId]);
