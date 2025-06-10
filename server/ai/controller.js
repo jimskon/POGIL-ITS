@@ -112,7 +112,44 @@ Only respond with "NO_FEEDBACK" or a single suggestion.
 }
 
 
+async function evaluateCode({ questionText, studentCode, codeVersion }) {
+  const prompt = `
+You are a Python tutor evaluating a student's code submission.
+
+Question: ${questionText}
+
+Student's code (version ${codeVersion}):
+\`\`\`python
+${studentCode}
+\`\`\`
+
+Does the code correctly and clearly meet the expected goal?
+
+Evaluate the code based on:
+- Functional correctness (does it run and solve the problem?)
+- Clear and appropriate user-facing output
+- Code structure and naming conventions
+
+If the code meets **all** of these criteria, respond with: "NO_FEEDBACK".
+
+Otherwise, return **one concise improvement suggestion**, such as fixing a bug, rephrasing unclear output, or improving readability.
+
+Only respond with "NO_FEEDBACK" or a single suggestion.
+`.trim();
+
+  const chat = await openai.chat.completions.create({
+    model: 'gpt-4-turbo',
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.3,
+    max_tokens: 150,
+  });
+
+  const result = chat.choices[0].message.content.trim();
+  return { feedback: result === 'NO_FEEDBACK' ? null : result };
+}
+
 module.exports = {
   evaluateStudentResponse,
   evaluatePythonCode,
+  evaluateCode, // ✅ local use
 };

@@ -99,6 +99,16 @@ export default function RunActivityPage() {
   }, [instanceId, activeStudentId]);
 
   useEffect(() => {
+    const interval = setInterval(() => {
+      console.log("🔁 Polling activity for all users (code + feedback)");
+      loadActivity(); // This will refresh all answers + feedback from the DB
+    }, 3000); // every 10 seconds
+
+    return () => clearInterval(interval); // cleanup when unmounting
+  }, [instanceId]);
+
+
+  useEffect(() => {
     const sendHeartbeat = async () => {
       if (!user?.id || !instanceId) return;
       try {
@@ -180,7 +190,21 @@ export default function RunActivityPage() {
       // Always load answers, even if user is not in a group
       const answersRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/responses`);
       const answersData = await answersRes.json();
+      console.log("📦 Observer fetched answers:", answersData);
+
+      // ✅ Extract AI feedback for each Python block
+      setCodeFeedbackShown(prev => {
+        const merged = { ...prev };
+        for (const [qid, entry] of Object.entries(answersData)) {
+          if (entry.type === 'python' && entry.python_feedback) {
+            merged[qid] = entry.python_feedback;
+          }
+        }
+        return merged;
+      });
+
       setExistingAnswers(answersData);
+
 
       const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(instanceData.sheet_url)}`);
       const { lines } = await docRes.json();

@@ -258,19 +258,25 @@ export function renderBlocks(blocks, options = {}) {
 
     if (block.type === 'python') {
       const groupPrefix = (currentGroupIndex + 1).toString(); // dynamic group number
+      const codeKey = `${groupPrefix}code${standaloneCodeCounter++}`;
+
       return (
         <ActivityPythonBlock
-          key={`py-${groupPrefix}-${index}`}
-          code={block.content}
-          blockIndex={`py-${groupPrefix}-${index}`}
+          key={`py-${codeKey}-${index}-${prefill?.[codeKey]?.response || ''}-${codeFeedbackShown?.[codeKey] || ''}`}
+          code={
+            prefill?.[codeKey]?.response
+            || block.content
+            || ''
+          }
+          blockIndex={`py-${codeKey}-${index}`}
           editable={editable && isActive}
-          responseKey={`${groupPrefix}code${standaloneCodeCounter++}`} // like "2code1"
+          responseKey={codeKey}
           onCodeChange={onCodeChange}
           codeFeedbackShown={codeFeedbackShown}
         />
+
       );
     }
-
 
     if (block.type === 'question') {
       const responseKey = `${block.groupId}${block.id}`;
@@ -296,16 +302,23 @@ export function renderBlocks(blocks, options = {}) {
             )}
           </p>
 
-          {block.pythonBlocks?.map((py, i) => (
-            <ActivityPythonBlock
-              key={`q-${currentGroupIndex}-${block.id}-${i}`}
-              code={py.content}
-              blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}
-              editable={editable && isActive}
-              responseKey={`${block.groupId}${block.id}code${i + 1}`}
-              onCodeChange={onCodeChange}
-            />
-          ))}
+          {block.pythonBlocks?.map((py, i) => {
+            const responseKey = `${block.groupId}${block.id}code${i + 1}`;
+            const savedResponse = prefill?.[responseKey]?.response || py.content;
+            return (
+              <ActivityPythonBlock
+                key={`q-${currentGroupIndex}-${block.id}-${i}-${savedResponse}-${codeFeedbackShown?.[responseKey] || ''}`}
+                code={savedResponse}
+                blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}
+                editable={editable && isActive}
+                responseKey={responseKey}
+                onCodeChange={onCodeChange}
+                codeFeedbackShown={codeFeedbackShown}
+              />
+
+            );
+          })}
+
 
           <Form.Control
             as="textarea"

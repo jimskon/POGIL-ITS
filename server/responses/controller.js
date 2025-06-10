@@ -1,5 +1,8 @@
 // /server/responses/controller.js
 const db = require('../db');
+const { evaluateCode } = require('../ai/controller');
+
+
 
 exports.createResponse = async (req, res) => {
   const { instanceId, questionId, responseText, answeredBy } = req.body;
@@ -21,20 +24,57 @@ exports.createResponse = async (req, res) => {
 exports.createOrUpdateCodeResponse = async (req, res) => {
   const { activity_instance_id, question_id, user_id, response } = req.body;
 
+  const conn = await db.getConnection();
   try {
-    await db.query(
+    await conn.beginTransaction();
+
+    // Step 1: Insert or update the response
+    const [result] = await conn.query(
       `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
        VALUES (?, ?, 'python', ?, ?)
        ON DUPLICATE KEY UPDATE response = VALUES(response)`,
       [activity_instance_id, question_id, response, user_id]
     );
 
-    res.json({ success: true });
+    const [responseRow] = await conn.query(
+      `SELECT id FROM responses
+       WHERE activity_instance_id = ? AND question_id = ? AND answered_by_user_id = ?`,
+      [activity_instance_id, question_id, user_id]
+    );
+
+    const responseId = responseRow?.[0]?.id;
+    if (!responseId) throw new Error('Missing response ID');
+
+    // Step 2: Call AI to evaluate code
+    const aiData = await evaluateCode({
+      questionText: "Review the student's code and offer helpful feedback if needed.",
+      studentCode: response,
+      codeVersion: question_id,
+    });
+
+    const feedbackText = aiData.feedback || '';
+
+
+    // Step 3: Save feedback to feedback table
+    await conn.query(
+      `INSERT INTO feedback (response_id, feedback_text)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE feedback_text = VALUES(feedback_text)`,
+      [responseId, feedbackText]
+    );
+
+    await conn.commit();
+
+    res.json({ success: true, feedback: feedbackText });
   } catch (err) {
-    console.error("❌ Error saving code response:", err);
-    res.status(500).json({ error: "Failed to save code response" });
+    console.error("❌ Error saving code or feedback:", err);
+    await conn.rollback();
+    res.status(500).json({ error: "Failed to save code response or feedback" });
+  } finally {
+    conn.release();
   }
 };
+
 
 
 
@@ -42,17 +82,33 @@ exports.getResponsesByInstanceId = async (req, res) => {
   const { instanceId } = req.params;
 
   try {
+    // Get the active student ID
+    // ✅ Fetch all responses from all group members
     const [rows] = await db.query(
-      `SELECT * FROM responses WHERE activity_instance_id = ?`,
+      `SELECT r.question_id, r.response, r.response_type, f.feedback_text AS python_feedback
+   FROM responses r
+   LEFT JOIN feedback f ON f.response_id = r.id
+   WHERE r.activity_instance_id = ?`,
       [instanceId]
     );
 
-    res.json(rows);
+
+    const result = {};
+    for (const row of rows) {
+      result[row.question_id] = {
+        response: row.response,
+        type: row.response_type,
+        python_feedback: row.python_feedback || null,
+      };
+    }
+
+    res.json(result);
   } catch (err) {
     console.error("❌ Error fetching responses:", err);
     res.status(500).json({ error: "Failed to fetch responses" });
   }
 };
+
 
 exports.getResponsesByQuestionId = async (req, res) => {
   const { instanceId, questionId } = req.params;
