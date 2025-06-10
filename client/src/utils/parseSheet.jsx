@@ -24,7 +24,8 @@ export function parseSheetToBlocks(lines) {
     if (currentBlock.length > 0) {
       blocks.push({
         type: 'text',
-        content: currentBlock.join(' ').trim()
+        content: format(currentBlock.join(' ').trim())
+
       });
       currentBlock = [];
     }
@@ -33,7 +34,8 @@ export function parseSheetToBlocks(lines) {
   const format = (text) =>
     text.replace(/\\textbf\{(.+?)\}/g, '<strong>$1</strong>')
       .replace(/\\textit\{(.+?)\}/g, '<em>$1</em>')
-      .replace(/\\text\{(.+?)\}/g, '$1');
+      .replace(/\\text\{(.+?)\}/g, '$1')
+      .replace(/\\\\/g, '<br>');
 
   for (let line of lines) {
     const trimmed = line.trim();
