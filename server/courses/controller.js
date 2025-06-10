@@ -1,27 +1,46 @@
 // /courses/controller.js
-const db = require('../db');
+const db = require("../db");
 
 // GET all courses
 async function getAllCourses(req, res) {
+  const user = req.user;
+
   try {
-    const [courses] = await db.query(
-      `SELECT c.*, pc.name AS class_name
-         FROM courses c
-         LEFT JOIN pogil_classes pc ON c.class_id = pc.id
-         ORDER BY year DESC, semester ASC`
-    );
-    console.log("getAllCourses", courses);
-    
-    res.json(courses.map(course => ({ ...course }))); // ✅ Flatten RowDataPacket
+    let query;
+    let params = [];
+
+    if (user.role === "instructor") {
+      query = `
+        SELECT c.*, pc.name AS class_name
+        FROM courses c
+        LEFT JOIN pogil_classes pc ON c.class_id = pc.id
+        WHERE c.instructor_id = ?
+        ORDER BY year DESC, semester ASC
+      `;
+      params = [user.id];
+    } else {
+      query = `
+        SELECT c.*, pc.name AS class_name
+        FROM courses c
+        LEFT JOIN pogil_classes pc ON c.class_id = pc.id
+        ORDER BY year DESC, semester ASC
+      `;
+    }
+
+    const [courses] = await db.query(query, params);
+    console.log("🔐 getAllCourses filtered:", courses);
+
+    res.json(courses.map((course) => ({ ...course }))); // flatten RowDataPacket
   } catch (err) {
-    console.error('Error fetching courses:', err);
-    res.status(500).json({ error: 'Database error' });
+    console.error("Error fetching courses:", err);
+    res.status(500).json({ error: "Database error" });
   }
 }
 
 // POST create a new course
 async function createCourse(req, res) {
-  const { name, code, section, semester, year, instructor_id, class_id } = req.body;
+  const { name, code, section, semester, year, instructor_id, class_id } =
+    req.body;
 
   try {
     const [result] = await db.query(
@@ -40,12 +59,15 @@ async function createCourse(req, res) {
 async function getCourseEnrollments(req, res) {
   const { courseId } = req.params;
   try {
-    const [rows] = await db.query(`
+    const [rows] = await db.query(
+      `
       SELECT u.id, u.name, u.email
       FROM course_enrollments ce
       JOIN users u ON ce.student_id = u.id
       WHERE ce.course_id = ?
-    `, [courseId]);
+    `,
+      [courseId]
+    );
     res.json(rows);
   } catch (err) {
     console.error("❌ Failed to get enrollments:", err);
@@ -55,12 +77,38 @@ async function getCourseEnrollments(req, res) {
 
 // DELETE a course
 async function deleteCourse(req, res) {
+  const user = req.user;
+  const courseId = req.params.id;
+
   try {
-    await db.query('DELETE FROM courses WHERE id = ?', [req.params.id]);
+    // Step 1: Get the course's instructor ID
+    const [result] = await db.query(
+      "SELECT instructor_id FROM courses WHERE id = ?",
+      [courseId]
+    );
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: "Course not found" });
+    }
+
+    const course = result[0];
+
+    // Step 2: Check if user is allowed to delete
+    const isOwner = user.id === course.instructor_id;
+    const isAdmin = user.role === "root" || user.role === "creator";
+
+    if (!isOwner && !isAdmin) {
+      return res
+        .status(403)
+        .json({ error: "Unauthorized to delete this course" });
+    }
+
+    // Step 3: Proceed to delete
+    await db.query("DELETE FROM courses WHERE id = ?", [courseId]);
     res.json({ success: true });
   } catch (err) {
-    console.error('Error deleting course:', err);
-    res.status(500).json({ error: 'Delete failed' });
+    console.error("Error deleting course:", err);
+    res.status(500).json({ error: "Delete failed" });
   }
 }
 
@@ -70,10 +118,15 @@ async function getCourseActivities(req, res) {
   const { courseId } = req.params;
   const userId = req.user?.id;
 
-  console.log("🔍 getCourseActivities for course:", courseId, "and user:", userId);
+  console.log(
+    "🔍 getCourseActivities for course:",
+    courseId,
+    "and user:",
+    userId
+  );
 
   if (!userId) {
-    return res.status(401).json({ error: 'Unauthorized' });
+    return res.status(401).json({ error: "Unauthorized" });
   }
 
   try {
@@ -101,13 +154,13 @@ async function getCourseActivities(req, res) {
       [userId, courseId]
     );
 
-    const activities = rows.map(row => ({
+    const activities = rows.map((row) => ({
       activity_id: row.activity_id,
       title: row.activity_name,
       order_index: row.activity_index,
-      instance_id: row.instance_id || null,  // specific to the logged-in student
+      instance_id: row.instance_id || null, // specific to the logged-in student
       is_ready: !!row.is_ready,
-      has_groups: row.group_count > 0
+      has_groups: row.group_count > 0,
     }));
     //console.log("📘 Fetched activities for course:", courseId, "Activities:", activities);
     res.json(activities);
@@ -116,9 +169,6 @@ async function getCourseActivities(req, res) {
     res.status(500).json({ error: "Failed to fetch activities" });
   }
 }
-
-
-
 
 // GET all courses a user is enrolled in
 async function getUserEnrollments(req, res) {
@@ -135,11 +185,11 @@ async function getUserEnrollments(req, res) {
       [userId]
     );
     //console.log("getUserEnrollments:", rows);
-    
-    res.json(rows.map(r => ({ ...r }))); // ✅ Flatten enrollment rows
+
+    res.json(rows.map((r) => ({ ...r }))); // ✅ Flatten enrollment rows
   } catch (err) {
-    console.error('Error fetching enrolled courses:', err);
-    res.status(500).json({ error: 'Failed to load enrolled courses' });
+    console.error("Error fetching enrolled courses:", err);
+    res.status(500).json({ error: "Failed to load enrolled courses" });
   }
 }
 
@@ -149,14 +199,13 @@ async function enrollByCode(req, res) {
   console.log("enrollByCode:", userId, code);
 
   try {
-    const [courses] = await db.query(
-      `SELECT * FROM courses WHERE code = ?`,
-      [code]
-    );
+    const [courses] = await db.query(`SELECT * FROM courses WHERE code = ?`, [
+      code,
+    ]);
     console.log("Courses:", courses);
 
     if (!Array.isArray(courses) || courses.length === 0) {
-      return res.status(404).json({ error: 'Course code not found' });
+      return res.status(404).json({ error: "Course code not found" });
     }
 
     const course = { ...courses[0] }; // ✅ Flatten single course immediately
@@ -168,7 +217,7 @@ async function enrollByCode(req, res) {
     console.log("Enrollments:", enrollments);
 
     if (enrollments.length > 0) {
-      return res.status(400).json({ error: 'Already enrolled in this course' });
+      return res.status(400).json({ error: "Already enrolled in this course" });
     }
 
     // Enroll the user
@@ -185,12 +234,12 @@ async function enrollByCode(req, res) {
         code: course.code,
         section: course.section,
         semester: course.semester,
-        year: course.year
-      }
+        year: course.year,
+      },
     });
   } catch (err) {
-    console.error('Error enrolling in course:', err);
-    res.status(500).json({ error: 'Failed to enroll' });
+    console.error("Error enrolling in course:", err);
+    res.status(500).json({ error: "Failed to enroll" });
   }
 }
 
@@ -209,10 +258,9 @@ async function getStudentsForCourse(req, res) {
     res.json(students);
   } catch (err) {
     console.error("❌ Failed to fetch students for course:", err);
-    res.status(500).json({ error: 'Failed to fetch students' });
+    res.status(500).json({ error: "Failed to fetch students" });
   }
 }
-
 
 module.exports = {
   getAllCourses,
@@ -222,5 +270,5 @@ module.exports = {
   getUserEnrollments,
   enrollByCode,
   getCourseEnrollments,
-  getStudentsForCourse
+  getStudentsForCourse,
 };
