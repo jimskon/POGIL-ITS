@@ -253,8 +253,9 @@ export function renderBlocks(blocks, options = {}) {
     if (block.type === 'groupIntro') {
       return (
         <div key={`groupIntro-${index}`} className="mb-2">
-          <strong>{block.groupId}. {block.content}</strong>
+          <strong>{block.groupId}. <span dangerouslySetInnerHTML={{ __html: block.content }} /></strong>
         </div>
+
       );
     }
 
