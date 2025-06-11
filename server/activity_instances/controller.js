@@ -179,14 +179,15 @@ async function recordHeartbeat(req, res) {
   if (!userId) return res.status(400).json({ error: 'Missing userId' });
 
   try {
-    // Find the courseId for this instanceId
+    // Get instance and its active student
     const [[instance]] = await db.query(
-      `SELECT course_id FROM activity_instances WHERE id = ?`,
+      `SELECT course_id, active_student_id FROM activity_instances WHERE id = ?`,
       [instanceId]
     );
     if (!instance) return res.status(404).json({ error: 'Instance not found' });
 
     const courseId = instance.course_id;
+    const activeStudentId = instance.active_student_id;
 
     // Update connected status across all instances for this course
     await db.query(
@@ -197,14 +198,33 @@ async function recordHeartbeat(req, res) {
       [userId, courseId]
     );
 
-    res.json({ success: true });
+    // 🔍 Check if active student is disconnected
+    let isDisconnected = false;
+    if (activeStudentId) {
+      const [[status]] = await db.query(
+        `SELECT connected FROM group_members
+         WHERE activity_instance_id = ? AND student_id = ?`,
+        [instanceId, activeStudentId]
+      );
+      isDisconnected = status?.connected === 0;
+    }
+
+    // ✅ Auto-assign if no active student or the active one is disconnected
+    if (!activeStudentId || isDisconnected) {
+      await db.query(
+        `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+        [userId, instanceId]
+      );
+      console.log(`⚡ Auto-assigned active student to user ${userId} for instance ${instanceId}`);
+      return res.json({ success: true, becameActive: true });
+    }
+
+    return res.json({ success: true, becameActive: false });
   } catch (err) {
-    console.error('❌ Failed to update heartbeat across instances:', err);
+    console.error('❌ Failed to update heartbeat and assign active:', err);
     res.status(500).json({ error: 'Failed to record heartbeat' });
   }
 }
-
-
 
 // In getActiveStudent function in controller.js
 
