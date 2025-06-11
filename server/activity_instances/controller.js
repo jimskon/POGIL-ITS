@@ -140,7 +140,7 @@ async function getActivityInstanceById(req, res) {
   const { id } = req.params;
   try {
     const [[instance]] = await db.query(
-      `SELECT ai.id, ai.course_id, ai.activity_id, ai.group_number, a.name AS activity_name, a.sheet_url
+      `SELECT ai.id, ai.course_id, ai.activity_id, ai.group_number, a.title AS title, a.name AS activity_name, a.sheet_url
        FROM activity_instances ai
        JOIN pogil_activities a ON ai.activity_id = a.id
        WHERE ai.id = ?`,
@@ -179,7 +179,6 @@ async function recordHeartbeat(req, res) {
   if (!userId) return res.status(400).json({ error: 'Missing userId' });
 
   try {
-    // Get instance and its active student
     const [[instance]] = await db.query(
       `SELECT course_id, active_student_id FROM activity_instances WHERE id = ?`,
       [instanceId]
@@ -189,7 +188,6 @@ async function recordHeartbeat(req, res) {
     const courseId = instance.course_id;
     const activeStudentId = instance.active_student_id;
 
-    // Update connected status across all instances for this course
     await db.query(
       `UPDATE group_members gm
        JOIN activity_instances ai ON gm.activity_instance_id = ai.id
@@ -198,7 +196,6 @@ async function recordHeartbeat(req, res) {
       [userId, courseId]
     );
 
-    // 🔍 Check if active student is disconnected
     let isDisconnected = false;
     if (activeStudentId) {
       const [[status]] = await db.query(
@@ -209,22 +206,29 @@ async function recordHeartbeat(req, res) {
       isDisconnected = status?.connected === 0;
     }
 
-    // ✅ Auto-assign if no active student or the active one is disconnected
+    const [[userRow]] = await db.query(`SELECT role FROM users WHERE id = ?`, [userId]);
+    if (!userRow || userRow.role !== 'student') {
+      console.log(`🚫 Skipping heartbeat auto-assign — user ${userId} is not a student`);
+      return res.json({ success: true, becameActive: false });
+    }
+
     if (!activeStudentId || isDisconnected) {
       await db.query(
         `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
         [userId, instanceId]
       );
-      console.log(`⚡ Auto-assigned active student to user ${userId} for instance ${instanceId}`);
+      console.log(`⚡ Auto-assigned active student to student ${userId} for instance ${instanceId}`);
       return res.json({ success: true, becameActive: true });
     }
 
     return res.json({ success: true, becameActive: false });
   } catch (err) {
-    console.error('❌ Failed to update heartbeat and assign active:', err);
-    res.status(500).json({ error: 'Failed to record heartbeat' });
+    console.error("❌ recordHeartbeat error:", err);
+    return res.status(500).json({ error: 'Failed to record heartbeat' });
   }
-}
+} // ✅ END OF FUNCTION
+
+
 
 // In getActiveStudent function in controller.js
 
@@ -302,9 +306,22 @@ async function setupMultipleGroupInstances(req, res) {
           [instanceId, member.student_id, member.role]);
       }
 
-      const random = group.members[Math.floor(Math.random() * group.members.length)];
-      await db.query(`UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
-        [random.student_id, instanceId]);
+      // Select only students from group
+      const [studentRows] = await db.query(
+        `SELECT u.id FROM users u
+   JOIN group_members gm ON u.id = gm.student_id
+   WHERE gm.activity_instance_id = ? AND u.role = 'student'`,
+        [instanceId]
+      );
+
+      if (studentRows.length > 0) {
+        const randomStudentId = studentRows[Math.floor(Math.random() * studentRows.length)].id;
+        await db.query(`UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+          [randomStudentId, instanceId]);
+      } else {
+        console.warn(`⚠️ No student found in group ${i + 1}, skipping active assignment.`);
+      }
+
     }
     res.json({ success: true, instanceIds });
   } catch (err) {

@@ -520,7 +520,7 @@ export default function RunActivityPage() {
 
   return (
     <Container className="mt-4">
-      <h2>Run Activity: {activity?.title || activity?.name}</h2>
+     <h2>{activity?.title || activity?.name || "Untitled Activity"}</h2>
       {isActive
         ? <Alert variant="success">You are the active student. You may submit responses.</Alert>
         : <Alert variant="info">You are currently observing. The active student is {activeStudentName || '(unknown)'}</Alert>}
