@@ -387,3 +387,13 @@ cd client  # or wherever your React app lives
 rm -rf node_modules package-lock.json
 npm install
 ```
+
+# Added a new field to activity_insatnces table 
+```
+mysql -u pogil_user -p
+USE pogil_db;
+ALTER TABLE activity_instances
+ADD COLUMN total_groups INT DEFAULT NULL;
+
+```
+
