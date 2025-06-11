@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS activity_instances (
   active_student_id INT DEFAULT NULL,
   group_number INT,
   start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  total_groups INT DEFAULT NULL,
   FOREIGN KEY (activity_id) REFERENCES pogil_activities(id),
   FOREIGN KEY (course_id) REFERENCES courses(id),
   FOREIGN KEY (active_student_id) REFERENCES users(id)
