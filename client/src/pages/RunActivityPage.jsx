@@ -15,6 +15,10 @@ export default function RunActivityPage() {
   const { user, loading } = useUser();
   const [followupsShown, setFollowupsShown] = useState({}); // { qid: followupQuestion }
   const [followupAnswers, setFollowupAnswers] = useState({}); // { qid: studentAnswer }
+  const [codeFeedbackShown, setCodeFeedbackShown] = useState({}); // { qid: feedback string }
+
+
+
 
   console.log("🔍 User:", user);
 
@@ -41,6 +45,7 @@ export default function RunActivityPage() {
   const [preamble, setPreamble] = useState([]);
   const [existingAnswers, setExistingAnswers] = useState({});
   const [skulptLoaded, setSkulptLoaded] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false); // ✅ Spinner control
 
   const isActive = user && user.id === activeStudentId;
   const isInstructor = user?.role === 'instructor' || user?.role === 'root' || user?.role === 'creator';
@@ -67,7 +72,7 @@ export default function RunActivityPage() {
     }
 
     return count;
-    }, [existingAnswers, groups]);
+  }, [existingAnswers, groups]);
 
 
 
@@ -82,7 +87,7 @@ export default function RunActivityPage() {
   useEffect(() => {
     const interval = setInterval(async () => {
       try {
-        console.log("🔄2222 Loading activity instance:", instanceId);  
+        console.log("🔄2222 Loading activity instance:", instanceId);
         const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
         const data = await res.json();
         if (data.activeStudentId !== activeStudentId) {
@@ -92,6 +97,16 @@ export default function RunActivityPage() {
     }, 10000);
     return () => clearInterval(interval);
   }, [instanceId, activeStudentId]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      console.log("🔁 Polling activity for all users (code + feedback)");
+      loadActivity(); // This will refresh all answers + feedback from the DB
+    }, 10000); // every 10 seconds
+
+    return () => clearInterval(interval); // cleanup when unmounting
+  }, [instanceId]);
+
 
   useEffect(() => {
     const sendHeartbeat = async () => {
@@ -155,28 +170,56 @@ export default function RunActivityPage() {
 
   async function loadActivity() {
     try {
-      console.log("🔄 Loading activity instance:", instanceId);      
+      console.log("🔄 Loading activity instance:", instanceId);
+
+      // Step 1: Fetch activity instance info (includes total_groups)
       const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
       const instanceData = await instanceRes.json();
       setActivity(instanceData);
 
-      const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`, { credentials: 'include' });
-      const activeData = await res.json();
+      // Step 2: If total_groups is missing, refresh it from Google Doc
+      if (!instanceData.total_groups) {
+        console.log("🔁 total_groups missing, refreshing from Google Doc...");
+        await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/refresh-groups`);
+
+        // Re-fetch instance to get updated total_groups
+        const updatedRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
+        const updatedData = await updatedRes.json();
+        setActivity(updatedData);
+      }
+
+      // Step 3: Get current active student
+      const activeRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`, {
+        credentials: 'include',
+      });
+      const activeData = await activeRes.json();
       setActiveStudentId(activeData.activeStudentId);
 
+      // Step 4: Get group members
       const groupRes = await fetch(`${API_BASE_URL}/api/groups/instance/${instanceId}`);
       const groupData = await groupRes.json();
-
       const userGroup = groupData.groups.find(g => g.members.some(m => m.student_id === user.id));
       if (userGroup) {
         setGroupMembers(userGroup.members);
       }
 
-      // Always load answers, even if user is not in a group
+      // Step 5: Load all responses (text + python)
       const answersRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/responses`);
       const answersData = await answersRes.json();
+      console.log("📦 Observer fetched answers:", answersData);
+
+      setCodeFeedbackShown(prev => {
+        const merged = { ...prev };
+        for (const [qid, entry] of Object.entries(answersData)) {
+          if (entry.type === 'python' && entry.python_feedback) {
+            merged[qid] = entry.python_feedback;
+          }
+        }
+        return merged;
+      });
       setExistingAnswers(answersData);
 
+      // Step 6: Parse Google Doc structure
       const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(instanceData.sheet_url)}`);
       const { lines } = await docRes.json();
       const blocks = parseSheetToBlocks(lines);
@@ -195,6 +238,7 @@ export default function RunActivityPage() {
           preamble.push(block);
         }
       }
+
       setGroups(grouped);
       setPreamble(preamble);
     } catch (err) {
@@ -233,13 +277,64 @@ export default function RunActivityPage() {
       return null;
     }
   }
+  function buildMarkdownTableFromBlock(block, container) {
+    if (!block.tableBlocks?.length) return '';
+
+    let result = '';
+    for (let t = 0; t < block.tableBlocks.length; t++) {
+      const table = block.tableBlocks[t];
+      result += `### ${table.title || 'Table'}\n\n`;
+
+      // Determine header length from first row
+      const colCount = table.rows[0]?.length || 0;
+
+      // Build rows
+      const markdownRows = [];
+
+      for (let row = 0; row < table.rows.length; row++) {
+        const cells = table.rows[row].map((cell, col) => {
+          if (cell.type === 'static') {
+            return cell.content || '';
+          } else if (cell.type === 'input') {
+            const key = `${block.groupId}${block.id}table${t}cell${row}_${col}`;
+            const val = container.querySelector(`[data-question-id="${key}"]`)?.value?.trim() || '';
+            return val;
+          }
+          return '';
+        });
+        markdownRows.push(`| ${cells.join(' | ')} |`);
+      }
+
+      // Insert markdown header if table has rows
+      if (markdownRows.length > 0) {
+        const header = markdownRows[0];
+        const separator = `| ${'--- |'.repeat(colCount)}`;
+        result += [header, separator, ...markdownRows.slice(1)].join('\n') + '\n\n';
+      }
+    }
+
+    return result;
+  }
 
   async function handleSubmit() {
+    if (isSubmitting) return;        // ✅ Prevent double clicks
+    setIsSubmitting(true);           // ✅ Show spinner
     const container = document.querySelector('[data-current-group="true"]');
     if (!container) {
       alert("Error: No editable group found.");
       return;
     }
+
+    // 🔄 Save unsaved Python edits before submission
+    const codeTextareas = container.querySelectorAll('textarea[id^="sk-code-"]');
+    for (let textarea of codeTextareas) {
+      const responseKey = textarea.getAttribute('data-response-key');
+      const currentCode = textarea.value.trim();
+      if (responseKey && currentCode) {
+        await handleCodeChange(responseKey, currentCode);
+      }
+    }
+
 
     const currentGroup = groups[currentQuestionGroupIndex];
     const blocks = [currentGroup.intro, ...currentGroup.content];
@@ -247,69 +342,97 @@ export default function RunActivityPage() {
     const unanswered = [];
 
     for (let block of blocks) {
-
       if (block.type !== 'question') continue;
 
       const qid = `${block.groupId}${block.id}`;
+
       const el = container.querySelector(`[data-question-id="${qid}"]`);
-      if (!el) {
-        unanswered.push(qid);
-        continue;
+      const baseAnswer = el?.value?.trim() || ''; // ✅ move this up
+
+      const tableMarkdown = buildMarkdownTableFromBlock(block, container);
+      const aiInput = block.hasTableResponse ? tableMarkdown : baseAnswer;
+
+      let tableHasInput = false;
+      if (block.tableBlocks?.length > 0) {
+        for (let t = 0; t < block.tableBlocks.length; t++) {
+          const table = block.tableBlocks[t];
+          for (let row = 0; row < table.rows.length; row++) {
+            for (let col = 0; col < table.rows[row].length; col++) {
+              const cell = table.rows[row][col];
+              if (cell.type === 'input') {
+                const key = `${qid}table${t}cell${row}_${col}`;
+                const val = container.querySelector(`[data-question-id="${key}"]`)?.value?.trim() || '';
+                if (val !== '') {
+                  answers[key] = val;
+                  tableHasInput = true;
+                }
+              }
+            }
+          }
+        }
       }
 
-      const baseAnswer = el.value?.trim();
+      // 🧠 If follow-up metadata exists and none shown yet, trigger AI
+      if (
+        aiInput &&
+        block.followups?.length > 0 &&
+        !followupsShown[qid]
+      ) {
+        console.log("⚡ Will trigger AI for QID", qid);
+        const aiFollowup = await evaluateResponseWithAI(block, aiInput);
+        if (aiFollowup) {
+          setFollowupsShown(prev => ({ ...prev, [qid]: aiFollowup }));
+          alert(`A follow-up question has been added for ${qid}. Please answer it.`);
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       const followupPrompt = followupsShown[qid];
       const followupAnswer = followupAnswers[qid]?.trim();
 
-      // 🧠 If follow-up exists and not answered, pause
       if (followupPrompt && !followupAnswer) {
         unanswered.push(qid);
         continue;
       }
 
-      // 🧠 If follow-up exists and answered, combine both
       if (baseAnswer && followupPrompt && followupAnswer) {
-        console.log("🧠 Combining base and follow-up answers for QID", qid);
-        console.log("Base answer:", baseAnswer);
-        console.log("Follow-up prompt:", followupPrompt);
-        console.log("Follow-up answer:", followupAnswer);
-        answers[qid] = baseAnswer; // main answer
-        answers[`${qid}S`] = 'complete'; // state
-        if (followupPrompt) {
-          answers[`${qid}F1`] = followupPrompt;
-        }
-        if (followupAnswer) {
-          answers[`${qid}FA1`] = followupAnswer;
-        } continue;
-      }
-      answers[`${qid}S`] = unanswered.includes(qid) ? 'inprogress' : 'complete';
-
-
-      // 🧠 If follow-up metadata exists and none shown yet, trigger AI
-      if (
-        baseAnswer &&
-        block.followups?.length > 0 &&
-        !followupsShown[qid]
-      ) {
-        console.log("⚡ Will trigger AI for QID", qid);
-
-        const aiFollowup = await evaluateResponseWithAI(block, baseAnswer);
-        if (aiFollowup) {
-          setFollowupsShown(prev => ({ ...prev, [qid]: aiFollowup }));
-          alert(`A follow-up question has been added for ${qid}. Please answer it.`);
-          return; // wait for student to answer
-        }
         answers[qid] = baseAnswer;
+        answers[`${qid}S`] = 'complete';
+        if (followupPrompt) answers[`${qid}F1`] = followupPrompt;
+        if (followupAnswer) answers[`${qid}FA1`] = followupAnswer;
         continue;
       }
 
-      // 🧠 No follow-up logic, just base answer
       if (baseAnswer) {
         answers[qid] = baseAnswer;
-        continue;
+      } else if (tableHasInput) {
+        answers[qid] = tableMarkdown; // optional: store markdown version
+      } else {
+        unanswered.push(qid);
       }
 
-      unanswered.push(qid); // No valid data
+
+      answers[`${qid}S`] = unanswered.includes(qid) ? 'inprogress' : 'complete';
+
+      // ✅ NEW: collect table responses
+      if (block.tableBlocks?.length > 0) {
+        for (let t = 0; t < block.tableBlocks.length; t++) {
+          const table = block.tableBlocks[t];
+          for (let row = 0; row < table.rows.length; row++) {
+            for (let col = 0; col < table.rows[row].length; col++) {
+              const cell = table.rows[row][col];
+              if (cell.type === 'input') {
+                const key = `${qid}table${t}cell${row}_${col}`;
+                const val = container.querySelector(`[data-question-id="${key}"]`)?.value?.trim() || '';
+                if (val !== '') {
+                  answers[key] = val;
+                }
+              }
+            }
+          }
+        }
+      }
     }
 
 
@@ -338,11 +461,59 @@ export default function RunActivityPage() {
       } else {
         setFollowupsShown({});
         setFollowupAnswers({});
-        await loadActivity(); // Will advance to the next group if marked complete
+        await loadActivity(); // ✅ Reload server state
       }
+
     } catch (err) {
       console.error("❌ Submission failed:", err);
       alert("An error occurred during submission.");
+    } finally {
+      setIsSubmitting(false); // ✅ hide spinner after everything
+    }
+  }
+
+  async function handleCodeChange(responseKey, updatedCode) {
+    try {
+      // Step 1: Save code
+      await fetch(`${API_BASE_URL}/api/responses/code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question_id: responseKey,
+          activity_instance_id: instanceId,
+          user_id: user?.id,
+          response: updatedCode, // ✅ note the key here
+        }),
+      });
+      console.log("✅ Code saved for:", responseKey);
+
+      // Step 2: Call AI for feedback
+      const aiRes = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          questionText: "Review the student's code and offer helpful feedback if needed.",
+          studentCode: updatedCode,
+          codeVersion: responseKey,
+        }),
+      });
+
+      const aiData = await aiRes.json();
+      if (aiData.feedback) {
+        console.log(`🤖 AI feedback for ${responseKey}:`, aiData.feedback);
+        setCodeFeedbackShown(prev => ({
+          ...prev,
+          [responseKey]: aiData.feedback,
+        }));
+      } else {
+        console.log(`🤖 No feedback needed for ${responseKey}`);
+        setCodeFeedbackShown(prev => ({
+          ...prev,
+          [responseKey]: null,
+        }));
+      }
+    } catch (err) {
+      console.error("❌ Failed in handleCodeChange:", responseKey, err);
     }
   }
 
@@ -354,7 +525,12 @@ export default function RunActivityPage() {
         ? <Alert variant="success">You are the active student. You may submit responses.</Alert>
         : <Alert variant="info">You are currently observing. The active student is {activeStudentName || '(unknown)'}</Alert>}
 
-      {renderBlocks(preamble, { editable: false, isActive: false, mode: 'run' })}
+      {renderBlocks(preamble, {
+        editable: false,
+        isActive: false,
+        mode: 'run',
+        codeFeedbackShown, // ✅ FIX added here
+      })}
 
       {groups.map((group, index) => {
         const stateKey = `${index + 1}state`;
@@ -387,13 +563,26 @@ export default function RunActivityPage() {
               currentGroupIndex: index,
               followupsShown,
               followupAnswers,
-              setFollowupAnswers
+              setFollowupAnswers,
+              onCodeChange: handleCodeChange,
+              codeFeedbackShown, // ✅ new prop
             })}
+
             {editable && (
               <div className="mt-2">
-                <Button onClick={handleSubmit}>Submit and Continue</Button>
+                <Button onClick={handleSubmit} disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <Spinner animation="border" size="sm" className="me-2" />
+                      Loading...
+                    </>
+                  ) : (
+                    "Submit and Continue"
+                  )}
+                </Button>
               </div>
             )}
+
           </div>
         );
       })}

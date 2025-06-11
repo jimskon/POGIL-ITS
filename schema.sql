@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS activity_instances (
   active_student_id INT DEFAULT NULL,
   group_number INT,
   start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  total_groups INT DEFAULT NULL,
   FOREIGN KEY (activity_id) REFERENCES pogil_activities(id),
   FOREIGN KEY (course_id) REFERENCES courses(id),
   FOREIGN KEY (active_student_id) REFERENCES users(id)
@@ -92,7 +93,7 @@ CREATE TABLE IF NOT EXISTS group_members (
   FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- Responses
+--- Responses
 CREATE TABLE IF NOT EXISTS responses (
   id INT AUTO_INCREMENT PRIMARY KEY,
   activity_instance_id INT NOT NULL,
@@ -105,6 +106,7 @@ CREATE TABLE IF NOT EXISTS responses (
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE,
   FOREIGN KEY (answered_by_user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
 
 -- AI Feedback
 CREATE TABLE IF NOT EXISTS feedback (

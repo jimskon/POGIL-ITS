@@ -13,10 +13,12 @@ const PORT = process.env.PORT || 4000;
 const db = require("./db");
 const aiRoutes = require("./ai/routes");
 
+// ✅ Resolve static path
 const staticDir = path.join(__dirname, "../client/dist");
-app.use(express.json());
+console.log("Resolved staticDir:", staticDir);
 
-app.use("/api/ai", aiRoutes);
+// ✅ Middleware
+app.use(express.json());
 
 app.use(
   session({
@@ -49,12 +51,8 @@ app.use(async (req, res, next) => {
   next();
 });
 
-console.log("Resolved staticDir:", staticDir);
-
-// ✅ Serve frontend static assets
-app.use(express.static(staticDir));
-
-// ✅ Register API routes
+// ✅ API Routes
+app.use("/api/ai", aiRoutes);
 app.use("/api/auth", require("./auth/routes"));
 app.use("/api/users", require("./users/routes"));
 app.use("/api/courses", require("./courses/routes"));
@@ -65,7 +63,10 @@ app.use("/api/events", require("./events/routes"));
 app.use("/api/classes", require("./classes/routes"));
 app.use("/api/activity-instances", require("./activity_instances/routes"));
 
-// Log and handle unmatched API routes first
+// ✅ Serve frontend
+app.use(express.static(staticDir));
+
+// ✅ Handle unknown API routes
 app.use("/api", (req, res) => {
   console.warn(
     `⚠️ Unknown API route accessed: ${req.method} ${req.originalUrl}`
@@ -73,13 +74,13 @@ app.use("/api", (req, res) => {
   res.status(404).json({ error: "API route not found" });
 });
 
-// Let React handle all non-API paths
+// ✅ Let React handle all other routes
 app.all("*", (req, res) => {
   console.log(`📦 React route hit: ${req.method} ${req.originalUrl}`);
   res.sendFile(path.resolve(staticDir, "index.html"));
 });
 
-// 🧠 Setup Socket.IO
+// ✅ Setup Socket.IO
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -87,11 +88,8 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
   },
 });
-
-// Make io accessible in request handlers
 app.set("io", io);
 
-// Handle socket connections
 io.on("connection", (socket) => {
   console.log(`🔌 New socket connected: ${socket.id}`);
 

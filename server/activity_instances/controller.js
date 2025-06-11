@@ -121,6 +121,7 @@ async function getParsedActivityDoc(req, res) {
   }
 }
 
+
 async function createActivityInstance(req, res) {
   const { activityId, courseId } = req.body;
   try {
@@ -178,14 +179,15 @@ async function recordHeartbeat(req, res) {
   if (!userId) return res.status(400).json({ error: 'Missing userId' });
 
   try {
-    // Find the courseId for this instanceId
+    // Get instance and its active student
     const [[instance]] = await db.query(
-      `SELECT course_id FROM activity_instances WHERE id = ?`,
+      `SELECT course_id, active_student_id FROM activity_instances WHERE id = ?`,
       [instanceId]
     );
     if (!instance) return res.status(404).json({ error: 'Instance not found' });
 
     const courseId = instance.course_id;
+    const activeStudentId = instance.active_student_id;
 
     // Update connected status across all instances for this course
     await db.query(
@@ -196,14 +198,33 @@ async function recordHeartbeat(req, res) {
       [userId, courseId]
     );
 
-    res.json({ success: true });
+    // 🔍 Check if active student is disconnected
+    let isDisconnected = false;
+    if (activeStudentId) {
+      const [[status]] = await db.query(
+        `SELECT connected FROM group_members
+         WHERE activity_instance_id = ? AND student_id = ?`,
+        [instanceId, activeStudentId]
+      );
+      isDisconnected = status?.connected === 0;
+    }
+
+    // ✅ Auto-assign if no active student or the active one is disconnected
+    if (!activeStudentId || isDisconnected) {
+      await db.query(
+        `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+        [userId, instanceId]
+      );
+      console.log(`⚡ Auto-assigned active student to user ${userId} for instance ${instanceId}`);
+      return res.json({ success: true, becameActive: true });
+    }
+
+    return res.json({ success: true, becameActive: false });
   } catch (err) {
-    console.error('❌ Failed to update heartbeat across instances:', err);
+    console.error('❌ Failed to update heartbeat and assign active:', err);
     res.status(500).json({ error: 'Failed to record heartbeat' });
   }
 }
-
-
 
 // In getActiveStudent function in controller.js
 
@@ -428,12 +449,13 @@ async function getInstancesForActivityInCourse(req, res) {
     const courseName = course?.name || 'Unknown Course';
 
     const [instances] = await db.query(
-      `SELECT id AS instance_id, group_number, active_student_id
-       FROM activity_instances
-       WHERE course_id = ? AND activity_id = ?
-       ORDER BY group_number`,
+      `SELECT id AS instance_id, group_number, active_student_id, total_groups
+   FROM activity_instances
+   WHERE course_id = ? AND activity_id = ?
+   ORDER BY group_number`,
       [courseId, activityId]
     );
+
 
     const groups = [];
     for (const inst of instances) {
@@ -452,18 +474,22 @@ async function getInstancesForActivityInCourse(req, res) {
       );
 
       let progress = '1';
-      for (let i = 1; i <= 10; i++) {  // Check up to 10 groups (adjust if needed)
-        if (!responses.find(r => r.question_id === `${i}state`)) {
-          progress = `${i}`;
-          break;
-        }
-        if (responses.find(r => r.question_id === `${i}state` && r.response === 'complete')) {
-          progress = 'Complete';
+      const totalGroups = inst.total_groups || 1;
+
+      let completedGroups = 0;
+      for (let i = 1; i <= totalGroups; i++) {
+        const state = responses.find(r => r.question_id === `${i}state`);
+        if (state?.response === 'complete') {
+          completedGroups++;
         } else {
-          progress = `${i}`;
-          break;
+          break; // Stop at first incomplete group
         }
       }
+
+      progress = completedGroups === totalGroups ? 'Complete' : `${completedGroups + 1}`;
+
+
+
 
       groups.push({
         instance_id: inst.instance_id,
@@ -514,6 +540,46 @@ async function getInstanceResponses(req, res) {
   }
 }
 
+async function refreshTotalGroups(req, res) {
+  const { instanceId } = req.params;
+  try {
+    const [[row]] = await db.query(`
+      SELECT a.sheet_url
+      FROM activity_instances ai
+      JOIN pogil_activities a ON ai.activity_id = a.id
+      WHERE ai.id = ?
+    `, [instanceId]);
+
+    if (!row?.sheet_url) {
+      return res.status(404).json({ error: 'Missing sheet_url' });
+    }
+
+    const docId = row.sheet_url.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1];
+    if (!docId) throw new Error('Invalid sheet_url');
+
+    const auth = authorize();
+    const docs = google.docs({ version: 'v1', auth });
+    const doc = await docs.documents.get({ documentId: docId });
+
+    const lines = doc.data.body.content
+      .map(block => {
+        if (!block.paragraph?.elements) return null;
+        return block.paragraph.elements.map(e => e.textRun?.content || '').join('').trim();
+      })
+      .filter(Boolean);
+
+    const groupCount = lines.filter(line => line.startsWith('\\questiongroup')).length;
+
+    await db.query(`UPDATE activity_instances SET total_groups = ? WHERE id = ?`, [groupCount, instanceId]);
+
+    res.json({ success: true, groupCount });
+  } catch (err) {
+    console.error("❌ refreshTotalGroups:", err);
+    res.status(500).json({ error: 'Failed to refresh total_groups' });
+  }
+}
+
+
 // Export it as part of the module
 module.exports = {
   getParsedActivityDoc,
@@ -527,5 +593,6 @@ module.exports = {
   submitGroupResponses,
   getInstanceGroups,
   getInstancesForActivityInCourse,
-  getInstanceResponses
+  getInstanceResponses,
+  refreshTotalGroups
 };

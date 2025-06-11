@@ -54,7 +54,7 @@ export default function ViewGroupsPage() {
             <Card.Header>
               Group {group.group_number} —
               <strong className="ms-2">
-                {group.progress === 'Complete' ? '✅ Complete' : `Question Group: ${group.progress}`}
+                {group.progress === 'Complete' ? '✅ Activity Complete' : `Question Group: ${group.progress}`}
               </strong>
             </Card.Header>
             <Card.Body>

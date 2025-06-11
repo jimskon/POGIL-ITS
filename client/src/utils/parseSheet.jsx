@@ -24,7 +24,8 @@ export function parseSheetToBlocks(lines) {
     if (currentBlock.length > 0) {
       blocks.push({
         type: 'text',
-        content: currentBlock.join(' ').trim()
+        content: format(currentBlock.join(' ').trim())
+
       });
       currentBlock = [];
     }
@@ -33,7 +34,8 @@ export function parseSheetToBlocks(lines) {
   const format = (text) =>
     text.replace(/\\textbf\{(.+?)\}/g, '<strong>$1</strong>')
       .replace(/\\textit\{(.+?)\}/g, '<em>$1</em>')
-      .replace(/\\text\{(.+?)\}/g, '$1');
+      .replace(/\\text\{(.+?)\}/g, '$1')
+      .replace(/\\\\/g, '<br>');
 
   for (let line of lines) {
     const trimmed = line.trim();
@@ -111,9 +113,14 @@ export function parseSheetToBlocks(lines) {
     const sectionMatch = trimmed.match(/^\\section\*?\{(.+?)\}$/);
     if (sectionMatch) {
       flushCurrentBlock();
-      blocks.push({ type: 'section', name: format(sectionMatch[1]), content: [] });
+      blocks.push({
+        type: 'section',
+        title: format(sectionMatch[1]) // The title of the section to render as an <h2>
+      });
       continue;
     }
+
+
 
     // --- Handle question groups and questions ---
     if (trimmed.startsWith('\\questiongroup{')) {
@@ -156,7 +163,10 @@ export function parseSheetToBlocks(lines) {
 
     if (trimmed.startsWith('\\textresponse')) {
       const match = trimmed.match(/\\textresponse\{(\d+)\}/);
-      if (match && currentQuestion) currentQuestion.responseLines = parseInt(match[1]);
+      if (match && currentQuestion) {
+        currentQuestion.responseLines = parseInt(match[1]);
+        currentQuestion.hasTextResponse = true;
+      }
       continue;
     }
 
@@ -187,6 +197,59 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
+    // --- Handle tables ---
+if (trimmed.startsWith('\\table{')) {
+  flushCurrentBlock();
+  const title = trimmed.match(/\\table\{(.+?)\}/)?.[1] || '';
+  const newTable = {
+    type: 'table',
+    title: format(title),
+    rows: [],
+  };
+
+  if (currentQuestion?.type === 'question') {
+    if (!currentQuestion.tableBlocks) currentQuestion.tableBlocks = [];
+    currentQuestion.tableBlocks.push(newTable);
+  } else {
+    currentQuestion = newTable; // standalone table
+  }
+  continue;
+}
+
+
+if (trimmed === '\\endtable') {
+  if (currentQuestion?.type === 'table') {
+    blocks.push(currentQuestion); // standalone table
+    currentQuestion = null;
+  }
+  // inside question: do nothing — already added to `tableBlocks`
+  continue;
+}
+
+if (trimmed.startsWith('\\row')) {
+  const target = currentQuestion?.type === 'question'
+    ? currentQuestion.tableBlocks?.at(-1)
+    : currentQuestion;
+
+  if (target?.type === 'table') {
+    const rawCells = trimmed.replace(/^\\row\s*/, '').split('&');
+    const cells = rawCells.map(cell => {
+      const trimmedCell = cell.trim();
+      const isInput = trimmedCell === '\\tresponse';
+
+      if (isInput && currentQuestion?.type === 'question') {
+        currentQuestion.hasTableResponse = true;
+      }
+
+      return isInput
+        ? { type: 'input' }
+        : { type: 'static', content: format(trimmedCell) };
+    });
+
+    target.rows.push(cells);
+  }
+  continue;
+}
     // --- Default text fallback ---
     currentBlock.push(format(line));
   }
@@ -204,15 +267,25 @@ export function renderBlocks(blocks, options = {}) {
     currentGroupIndex = null,
     followupsShown = {},
     followupAnswers = {},
-    setFollowupAnswers = () => { }
+    setFollowupAnswers = () => { },
+    onCodeChange = null,
+    codeFeedbackShown = {},
   } = options;
 
+  let standaloneCodeCounter = 1;
   const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
 
   return blocks.map((block, index) => {
     if (hiddenTypes.includes(block.type) && mode !== 'preview') return null;
-
     if (block.type === 'endGroup') return null;
+
+    if (block.type === 'section') {
+      return (
+        <h2 key={`section-${index}`} className="my-3">
+          {block.title}
+        </h2>
+      );
+    }
 
     if (block.type === 'text') {
       return (
@@ -236,19 +309,68 @@ export function renderBlocks(blocks, options = {}) {
     if (block.type === 'groupIntro') {
       return (
         <div key={`groupIntro-${index}`} className="mb-2">
-          <strong>{block.content}</strong>
+          <strong>{block.groupId}. <span dangerouslySetInnerHTML={{ __html: block.content }} /></strong>
         </div>
+
       );
     }
 
     if (block.type === 'python') {
+      const groupPrefix = (currentGroupIndex + 1).toString(); // dynamic group number
+      const codeKey = `${groupPrefix}code${standaloneCodeCounter++}`;
+
       return (
         <ActivityPythonBlock
-          key={`py-${index}`}
-          code={block.content}
-          blockIndex={index}
+          key={`py-${codeKey}-${index}-${prefill?.[codeKey]?.response || ''}-${codeFeedbackShown?.[codeKey] || ''}`}
+          code={
+            prefill?.[codeKey]?.response
+            || block.content
+            || ''
+          }
+          blockIndex={`py-${codeKey}-${index}`}
           editable={editable && isActive}
+          responseKey={codeKey}
+          onCodeChange={onCodeChange}
+          codeFeedbackShown={codeFeedbackShown}
         />
+
+      );
+    }
+    if (block.type === 'table') {
+      return (
+        <div key={`table-${index}`} className="my-4">
+          <h4 className="mb-2">{block.title}</h4>
+          <table className="table table-bordered">
+            <tbody>
+              {block.rows.map((row, i) => (
+                <tr key={`table-${index}-row-${i}`}>
+                  {row.map((cell, j) => {
+                    const cellKey = `table${index}cell${i}_${j}`;
+                    if (cell.type === 'input') {
+                      return (
+                        <td key={cellKey}>
+                          <Form.Control
+                            type="text"
+                            defaultValue={prefill?.[cellKey]?.response || ''}
+                            readOnly={!editable}
+                            data-question-id={cellKey}
+                          />
+                        </td>
+                      );
+                    } else {
+                      return (
+                        <td
+                          key={cellKey}
+                          dangerouslySetInnerHTML={{ __html: cell.content }}
+                        />
+                      );
+                    }
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       );
     }
 
@@ -257,31 +379,90 @@ export function renderBlocks(blocks, options = {}) {
       const followupQs = Object.entries(prefill)
         .filter(([key]) => key.startsWith(responseKey + 'F') && !key.includes('FA'))
         .sort(([a], [b]) => a.localeCompare(b));
+      const followupAppeared = !!prefill?.[`${responseKey}F1`] || !!followupsShown?.[responseKey];
+      const groupComplete = prefill?.[`${responseKey}S`] === 'complete';
+
       return (
         <div key={`q-${block.id}`} className="mb-4">
           <p>
             <strong>{block.label}</strong>{' '}
             <span dangerouslySetInnerHTML={{ __html: block.prompt }} />
+            {followupAppeared && (
+              <span
+                className="ms-2"
+                title="Response locked due to follow-up"
+                style={{ color: '#888', cursor: 'not-allowed' }}
+              >
+                🔒
+              </span>
+            )}
           </p>
 
-          {block.pythonBlocks?.map((py, i) => (
-            <ActivityPythonBlock
-              key={`q-${block.id}-py-${i}`}
-              code={py.content}
-              blockIndex={`${index}-${i}`}
-              editable={editable && isActive}
-            />
-          ))}
-          <Form.Control
-            as="textarea"
-            rows={Math.max((block.responseLines || 1), 2)}
-            defaultValue={prefill?.[responseKey]?.response || ''}
-            readOnly={!editable || prefill?.[responseKey + 'S']?.response === 'complete'}
+          {block.pythonBlocks?.map((py, i) => {
+            const responseKey = `${block.groupId}${block.id}code${i + 1}`;
+            const savedResponse = prefill?.[responseKey]?.response || py.content;
+            return (
+              <ActivityPythonBlock
+                key={`q-${currentGroupIndex}-${block.id}-${i}-${savedResponse}-${codeFeedbackShown?.[responseKey] || ''}`}
+                code={savedResponse}
+                blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}
+                editable={editable && isActive}
+                responseKey={responseKey}
+                onCodeChange={onCodeChange}
+                codeFeedbackShown={codeFeedbackShown}
+              />
 
-            data-question-id={responseKey}
-            className="mt-2"
-            style={{ resize: 'vertical' }}
-          />
+            );
+          })}
+          {block.tableBlocks?.map((table, i) => (
+            <div key={`q-table-${index}-${i}`} className="my-3">
+              <h5>{table.title}</h5>
+              <table className="table table-bordered">
+                <tbody>
+                  {table.rows.map((row, ri) => (
+                    <tr key={`row-${ri}`}>
+                      {row.map((cell, ci) => {
+                        const cellKey = `${block.groupId}${block.id}table${i}cell${ri}_${ci}`;
+                        if (cell.type === 'input') {
+                          return (
+                            <td key={cellKey}>
+                              <Form.Control
+                                type="text"
+                                defaultValue={prefill?.[cellKey]?.response || ''}
+                                readOnly={!editable}
+                                data-question-id={cellKey}
+                              />
+                            </td>
+                          );
+                        } else {
+                          return (
+                            <td
+                              key={cellKey}
+                              dangerouslySetInnerHTML={{ __html: cell.content }}
+                            />
+                          );
+                        }
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+
+
+
+          {block.hasTextResponse || !block.hasTableResponse ? (
+            <Form.Control
+              as="textarea"
+              rows={Math.max((block.responseLines || 1), 2)}
+              defaultValue={prefill?.[responseKey]?.response || ''}
+              readOnly={!editable || (prefill?.[`${block.groupId}state`]?.response === 'complete')}
+              data-question-id={responseKey}
+              className="mt-2"
+              style={{ resize: 'vertical' }}
+            />
+          ) : null}
 
           {mode === 'preview' && (
             <>
@@ -304,26 +485,58 @@ export function renderBlocks(blocks, options = {}) {
             );
           })}
 
-          {/* Show live follow-up if we're mid-response */}
-          {editable && followupsShown?.[responseKey] && !prefill?.[`${responseKey}FA1`] && (
+          {/* Follow-up input or locked view */}
+          {/* Follow-up input or locked view */}
+          {followupsShown?.[responseKey] && (
             <>
               <div className="mt-3 text-muted">
                 <strong>Follow-up:</strong> {followupsShown[responseKey]}
+                {(prefill?.[`${responseKey}FA1`] || !editable) && (
+                  <span
+                    className="ms-2"
+                    title="Follow-up response is locked"
+                    style={{ color: '#888', cursor: 'not-allowed' }}
+                  >
+                    🔒
+                  </span>
+                )}
               </div>
-              <Form.Control
-                as="textarea"
-                rows={2}
-                value={followupAnswers?.[responseKey] || ''}
-                placeholder="Respond to the follow-up question here..."
-                onChange={(e) =>
-                  setFollowupAnswers((prev) => ({
-                    ...prev,
-                    [responseKey]: e.target.value,
-                  }))
-                }
-                className="mt-1"
-                style={{ resize: 'vertical' }}
-              />
+
+              {!editable ||
+                prefill[`${responseKey}FA1`] ||
+                Object.keys(followupsShown)
+                  .filter((k) => k !== responseKey)
+                  .some((k) => {
+                    const [kGroup, kLetter] = k.match(/^(\d+)([a-z])/).slice(1);
+                    const [rGroup, rLetter] = responseKey.match(/^(\d+)([a-z])/).slice(1);
+                    return parseInt(kGroup) > parseInt(rGroup) ||
+                      (parseInt(kGroup) === parseInt(rGroup) && kLetter > rLetter);
+                  })
+
+
+
+
+                ? (
+                  <div className="bg-light p-2 rounded mt-1">
+                    {prefill?.[`${responseKey}FA1`] || followupAnswers?.[responseKey] || ''}
+                  </div>
+                ) : (
+                  <Form.Control
+                    as="textarea"
+                    rows={2}
+                    value={followupAnswers?.[responseKey] || ''}
+                    placeholder="Respond to the follow-up question here..."
+                    onChange={(e) =>
+                      setFollowupAnswers((prev) => ({
+                        ...prev,
+                        [responseKey]: e.target.value,
+                      }))
+                    }
+                    className="mt-1"
+                    style={{ resize: 'vertical' }}
+                  />
+                )}
+
             </>
           )}
 
@@ -334,5 +547,6 @@ export function renderBlocks(blocks, options = {}) {
     return null;
   });
 }
+
 
 // End parseSheet.jsx
