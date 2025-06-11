@@ -388,7 +388,7 @@ rm -rf node_modules package-lock.json
 npm install
 ```
 
-# Added a new field to activity_insatnces table 
+# Added a new field to activity_instances table 
 ```
 mysql -u pogil_user -p
 USE pogil_db;
