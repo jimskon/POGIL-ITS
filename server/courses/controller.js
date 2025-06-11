@@ -42,17 +42,39 @@ async function createCourse(req, res) {
   const { name, code, section, semester, year, instructor_id, class_id } =
     req.body;
 
+  const conn = await db.getConnection(); // get manual connection so we can use transaction
+
   try {
-    const [result] = await db.query(
+    await conn.beginTransaction();
+
+    // 1. Create the course
+    const [result] = await conn.query(
       `INSERT INTO courses
        (name, code, section, semester, year, instructor_id, class_id)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [name, code, section, semester, year, instructor_id, class_id || null]
     );
-    res.status(201).json({ success: true, courseId: result.insertId });
+
+    const courseId = result.insertId;
+
+    // 2. Auto-enroll the instructor in the new course
+    await conn.query(
+      `INSERT INTO course_enrollments (student_id, course_id) VALUES (?, ?)`,
+      [instructor_id, courseId]
+    );
+
+    await conn.commit();
+
+    res.status(201).json({ success: true, courseId });
   } catch (err) {
-    console.error("❌ Error creating course:", err.message);
+    await conn.rollback();
+    console.error(
+      "❌ Error creating course or enrolling instructor:",
+      err.message
+    );
     res.status(500).json({ error: "Failed to create course" });
+  } finally {
+    conn.release();
   }
 }
 
@@ -60,14 +82,16 @@ async function getCourseEnrollments(req, res) {
   const { courseId } = req.params;
   try {
     const [rows] = await db.query(
-      `
-      SELECT u.id, u.name, u.email
-      FROM course_enrollments ce
-      JOIN users u ON ce.student_id = u.id
-      WHERE ce.course_id = ?
-    `,
-      [courseId]
+      `SELECT 
+         c.id, c.name, c.code, c.section, c.semester, c.year,
+         u.name AS instructor_name
+       FROM course_enrollments ce
+       JOIN courses c ON ce.course_id = c.id
+       LEFT JOIN users u ON c.instructor_id = u.id
+       WHERE ce.student_id = ?`,
+      [userId]
     );
+
     res.json(rows);
   } catch (err) {
     console.error("❌ Failed to get enrollments:", err);
