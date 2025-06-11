@@ -277,6 +277,44 @@ export default function RunActivityPage() {
       return null;
     }
   }
+  function buildMarkdownTableFromBlock(block, container) {
+    if (!block.tableBlocks?.length) return '';
+
+    let result = '';
+    for (let t = 0; t < block.tableBlocks.length; t++) {
+      const table = block.tableBlocks[t];
+      result += `### ${table.title || 'Table'}\n\n`;
+
+      // Determine header length from first row
+      const colCount = table.rows[0]?.length || 0;
+
+      // Build rows
+      const markdownRows = [];
+
+      for (let row = 0; row < table.rows.length; row++) {
+        const cells = table.rows[row].map((cell, col) => {
+          if (cell.type === 'static') {
+            return cell.content || '';
+          } else if (cell.type === 'input') {
+            const key = `${block.groupId}${block.id}table${t}cell${row}_${col}`;
+            const val = container.querySelector(`[data-question-id="${key}"]`)?.value?.trim() || '';
+            return val;
+          }
+          return '';
+        });
+        markdownRows.push(`| ${cells.join(' | ')} |`);
+      }
+
+      // Insert markdown header if table has rows
+      if (markdownRows.length > 0) {
+        const header = markdownRows[0];
+        const separator = `| ${'--- |'.repeat(colCount)}`;
+        result += [header, separator, ...markdownRows.slice(1)].join('\n') + '\n\n';
+      }
+    }
+
+    return result;
+  }
 
   async function handleSubmit() {
     if (isSubmitting) return;        // ✅ Prevent double clicks
@@ -304,70 +342,97 @@ export default function RunActivityPage() {
     const unanswered = [];
 
     for (let block of blocks) {
-
       if (block.type !== 'question') continue;
 
       const qid = `${block.groupId}${block.id}`;
+
       const el = container.querySelector(`[data-question-id="${qid}"]`);
-      if (!el) {
-        unanswered.push(qid);
-        continue;
+      const baseAnswer = el?.value?.trim() || ''; // ✅ move this up
+
+      const tableMarkdown = buildMarkdownTableFromBlock(block, container);
+      const aiInput = block.hasTableResponse ? tableMarkdown : baseAnswer;
+
+      let tableHasInput = false;
+      if (block.tableBlocks?.length > 0) {
+        for (let t = 0; t < block.tableBlocks.length; t++) {
+          const table = block.tableBlocks[t];
+          for (let row = 0; row < table.rows.length; row++) {
+            for (let col = 0; col < table.rows[row].length; col++) {
+              const cell = table.rows[row][col];
+              if (cell.type === 'input') {
+                const key = `${qid}table${t}cell${row}_${col}`;
+                const val = container.querySelector(`[data-question-id="${key}"]`)?.value?.trim() || '';
+                if (val !== '') {
+                  answers[key] = val;
+                  tableHasInput = true;
+                }
+              }
+            }
+          }
+        }
       }
 
-      const baseAnswer = el.value?.trim();
+      // 🧠 If follow-up metadata exists and none shown yet, trigger AI
+      if (
+        aiInput &&
+        block.followups?.length > 0 &&
+        !followupsShown[qid]
+      ) {
+        console.log("⚡ Will trigger AI for QID", qid);
+        const aiFollowup = await evaluateResponseWithAI(block, aiInput);
+        if (aiFollowup) {
+          setFollowupsShown(prev => ({ ...prev, [qid]: aiFollowup }));
+          alert(`A follow-up question has been added for ${qid}. Please answer it.`);
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       const followupPrompt = followupsShown[qid];
       const followupAnswer = followupAnswers[qid]?.trim();
 
-      // 🧠 If follow-up exists and not answered, pause
       if (followupPrompt && !followupAnswer) {
         unanswered.push(qid);
         continue;
       }
 
-      // 🧠 If follow-up exists and answered, combine both
       if (baseAnswer && followupPrompt && followupAnswer) {
-        console.log("🧠 Combining base and follow-up answers for QID", qid);
-        console.log("Base answer:", baseAnswer);
-        console.log("Follow-up prompt:", followupPrompt);
-        console.log("Follow-up answer:", followupAnswer);
-        answers[qid] = baseAnswer; // main answer
-        answers[`${qid}S`] = 'complete'; // state
-        if (followupPrompt) {
-          answers[`${qid}F1`] = followupPrompt;
-        }
-        if (followupAnswer) {
-          answers[`${qid}FA1`] = followupAnswer;
-        } continue;
-      }
-      answers[`${qid}S`] = unanswered.includes(qid) ? 'inprogress' : 'complete';
-
-
-      // 🧠 If follow-up metadata exists and none shown yet, trigger AI
-      if (
-        baseAnswer &&
-        block.followups?.length > 0 &&
-        !followupsShown[qid]
-      ) {
-        console.log("⚡ Will trigger AI for QID", qid);
-
-        const aiFollowup = await evaluateResponseWithAI(block, baseAnswer);
-        if (aiFollowup) {
-          setFollowupsShown(prev => ({ ...prev, [qid]: aiFollowup }));
-          alert(`A follow-up question has been added for ${qid}. Please answer it.`);
-          setIsSubmitting(false); // ✅ unlock spinner!
-          return;
-        }
         answers[qid] = baseAnswer;
+        answers[`${qid}S`] = 'complete';
+        if (followupPrompt) answers[`${qid}F1`] = followupPrompt;
+        if (followupAnswer) answers[`${qid}FA1`] = followupAnswer;
         continue;
       }
 
-      // 🧠 No follow-up logic, just base answer
       if (baseAnswer) {
         answers[qid] = baseAnswer;
-        continue;
+      } else if (tableHasInput) {
+        answers[qid] = tableMarkdown; // optional: store markdown version
+      } else {
+        unanswered.push(qid);
       }
 
-      unanswered.push(qid); // No valid data
+
+      answers[`${qid}S`] = unanswered.includes(qid) ? 'inprogress' : 'complete';
+
+      // ✅ NEW: collect table responses
+      if (block.tableBlocks?.length > 0) {
+        for (let t = 0; t < block.tableBlocks.length; t++) {
+          const table = block.tableBlocks[t];
+          for (let row = 0; row < table.rows.length; row++) {
+            for (let col = 0; col < table.rows[row].length; col++) {
+              const cell = table.rows[row][col];
+              if (cell.type === 'input') {
+                const key = `${qid}table${t}cell${row}_${col}`;
+                const val = container.querySelector(`[data-question-id="${key}"]`)?.value?.trim() || '';
+                if (val !== '') {
+                  answers[key] = val;
+                }
+              }
+            }
+          }
+        }
+      }
     }
 
 
