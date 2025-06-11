@@ -171,9 +171,14 @@ export default function RunActivityPage() {
   async function loadActivity() {
     try {
       console.log("🔄 Loading activity instance:", instanceId);
+      // ✅ First, refresh total_groups from Google Doc
+      await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/refresh-groups`);
+
+      // ✅ Then load the instance data
       const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
       const instanceData = await instanceRes.json();
       setActivity(instanceData);
+
 
       const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`, { credentials: 'include' });
       const activeData = await res.json();
