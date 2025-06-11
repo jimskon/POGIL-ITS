@@ -24,7 +24,8 @@ export function parseSheetToBlocks(lines) {
     if (currentBlock.length > 0) {
       blocks.push({
         type: 'text',
-        content: currentBlock.join(' ').trim()
+        content: format(currentBlock.join(' ').trim())
+
       });
       currentBlock = [];
     }
@@ -33,7 +34,8 @@ export function parseSheetToBlocks(lines) {
   const format = (text) =>
     text.replace(/\\textbf\{(.+?)\}/g, '<strong>$1</strong>')
       .replace(/\\textit\{(.+?)\}/g, '<em>$1</em>')
-      .replace(/\\text\{(.+?)\}/g, '$1');
+      .replace(/\\text\{(.+?)\}/g, '$1')
+      .replace(/\\\\/g, '<br>');
 
   for (let line of lines) {
     const trimmed = line.trim();
@@ -251,8 +253,9 @@ export function renderBlocks(blocks, options = {}) {
     if (block.type === 'groupIntro') {
       return (
         <div key={`groupIntro-${index}`} className="mb-2">
-          <strong>{block.groupId}. {block.content}</strong>
+          <strong>{block.groupId}. <span dangerouslySetInnerHTML={{ __html: block.content }} /></strong>
         </div>
+
       );
     }
 
