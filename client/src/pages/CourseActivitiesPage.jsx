@@ -4,13 +4,15 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Container, Table, Button, Spinner, Alert } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
 import { useUser } from '../context/UserContext';
+import { useLocation } from 'react-router-dom';
 
 console.log("📘 CourseActivitiesPage mounted");
 
 export default function CourseActivitiesPage() {
   const { courseId, activityId } = useParams();
   console.log("courseId:", courseId, "activityId:", activityId); // ✅ should both be defined
-
+  const location = useLocation();
+  const courseName = location.state?.courseName;
   const navigate = useNavigate();
   const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -53,16 +55,16 @@ export default function CourseActivitiesPage() {
     console.log("🔍 courseId:", courseId, "activityId:", activityId, "instanceId:", instanceId);
 
     const path = isInstructor
-    ? `/setup-groups/${courseId}/${activityId}`
-    : `/run/${instanceId}`;
-  
+      ? `/setup-groups/${courseId}/${activityId}`
+      : `/run/${instanceId}`;
+
     navigate(path);
   };
 
 
   return (
     <Container className="mt-4">
-      <h2>Available Activities</h2>
+    <h2>{courseName ? `Course: ${courseName}` : 'Available Activities'}</h2>
 
       {loading ? (
         <Spinner animation="border" />

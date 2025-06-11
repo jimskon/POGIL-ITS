@@ -5,6 +5,7 @@ import { Container, Alert, Button, Spinner } from 'react-bootstrap';
 import Prism from 'prismjs';
 import 'prismjs/themes/prism.css';
 import 'prismjs/components/prism-python';
+import { useLocation } from 'react-router-dom';
 
 import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
@@ -12,6 +13,8 @@ import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
 
 export default function RunActivityPage() {
   const { instanceId } = useParams();
+  const location = useLocation();                  // ✅ ADD THIS LINE
+  const courseName = location.state?.courseName;   // ✅ AND THIS ONE
   const { user, loading } = useUser();
   const [followupsShown, setFollowupsShown] = useState({}); // { qid: followupQuestion }
   const [followupAnswers, setFollowupAnswers] = useState({}); // { qid: studentAnswer }
@@ -520,7 +523,7 @@ export default function RunActivityPage() {
 
   return (
     <Container className="mt-4">
-     <h2>{activity?.title || activity?.name || "Untitled Activity"}</h2>
+      <h2>{activity?.title ? `Activity: ${activity.title}` : (courseName ? `Course: ${courseName}` : "Untitled Activity")}</h2>
       {isActive
         ? <Alert variant="success">You are the active student. You may submit responses.</Alert>
         : <Alert variant="info">You are currently observing. The active student is {activeStudentName || '(unknown)'}</Alert>}

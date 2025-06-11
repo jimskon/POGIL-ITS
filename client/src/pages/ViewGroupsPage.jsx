@@ -3,11 +3,16 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Container, Card, Spinner, Alert, Button } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
 import { FaUserCheck, FaLaptop } from 'react-icons/fa'; // For icons
+import { useLocation } from 'react-router-dom';
+
 
 export default function ViewGroupsPage() {
   const { courseId, activityId } = useParams();
+  const location = useLocation();
+  const incomingCourseName = location.state?.courseName;
+  const [activityTitle, setActivityTitle] = useState('');
   const navigate = useNavigate();
-  const [courseName, setCourseName] = useState('');
+  const [courseName, setCourseName] = useState(incomingCourseName || '');
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -24,7 +29,8 @@ export default function ViewGroupsPage() {
           throw new Error("Bad response format");
         }
 
-        setCourseName(data.courseName || '');
+        setCourseName(data.courseName || incomingCourseName || '');
+        setActivityTitle(data.activityTitle || ''); // ✅ this is the key fix
         setGroups(data.groups);
       } catch (err) {
         console.error("❌ Error loading groups:", err);
@@ -39,8 +45,9 @@ export default function ViewGroupsPage() {
 
   return (
     <Container className="mt-4">
-      <h2>Groups for Activity</h2>
+      <h2>{activityTitle ? `Activity: ${activityTitle}` : 'Groups for Activity'}</h2>
       {courseName && <h4 className="text-muted">{courseName}</h4>}
+
 
       {loading ? (
         <Spinner animation="border" />
@@ -75,10 +82,13 @@ export default function ViewGroupsPage() {
               </ul>
               <Button
                 variant="primary"
-                onClick={() => navigate(`/run/${group.instance_id}`)}
+                onClick={() => navigate(`/run/${group.instance_id}`, {
+                  state: { courseName }  // ✅ Pass course name to next page
+                })}
               >
                 View Activity
               </Button>
+
             </Card.Body>
           </Card>
         ))

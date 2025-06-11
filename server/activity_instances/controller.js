@@ -461,18 +461,19 @@ async function getInstanceGroups(req, res) {
 async function getInstancesForActivityInCourse(req, res) {
   const { courseId, activityId } = req.params;
   try {
-    // Fetch course name
     const [[course]] = await db.query(`SELECT name FROM courses WHERE id = ?`, [courseId]);
+    const [[activity]] = await db.query(`SELECT title FROM pogil_activities WHERE id = ?`, [activityId]);
+
     const courseName = course?.name || 'Unknown Course';
+    const activityTitle = activity?.title || '';
 
     const [instances] = await db.query(
       `SELECT id AS instance_id, group_number, active_student_id, total_groups
-   FROM activity_instances
-   WHERE course_id = ? AND activity_id = ?
-   ORDER BY group_number`,
+       FROM activity_instances
+       WHERE course_id = ? AND activity_id = ?
+       ORDER BY group_number`,
       [courseId, activityId]
     );
-
 
     const groups = [];
     for (const inst of instances) {
@@ -499,14 +500,11 @@ async function getInstancesForActivityInCourse(req, res) {
         if (state?.response === 'complete') {
           completedGroups++;
         } else {
-          break; // Stop at first incomplete group
+          break;
         }
       }
 
       progress = completedGroups === totalGroups ? 'Complete' : `${completedGroups + 1}`;
-
-
-
 
       groups.push({
         instance_id: inst.instance_id,
@@ -523,7 +521,7 @@ async function getInstancesForActivityInCourse(req, res) {
       });
     }
 
-    res.json({ courseName, groups });
+    res.json({ courseName, activityTitle, groups });
   } catch (err) {
     console.error("❌ getInstancesForActivityInCourse:", err);
     res.status(500).json({ error: 'Failed to fetch instances' });
