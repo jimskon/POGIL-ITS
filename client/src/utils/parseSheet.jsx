@@ -163,7 +163,10 @@ export function parseSheetToBlocks(lines) {
 
     if (trimmed.startsWith('\\textresponse')) {
       const match = trimmed.match(/\\textresponse\{(\d+)\}/);
-      if (match && currentQuestion) currentQuestion.responseLines = parseInt(match[1]);
+      if (match && currentQuestion) {
+        currentQuestion.responseLines = parseInt(match[1]);
+        currentQuestion.hasTextResponse = true;
+      }
       continue;
     }
 
@@ -194,6 +197,59 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
+    // --- Handle tables ---
+if (trimmed.startsWith('\\table{')) {
+  flushCurrentBlock();
+  const title = trimmed.match(/\\table\{(.+?)\}/)?.[1] || '';
+  const newTable = {
+    type: 'table',
+    title: format(title),
+    rows: [],
+  };
+
+  if (currentQuestion?.type === 'question') {
+    if (!currentQuestion.tableBlocks) currentQuestion.tableBlocks = [];
+    currentQuestion.tableBlocks.push(newTable);
+  } else {
+    currentQuestion = newTable; // standalone table
+  }
+  continue;
+}
+
+
+if (trimmed === '\\endtable') {
+  if (currentQuestion?.type === 'table') {
+    blocks.push(currentQuestion); // standalone table
+    currentQuestion = null;
+  }
+  // inside question: do nothing — already added to `tableBlocks`
+  continue;
+}
+
+if (trimmed.startsWith('\\row')) {
+  const target = currentQuestion?.type === 'question'
+    ? currentQuestion.tableBlocks?.at(-1)
+    : currentQuestion;
+
+  if (target?.type === 'table') {
+    const rawCells = trimmed.replace(/^\\row\s*/, '').split('&');
+    const cells = rawCells.map(cell => {
+      const trimmedCell = cell.trim();
+      const isInput = trimmedCell === '\\tresponse';
+
+      if (isInput && currentQuestion?.type === 'question') {
+        currentQuestion.hasTableResponse = true;
+      }
+
+      return isInput
+        ? { type: 'input' }
+        : { type: 'static', content: format(trimmedCell) };
+    });
+
+    target.rows.push(cells);
+  }
+  continue;
+}
     // --- Default text fallback ---
     currentBlock.push(format(line));
   }
@@ -280,6 +336,43 @@ export function renderBlocks(blocks, options = {}) {
 
       );
     }
+    if (block.type === 'table') {
+      return (
+        <div key={`table-${index}`} className="my-4">
+          <h4 className="mb-2">{block.title}</h4>
+          <table className="table table-bordered">
+            <tbody>
+              {block.rows.map((row, i) => (
+                <tr key={`table-${index}-row-${i}`}>
+                  {row.map((cell, j) => {
+                    const cellKey = `table${index}cell${i}_${j}`;
+                    if (cell.type === 'input') {
+                      return (
+                        <td key={cellKey}>
+                          <Form.Control
+                            type="text"
+                            defaultValue={prefill?.[cellKey]?.response || ''}
+                            readOnly={!editable}
+                            data-question-id={cellKey}
+                          />
+                        </td>
+                      );
+                    } else {
+                      return (
+                        <td
+                          key={cellKey}
+                          dangerouslySetInnerHTML={{ __html: cell.content }}
+                        />
+                      );
+                    }
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
 
     if (block.type === 'question') {
       const responseKey = `${block.groupId}${block.id}`;
@@ -321,17 +414,55 @@ export function renderBlocks(blocks, options = {}) {
 
             );
           })}
+          {block.tableBlocks?.map((table, i) => (
+            <div key={`q-table-${index}-${i}`} className="my-3">
+              <h5>{table.title}</h5>
+              <table className="table table-bordered">
+                <tbody>
+                  {table.rows.map((row, ri) => (
+                    <tr key={`row-${ri}`}>
+                      {row.map((cell, ci) => {
+                        const cellKey = `${block.groupId}${block.id}table${i}cell${ri}_${ci}`;
+                        if (cell.type === 'input') {
+                          return (
+                            <td key={cellKey}>
+                              <Form.Control
+                                type="text"
+                                defaultValue={prefill?.[cellKey]?.response || ''}
+                                readOnly={!editable}
+                                data-question-id={cellKey}
+                              />
+                            </td>
+                          );
+                        } else {
+                          return (
+                            <td
+                              key={cellKey}
+                              dangerouslySetInnerHTML={{ __html: cell.content }}
+                            />
+                          );
+                        }
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
 
 
-          <Form.Control
-            as="textarea"
-            rows={Math.max((block.responseLines || 1), 2)}
-            defaultValue={prefill?.[responseKey]?.response || ''}
-            readOnly={!editable || (prefill?.[`${block.groupId}state`]?.response === 'complete')}
-            data-question-id={responseKey}
-            className="mt-2"
-            style={{ resize: 'vertical' }}
-          />
+
+          {block.hasTextResponse || !block.hasTableResponse ? (
+            <Form.Control
+              as="textarea"
+              rows={Math.max((block.responseLines || 1), 2)}
+              defaultValue={prefill?.[responseKey]?.response || ''}
+              readOnly={!editable || (prefill?.[`${block.groupId}state`]?.response === 'complete')}
+              data-question-id={responseKey}
+              className="mt-2"
+              style={{ resize: 'vertical' }}
+            />
+          ) : null}
 
           {mode === 'preview' && (
             <>
