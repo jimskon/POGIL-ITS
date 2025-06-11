@@ -171,28 +171,43 @@ export default function RunActivityPage() {
   async function loadActivity() {
     try {
       console.log("🔄 Loading activity instance:", instanceId);
+
+      // Step 1: Fetch activity instance info (includes total_groups)
       const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
       const instanceData = await instanceRes.json();
       setActivity(instanceData);
 
-      const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`, { credentials: 'include' });
-      const activeData = await res.json();
+      // Step 2: If total_groups is missing, refresh it from Google Doc
+      if (!instanceData.total_groups) {
+        console.log("🔁 total_groups missing, refreshing from Google Doc...");
+        await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/refresh-groups`);
+
+        // Re-fetch instance to get updated total_groups
+        const updatedRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
+        const updatedData = await updatedRes.json();
+        setActivity(updatedData);
+      }
+
+      // Step 3: Get current active student
+      const activeRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`, {
+        credentials: 'include',
+      });
+      const activeData = await activeRes.json();
       setActiveStudentId(activeData.activeStudentId);
 
+      // Step 4: Get group members
       const groupRes = await fetch(`${API_BASE_URL}/api/groups/instance/${instanceId}`);
       const groupData = await groupRes.json();
-
       const userGroup = groupData.groups.find(g => g.members.some(m => m.student_id === user.id));
       if (userGroup) {
         setGroupMembers(userGroup.members);
       }
 
-      // Always load answers, even if user is not in a group
+      // Step 5: Load all responses (text + python)
       const answersRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/responses`);
       const answersData = await answersRes.json();
       console.log("📦 Observer fetched answers:", answersData);
 
-      // ✅ Extract AI feedback for each Python block
       setCodeFeedbackShown(prev => {
         const merged = { ...prev };
         for (const [qid, entry] of Object.entries(answersData)) {
@@ -202,10 +217,9 @@ export default function RunActivityPage() {
         }
         return merged;
       });
-
       setExistingAnswers(answersData);
 
-
+      // Step 6: Parse Google Doc structure
       const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(instanceData.sheet_url)}`);
       const { lines } = await docRes.json();
       const blocks = parseSheetToBlocks(lines);
@@ -224,6 +238,7 @@ export default function RunActivityPage() {
           preamble.push(block);
         }
       }
+
       setGroups(grouped);
       setPreamble(preamble);
     } catch (err) {

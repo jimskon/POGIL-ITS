@@ -8,6 +8,7 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 const aiRoutes = require('./ai/routes');
 
+
 require('dotenv').config();
 require('./heartbeatCleaner');
 
@@ -64,6 +65,7 @@ app.use('/api/responses', require('./responses/routes'));
 app.use('/api/events', require('./events/routes'));
 app.use('/api/classes', require('./classes/routes'));
 app.use('/api/activity-instances', require('./activity_instances/routes'));
+
 
 // Log and handle unmatched API routes first
 app.use('/api', (req, res, next) => {
