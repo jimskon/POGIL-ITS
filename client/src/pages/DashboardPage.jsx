@@ -70,7 +70,7 @@ export default function DashboardPage() {
             <Spinner animation="border" />
           ) : enrolledCourses.length > 0 ? (
             <>
-              <h4>Your Enrolled Courses</h4>
+              <h4>My Courses</h4>
               <Table striped bordered hover>
                 <thead>
                   <tr>
