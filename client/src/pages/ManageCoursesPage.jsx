@@ -1,3 +1,4 @@
+// src/pages/ManageCoursesPage.jsx
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Table, Button, Form, Container, Row, Col } from 'react-bootstrap';
@@ -17,21 +18,21 @@ export default function ManageCoursesPage() {
     year: new Date().getFullYear(),
     class_id: ''
   });
-    const [classList, setClassList] = useState([]);
- 
- useEffect(() => {
-     console.log("ManageCoursesPage useEffect: user =", user);
-     if (!user) return;  // Wait for user context to load
+  const [classList, setClassList] = useState([]);
 
-     const canManage = user?.role === 'root' || user?.role === 'creator'; // Move inside useEffect
-  
-     if (!canManage) {
-	 navigate('/dashboard');
-     } else {
-	 fetchCourses();
-     }
- }, [user]);
-    
+  useEffect(() => {
+    console.log("ManageCoursesPage useEffect: user =", user);
+    if (!user) return;  // Wait for user context to load
+
+    const canManage = ['root', 'creator', 'instructor'].includes(user?.role);
+
+    if (!canManage) {
+      navigate('/dashboard');
+    } else {
+      fetchCourses();
+    }
+  }, [user]);
+
   //const canManage = user?.role === 'root' || user?.role === 'creator';
 
   useEffect(() => {
@@ -42,7 +43,7 @@ export default function ManageCoursesPage() {
   }, []);
 
   const fetchCourses = async () => {
-      console.log("fetchCourses!!!");
+    console.log("fetchCourses!!!");
     try {
       const res = await fetch(`${API_BASE_URL}/api/courses`);
       if (!res.ok) {
@@ -50,8 +51,8 @@ export default function ManageCoursesPage() {
       }
 
       const data = await res.json();
-	console.log("fetchCourses:", data);
-	if (!Array.isArray(data)) {
+      console.log("fetchCourses:", data);
+      if (!Array.isArray(data)) {
         console.error("❌ Expected array but got:", data);
         setCourses([]); // fallback
       } else {
@@ -68,11 +69,11 @@ export default function ManageCoursesPage() {
   };
 
   const handleAddCourse = async () => {
-  if (!newCourse.name || !newCourse.code || !newCourse.section || !newCourse.semester || !newCourse.year) {
-    alert('Please fill in all course details.');
-    return;
-  }
-      console.log("Add course:",newCourse.name,newCourse.code,newCourse.section,newCourse.semester,newCourse.year);
+    if (!newCourse.name || !newCourse.code || !newCourse.section || !newCourse.semester || !newCourse.year) {
+      alert('Please fill in all course details.');
+      return;
+    }
+    console.log("Add course:", newCourse.name, newCourse.code, newCourse.section, newCourse.semester, newCourse.year);
     const body = { ...newCourse, instructor_id: user.id };
     await fetch(`${API_BASE_URL}/api/courses`, {
       method: 'POST',
@@ -116,8 +117,11 @@ export default function ManageCoursesPage() {
               <td>{course.instructor_name}</td>
               <td>{course.class_name || '—'}</td>
               <td>
-                <Button size="sm" variant="danger" onClick={() => handleDelete(course.id)}>Delete</Button>
-              </td>
+                {(user.role === 'root' || user.id === course.instructor_id) && (
+                  <Button size="sm" variant="danger" onClick={() => handleDelete(course.id)}>
+                    Delete
+                  </Button>
+                )}              </td>
             </tr>
           ))}
         </tbody>

@@ -1,3 +1,4 @@
+// source/components/NavBar.jsx
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Navbar, Nav, Container, Button } from 'react-bootstrap';
@@ -23,15 +24,15 @@ export default function NavBar() {
         <Navbar.Collapse id="pogil-navbar">
           <Nav className="me-auto">
             <Nav.Link as={Link} to="/dashboard">Dashboard</Nav.Link>
-            {(user?.role === 'root' || user?.role === 'creator') && (
+            {(user?.role === 'root' || user?.role === 'creator' || user?.role === 'instructor') && (
               <>
                 <Nav.Link as={Link} to="/manage-courses">Manage Courses</Nav.Link>
-                <Nav.Link as={Link} to="/manage-classes">Manage Classes</Nav.Link>
               </>
             )}
-            {user?.role === 'root' && (
-              <Nav.Link as={Link} to="/admin/users">Manage Users</Nav.Link>
+            {(user?.role === 'root' || user?.role === 'creator') && (
+              <Nav.Link as={Link} to="/manage-classes">Manage Classes</Nav.Link>
             )}
+
           </Nav>
 
 

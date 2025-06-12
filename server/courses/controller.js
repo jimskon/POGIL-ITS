@@ -3,16 +3,31 @@ const db = require('../db');
 
 // GET all courses
 async function getAllCourses(req, res) {
+  const user = req.user;
+  const userId = user?.id;
+  const role = user?.role;
+
   try {
-    const [courses] = await db.query(
-      `SELECT c.*, pc.name AS class_name
-         FROM courses c
-         LEFT JOIN pogil_classes pc ON c.class_id = pc.id
-         ORDER BY year DESC, semester ASC`
-    );
-    console.log("getAllCourses", courses);
-    
-    res.json(courses.map(course => ({ ...course }))); // ✅ Flatten RowDataPacket
+    let coursesQuery = `
+      SELECT DISTINCT c.*, pc.name AS class_name, u.name AS instructor_name
+      FROM courses c
+      LEFT JOIN pogil_classes pc ON c.class_id = pc.id
+      LEFT JOIN users u ON c.instructor_id = u.id
+      LEFT JOIN course_enrollments ce ON c.id = ce.course_id
+    `;
+
+    let whereClause = '';
+    let params = [];
+
+    if (role !== 'root') {
+      whereClause = `
+        WHERE c.instructor_id = ? OR ce.student_id = ?
+      `;
+      params = [userId, userId];
+    }
+
+    const [courses] = await db.query(`${coursesQuery} ${whereClause} ORDER BY year DESC, semester ASC`, params);
+    res.json(courses.map(course => ({ ...course })));
   } catch (err) {
     console.error('Error fetching courses:', err);
     res.status(500).json({ error: 'Database error' });
@@ -135,7 +150,7 @@ async function getUserEnrollments(req, res) {
       [userId]
     );
     //console.log("getUserEnrollments:", rows);
-    
+
     res.json(rows.map(r => ({ ...r }))); // ✅ Flatten enrollment rows
   } catch (err) {
     console.error('Error fetching enrolled courses:', err);
