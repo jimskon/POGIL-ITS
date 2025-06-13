@@ -211,3 +211,53 @@ exports.getClassById = async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 };
+
+const { getFilesInFolder, getFileMetadata } = require('../utils/googleDrive'); // helper you'll create below
+
+exports.importFolderActivities = async (req, res) => {
+  const { id: classId } = req.params;
+  const { folderUrl } = req.body;
+  const createdBy = req.user.id;
+
+  console.log("Received import folder request:", req.body);
+
+
+  try {
+    const folderIdMatch = folderUrl.match(/[-\w]{25,}/);
+    if (!folderIdMatch) {
+      return res.status(400).json({ error: "Invalid folder URL" });
+    }
+
+    const folderId = folderIdMatch[0];
+    const files = await getFilesInFolder(folderId);
+    console.log(`Found ${files.length} files in folder ${folderId}`);
+
+    const inserted = [];
+
+    for (const [index, file] of files.entries()) {
+      const metadata = await getFileMetadata(file.id);
+      const title = metadata.name;
+      const url = `https://docs.google.com/document/d/${file.id}`;
+
+      const name = title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+
+      const [result] = await db.query(
+        `INSERT INTO pogil_activities (name, title, sheet_url, order_index, class_id, created_by)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [name, title, url, index + 1, classId, createdBy]
+      );
+      console.log(`Inserted activity: ${name} (${title})`);
+      inserted.push({
+        name, title, sheet_url: url, order_index: index + 1, class_id: classId, created_by: createdBy
+      });
+    }
+
+    res.json({ imported: inserted });
+  } catch (err) {
+    console.error("Import folder error:", err);
+    res.status(500).json({ error: "Failed to import from folder." });
+  }
+};
