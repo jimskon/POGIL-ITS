@@ -18,7 +18,7 @@ router.delete('/:id', controller.deleteClass);
 router.get('/:id/activities', controller.getActivitiesByClass);
 router.post('/:id/activities', controller.createActivityForClass);
 router.put('/:id/activities/:activityName', controller.updateActivityForClass);
-router.delete('/:id/activities/:activityName', controller.deleteActivityFromClass);
+router.delete('/:classId/activities/id/:activityId', controller.deleteActivityFromClass);
 
 // ✅ NEW: Get single class info
 router.get('/:id', controller.getClassById);

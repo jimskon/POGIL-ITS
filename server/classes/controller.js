@@ -4,8 +4,8 @@ const { toPlain } = require('../utils/dbHelpers');
 // Get all classes
 exports.getAllClasses = async (req, res) => {
   try {
-      const [rows] = await db.query('SELECT * FROM pogil_classes');
-      res.json(toPlain(rows));
+    const [rows] = await db.query('SELECT * FROM pogil_classes');
+    res.json(toPlain(rows));
   } catch (err) {
     console.error("Error fetching classes:", err);
     res.status(500).json({ error: 'Failed to fetch classes' });
@@ -113,20 +113,41 @@ exports.updateActivityForClass = async (req, res) => {
 };
 
 exports.deleteActivityFromClass = async (req, res) => {
-  const { id: classId, activityName } = req.params;
+  const { classId, activityId } = req.params;
 
   try {
-    await db.query(
-      'DELETE FROM pogil_activities WHERE name = ? AND class_id = ?',
-      [activityName, classId]
+    const [activity] = await db.query(
+      `SELECT id FROM pogil_activities WHERE id = ? AND class_id = ?`,
+      [activityId, classId]
     );
 
-    res.status(204).send();
+    if (!activity.length) {
+      return res.status(404).json({ error: "Activity not found." });
+    }
+
+    // ✅ This is now safe
+    const activityIdNum = activity[0].id;
+
+    const [instances] = await db.query(
+      `SELECT COUNT(*) AS count FROM activity_instances WHERE activity_id = ?`,
+      [activityIdNum]
+    );
+
+    if (instances[0].count > 0) {
+      return res.status(400).json({
+        error: `This activity cannot be deleted because it has been assigned to ${instances[0].count} group(s). Please remove those assignments before deleting the activity.`
+      });
+    }
+
+    await db.query(`DELETE FROM pogil_activities WHERE id = ?`, [activityIdNum]);
+    res.json({ success: true });
+
   } catch (err) {
-    console.error('Error deleting activity:', err);
-    res.status(500).json({ error: 'Failed to delete activity.' });
+    console.error("Error deleting activity:", err);
+    res.status(500).json({ error: "Server error." });
   }
 };
+
 
 exports.getUserEnrollments = async (req, res) => {
   const { userId } = req.params;
@@ -184,7 +205,7 @@ exports.getClassById = async (req, res) => {
       return res.status(404).json({ error: 'Class not found' });
     }
     console.log("Class found:", rows[0]);
-      res.json(toPlain(rows[0]));
+    res.json(toPlain(rows[0]));
   } catch (err) {
     console.error("Error fetching class:", err);
     res.status(500).json({ error: 'Database error' });

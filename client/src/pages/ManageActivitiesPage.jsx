@@ -114,17 +114,19 @@ export default function ManageActivitiesPage() {
     setPendingActivity(null);
   };
 
-  const handleDelete = async (name) => {
-    const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/activities/${name}`, {
+  const handleDelete = async (activityId) => {
+    const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/activities/id/${activityId}`, {
       method: 'DELETE'
     });
 
     if (res.ok) {
-      setActivities(activities.filter(a => a.name !== name));
+      setActivities(activities.filter(a => a.id !== activityId));
     } else {
-      alert("Delete failed.");
+      const data = await res.json();
+      alert(data.error || "Delete failed.");
     }
   };
+
 
   const handleUpdate = async (activity) => {
     const payload = {
@@ -242,28 +244,29 @@ export default function ManageActivitiesPage() {
                     navigate(`/preview/${activity.id}`);
                   }
                 }} className="me-2">Preview</Button>
-                <Button variant="danger" size="sm" onClick={() => handleDelete(activity.name)}>Delete</Button>
-              </td>
+                <Button variant="danger" size="sm" onClick={() => handleDelete(activity.id)}>
+                  Delete
+                </Button>              </td>
             </tr>
           ))}
         </tbody>
       </Table>
 
       {pendingActivity?.sheet_url && pendingActivity.sheet_url.trim() !== '' && (
-      <Modal show={showModal} onHide={() => setShowModal(false)}>
-        <Modal.Header closeButton>
-          <Modal.Title>Share Document Access</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          <p>If your activity uses a Google Sheet or Doc, please ensure it is shared with:</p>
-          <code>{SERVICE_ACCOUNT_EMAIL}</code>
-          <p className="mt-3">Click "Continue" once you've shared access or if no document is being used.</p>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowModal(false)}>Cancel</Button>
-          <Button variant="primary" onClick={confirmShareAndCheckAccess}>Continue</Button>
-        </Modal.Footer>
-      </Modal>
+        <Modal show={showModal} onHide={() => setShowModal(false)}>
+          <Modal.Header closeButton>
+            <Modal.Title>Share Document Access</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <p>If your activity uses a Google Sheet or Doc, please ensure it is shared with:</p>
+            <code>{SERVICE_ACCOUNT_EMAIL}</code>
+            <p className="mt-3">Click "Continue" once you've shared access or if no document is being used.</p>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => setShowModal(false)}>Cancel</Button>
+            <Button variant="primary" onClick={confirmShareAndCheckAccess}>Continue</Button>
+          </Modal.Footer>
+        </Modal>
       )}
     </Container>
   );
