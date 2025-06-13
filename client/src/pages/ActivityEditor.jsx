@@ -12,6 +12,7 @@ export default function ActivityEditor() {
   const [skulptLoaded, setSkulptLoaded] = useState(false);
   const [copySuccess, setCopySuccess] = useState('');
   const [previewKey, setPreviewKey] = useState(Date.now());
+  const [autoCompileEnabled, setAutoCompileEnabled] = useState(true);
 
   // Load Skulpt
   useEffect(() => {
@@ -83,6 +84,11 @@ export default function ActivityEditor() {
     localStorage.setItem(`activity-${activityId}`, rawText);
   };
 
+  useEffect(() => {
+    if (autoCompileEnabled && rawText.trim()) {
+      handleCompile();
+    }
+  }, [rawText, autoCompileEnabled]);
   // Copy handler
   const handleCopy = async () => {
     try {
@@ -149,6 +155,14 @@ export default function ActivityEditor() {
       <div className="editor-header d-flex justify-content-between align-items-center mb-2">
         <h4>Edit Activity: {activity?.title}</h4>
         <div>
+          <Form.Check 
+            type="switch"
+            id="auto-compile-switch"
+            label="Auto Compile"
+            checked={autoCompileEnabled}
+            onChange={() => setAutoCompileEnabled(prev => !prev)}
+            className="ms-3"
+          />
           <Button variant="primary" onClick={handleCompile}>Compile</Button>{' '}
           <Button variant="secondary" onClick={handleCopy}>Copy</Button>
         </div>
