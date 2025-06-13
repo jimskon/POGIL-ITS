@@ -43,33 +43,33 @@ export default function ManageCoursesPage() {
   }, []);
 
   const fetchCourses = async () => {
-    console.log("fetchCourses!!!");
     try {
-      const res = await fetch(`${API_BASE_URL}/api/courses`);
-      if (!res.ok) {
-        throw new Error(`HTTP error ${res.status}`);
-      }
+      const [createdRes, enrolledRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/courses`),
+        fetch(`${API_BASE_URL}/api/courses/user/${user.id}/enrollments`)
+      ]);
 
-      const data = await res.json();
-      console.log("fetchCourses:", data);
-      if (!Array.isArray(data)) {
-        console.error("❌ Expected array but got:", data);
-        setCourses([]); // fallback
-        return;
-      }
+      if (!createdRes.ok || !enrolledRes.ok) throw new Error("Failed to fetch");
 
-      // 👇 Instructors should only see their own courses
-      const visibleCourses =
-        user.role === "instructor"
-          ? data.filter((course) => course.instructor_id === user.id)
-          : data;
+      const createdCourses = await createdRes.json();
+      const enrolledCourses = await enrolledRes.json();
 
-      setCourses(visibleCourses);
+      // Merge and remove duplicates
+      const combined = [...createdCourses, ...enrolledCourses];
+      const uniqueCourses = Array.from(
+        new Map(combined.map(course => [course.id, course])).values()
+      );
+      console.log("Merged visible courses:");
+      uniqueCourses.forEach(course => {
+        console.log(`Course: ${course.name} | instructor_id: ${course.instructor_id} | your ID: ${user.id}`);
+      });
+      setCourses(uniqueCourses);
     } catch (err) {
-      console.error("❌ Failed to fetch courses:", err);
+      console.error("❌ Error loading courses:", err);
       setCourses([]);
     }
   };
+
 
   const handleChange = (field, value) => {
     setNewCourse((prev) => ({ ...prev, [field]: value }));
@@ -118,7 +118,7 @@ export default function ManageCoursesPage() {
 
   return (
     <Container className="mt-4">
-      <h2>Manage Courses</h2>
+      <h2>Manage Courses for {user?.name}</h2>
 
       <Table striped bordered hover>
         <thead>
@@ -144,6 +144,13 @@ export default function ManageCoursesPage() {
               <td>{course.instructor_name}</td>
               <td>{course.class_name || "—"}</td>
               <td>
+                <Button
+                  size="sm"
+                  variant="info"
+                  onClick={() => navigate(`/courses/${course.id}/students`)}
+                >
+                  View Students
+                </Button>
                 {(user.role === 'root' || user.id === course.instructor_id) && (
                   <Button size="sm" variant="danger" onClick={() => handleDelete(course.id)}>
                     Delete

@@ -195,15 +195,20 @@ async function getCourseActivities(req, res) {
 // GET all courses a user is enrolled in
 async function getUserEnrollments(req, res) {
   const { userId } = req.params;
-  console.log("getUserEnrollments", userId);
+  //console.log("getUserEnrollments", userId);
 
   try {
     const [rows] = await db.query(
-      `SELECT c.id, c.name, c.code, c.section, c.semester, c.year, u.name AS instructor_name
-       FROM course_enrollments ce
-       JOIN courses c ON ce.course_id = c.id
-       LEFT JOIN users u ON c.instructor_id = u.id
-       WHERE ce.student_id = ?`,
+      `SELECT 
+     c.id, c.name, c.code, c.section, c.semester, c.year,
+     c.instructor_id,
+     u.name AS instructor_name,
+     pc.name AS class_name
+   FROM course_enrollments ce
+   JOIN courses c ON ce.course_id = c.id
+   LEFT JOIN users u ON c.instructor_id = u.id
+   LEFT JOIN pogil_classes pc ON c.class_id = pc.id
+   WHERE ce.student_id = ?`,
       [userId]
     );
     //console.log("getUserEnrollments:", rows);
@@ -270,10 +275,10 @@ async function getStudentsForCourse(req, res) {
 
   try {
     const [students] = await db.query(
-      `SELECT u.id, u.name, u.email
-       FROM course_enrollments ce
-       JOIN users u ON ce.student_id = u.id
-       WHERE ce.course_id = ? AND u.role = 'student'`,
+  `SELECT u.id, u.name, u.email, u.role
+   FROM course_enrollments ce
+   JOIN users u ON ce.student_id = u.id
+   WHERE ce.course_id = ?`,
       [courseId]
     );
 
@@ -281,6 +286,60 @@ async function getStudentsForCourse(req, res) {
   } catch (err) {
     console.error("❌ Failed to fetch students for course:", err);
     res.status(500).json({ error: "Failed to fetch students" });
+  }
+}
+
+async function unenrollStudentFromCourse(req, res) {
+  const { courseId, studentId } = req.params;
+  const user = req.user;
+
+  // Check permissions
+  const [result] = await db.query(
+    `SELECT instructor_id FROM courses WHERE id = ?`,
+    [courseId]
+  );
+
+  if (!result.length) {
+    return res.status(404).json({ error: "Course not found" });
+  }
+
+  const course = result[0];
+  const isOwner = user.id === course.instructor_id;
+  const isAdmin = user.role === 'root' || user.role === 'creator';
+
+  if (!isOwner && !isAdmin) {
+    return res.status(403).json({ error: "Unauthorized" });
+  }
+
+  // Remove enrollment
+  await db.query(
+    `DELETE FROM course_enrollments WHERE student_id = ? AND course_id = ?`,
+    [studentId, courseId]
+  );
+
+  res.json({ success: true });
+}
+
+async function getCourseInfo(req, res) {
+  const { courseId } = req.params;
+
+  try {
+    const [rows] = await db.query(
+      `SELECT id, name, code, section, semester, year, instructor_id
+       FROM courses
+       WHERE id = ?`,
+      [courseId]
+    );
+    console.log("getCourseInfo for courseId:", courseId, "Result:", rows);
+
+    if (rows.length === 0) {
+      return res.status(404).json({ error: "Course not found" });
+    }
+
+    res.json(rows[0]);
+  } catch (err) {
+    console.error("❌ Error fetching course info:", err);
+    res.status(500).json({ error: "Failed to get course info" });
   }
 }
 
@@ -293,4 +352,6 @@ module.exports = {
   enrollByCode,
   getCourseEnrollments,
   getStudentsForCourse,
+  unenrollStudentFromCourse,
+  getCourseInfo
 };

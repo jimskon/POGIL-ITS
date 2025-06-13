@@ -1,3 +1,4 @@
+// server/courses/routes.js
 const express = require("express");
 const router = express.Router();
 const controller = require("./controller");
@@ -25,5 +26,13 @@ router.delete("/:id", controller.deleteCourse);
 
 // Get students for a course
 router.get("/:courseId/students", controller.getStudentsForCourse);
+
+// Unenroll a student from a course
+router.delete("/:courseId/unenroll/:studentId", controller.unenrollStudentFromCourse);
+
+//
+router.get("/:courseId/info", controller.getCourseInfo);
+
+
 
 module.exports = router;
