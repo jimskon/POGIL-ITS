@@ -234,7 +234,11 @@ exports.importFolderActivities = async (req, res) => {
 
     const inserted = [];
 
-    for (const [index, file] of files.entries()) {
+    const sortedFiles = files.sort((a, b) =>
+      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+    );
+
+    for (const [index, file] of sortedFiles.entries()) {
       const metadata = await getFileMetadata(file.id);
       const title = metadata.name;
       const url = `https://docs.google.com/document/d/${file.id}`;
@@ -243,6 +247,17 @@ exports.importFolderActivities = async (req, res) => {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '');
+
+      // Check for existing activity with same name in this class
+      const [existing] = await db.query(
+        `SELECT id FROM pogil_activities WHERE name = ? AND class_id = ?`,
+        [name, classId]
+      );
+
+      if (existing.length > 0) {
+        console.log(`⚠️ Skipping duplicate: ${name}`);
+        continue; // skip to next file
+      }
 
       const [result] = await db.query(
         `INSERT INTO pogil_activities (name, title, sheet_url, order_index, class_id, created_by)
