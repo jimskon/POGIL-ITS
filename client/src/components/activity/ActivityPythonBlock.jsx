@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Form, Button } from 'react-bootstrap';
 import Prism from 'prismjs';
+import { runSkulptCode } from '../../utils/runSkulptCode';
+
 
 export default function ActivityPythonBlock({
   code: initialCode,
   blockIndex,
   responseKey,
   onCodeChange,
-  codeFeedbackShown = {}, // ✅ Accept feedback
+  codeFeedbackShown = {},
+  fileContents = {}, 
 }) {
   const [code, setCode] = useState(initialCode);
   const [savedCode, setSavedCode] = useState(initialCode);
@@ -38,35 +41,14 @@ export default function ActivityPythonBlock({
       alert("Skulpt is still loading...");
       return;
     }
-
-    setOutputText(''); // Clear previous output
-
-    Sk.configure({
-      output: (text) => {
-        setOutputText((prev) => prev + text);
-      },
-      read: (file) => {
-        if (!Sk.builtinFiles?.["files"][file]) {
-          throw `File not found: '${file}'`;
-        }
-        return Sk.builtinFiles["files"][file];
-      },
-      inputfun: function (promptText) {
-        const response = window.prompt(promptText || "Please enter input:");
-        if (response === null) {
-          throw new Error("User cancelled input.");
-        }
-        return response;
-      },
-      inputfunTakesPrompt: true,
+    console.log("runPython!!!");
+    runSkulptCode({
+      code,
+      fileContents,
+      setOutput: setOutputText,
     });
-
-
-    Sk.misceval
-      .asyncToPromise(() => Sk.importMainWithBody("__main__", false, code, true))
-      .catch((err) => setOutputText((prev) => prev + '\n' + err.toString()));
   };
-
+  
 
   const handleDoneEditing = () => {
     setIsEditing(false);

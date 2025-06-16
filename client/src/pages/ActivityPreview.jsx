@@ -14,7 +14,9 @@ export default function ActivityPreview() {
   const [activity, setActivity] = useState(null);
   const [sheetData, setSheetData] = useState([]);
   const [elements, setElements] = useState([]);
-  const [skulptLoaded, setSkulptLoaded] = useState(false); // ✅
+  const [skulptLoaded, setSkulptLoaded] = useState(false);
+  const [fileContents, setFileContents] = useState({});
+  const [blocks, setBlocks] = useState([]);
 
   useEffect(() => {
     const loadScript = (src) =>
@@ -36,26 +38,31 @@ export default function ActivityPreview() {
         };
         document.head.appendChild(script); // use <head> for better priority
       });
-  
-      const loadSkulpt = async () => {
-        try {
-          await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
-          await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
-      
-          if (window.Sk && window.Sk.builtinFiles) {
-            console.log('✅ Skulpt is ready');
-            setSkulptLoaded(true); 
-          } else {
-            console.warn('⚠️ Skulpt scripts loaded, but core objects not initialized');
-          }
-        } catch (err) {
-          console.error('🚨 Skulpt failed to load', err);
+
+    const loadSkulpt = async () => {
+      try {
+        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
+        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
+        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-fs.min.js');  
+
+        //await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
+        //await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
+
+
+        if (window.Sk && window.Sk.builtinFiles) {
+          console.log('✅ Skulpt is ready');
+          setSkulptLoaded(true);
+        } else {
+          console.warn('⚠️ Skulpt scripts loaded, but core objects not initialized');
         }
-      };
-  
+      } catch (err) {
+        console.error('🚨 Skulpt failed to load', err);
+      }
+    };
+
     loadSkulpt();
   }, []);
-  
+
 
   useEffect(() => {
     const fetchActivityAndSheet = async () => {
@@ -66,17 +73,42 @@ export default function ActivityPreview() {
 
         const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activityData.sheet_url)}`);
         const { lines } = await docRes.json();
-        const blocks = parseSheetToBlocks(lines);
-        const rendered = renderBlocks(blocks, { mode: 'preview' });
-        setElements(rendered);
+        const parsed = parseSheetToBlocks(lines);
+
+        // 🔥 Extract file contents into a map
+        const files = {};
+        for (const block of parsed) {
+          if (block.type === 'file' && block.filename && block.content) {
+            files[block.filename] = block.content;
+          }
+        }
+        setBlocks(parsed);         // save parsed blocks to state
+        setFileContents(files);    //  makes the files available to Skulpt
+
       } catch (err) {
         console.error("Failed to fetch preview data", err);
       }
     };
+
     if (skulptLoaded) {
-      fetchActivityAndSheet(); // ✅ Only fetch once Skulpt is loaded
+      fetchActivityAndSheet(); // Only fetch once Skulpt is loaded
     }
   }, [activityId, skulptLoaded]);
+
+  useEffect(() => {
+    console.log("🧾 Preview fileContents:", fileContents);
+  }, [fileContents]);
+
+  useEffect(() => {
+    const rendered = renderBlocks(blocks, {
+      mode: 'preview',
+      editable: true,
+      fileContents,
+      setFileContents,
+    });
+    setElements(rendered);
+  }, [blocks]); // only run once when blocks change
+
 
   useEffect(() => {
     Prism.highlightAll();

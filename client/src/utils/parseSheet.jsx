@@ -19,13 +19,14 @@ export function parseSheetToBlocks(lines) {
   let inList = false;
   let listType = null;
   let listItems = [];
+  let inFileBlock = false;
+  let currentFile = null;
 
   const flushCurrentBlock = () => {
     if (currentBlock.length > 0) {
       blocks.push({
         type: 'text',
         content: format(currentBlock.join(' ').trim())
-
       });
       currentBlock = [];
     }
@@ -39,9 +40,7 @@ export function parseSheetToBlocks(lines) {
 
   for (let line of lines) {
     const trimmed = line.trim();
-    //console.log("Processing line:", trimmed);
 
-    // --- Handle lists ---
     if (trimmed === '\\begin{itemize}' || trimmed === '\\begin{enumerate}') {
       inList = true;
       listType = trimmed.includes('itemize') ? 'ul' : 'ol';
@@ -62,24 +61,26 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // --- Handle Python blocks ---
     if (trimmed === '\\python') {
       flushCurrentBlock();
       currentField = 'python';
+
       if (currentQuestion && currentQuestion.type === 'question') {
         if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
         currentQuestion.pythonBlocks.push({ lines: [] });
       } else {
-        currentQuestion = { type: 'python', lines: [] };
+        blocks.push({ type: 'python', lines: [] });
       }
+
       continue;
     }
 
     if (trimmed === '\\endpython') {
       if (currentField === 'python') {
-        if (currentQuestion?.type === 'python') {
-          blocks.push({ type: 'python', content: currentQuestion.lines.join('\n') });
-          currentQuestion = null;
+        const lastBlock = blocks.at(-1);
+        if (lastBlock?.type === 'python' && lastBlock.lines) {
+          lastBlock.content = lastBlock.lines.join('\n');
+          delete lastBlock.lines;
         } else if (currentQuestion?.pythonBlocks?.length > 0) {
           const block = currentQuestion.pythonBlocks.pop();
           currentQuestion.pythonBlocks.push({
@@ -93,16 +94,16 @@ export function parseSheetToBlocks(lines) {
     }
 
     if (currentField === 'python') {
-      if (currentQuestion?.type === 'python') {
-        currentQuestion.lines.push(line);
-      } else if (currentQuestion?.pythonBlocks?.length > 0) {
-        const lastBlock = currentQuestion.pythonBlocks[currentQuestion.pythonBlocks.length - 1];
+      const lastBlock = blocks.at(-1);
+      if (lastBlock?.type === 'python' && lastBlock.lines) {
         lastBlock.lines.push(line);
+      } else if (currentQuestion?.pythonBlocks?.length > 0) {
+        const lastQuestionBlock = currentQuestion.pythonBlocks.at(-1);
+        lastQuestionBlock.lines.push(line);
       }
       continue;
     }
 
-    // --- Handle headers and sections ---
     const headerMatch = trimmed.match(/^\\(title|name)\{(.+?)\}$/);
     if (headerMatch) {
       flushCurrentBlock();
@@ -113,16 +114,10 @@ export function parseSheetToBlocks(lines) {
     const sectionMatch = trimmed.match(/^\\section\*?\{(.+?)\}$/);
     if (sectionMatch) {
       flushCurrentBlock();
-      blocks.push({
-        type: 'section',
-        title: format(sectionMatch[1]) // The title of the section to render as an <h2>
-      });
+      blocks.push({ type: 'section', title: format(sectionMatch[1]) });
       continue;
     }
 
-
-
-    // --- Handle question groups and questions ---
     if (trimmed.startsWith('\\questiongroup{')) {
       flushCurrentBlock();
       groupNumber++;
@@ -148,7 +143,7 @@ export function parseSheetToBlocks(lines) {
         responseId: responseId++,
         prompt: format(content),
         responseLines: 1,
-        samples: [],     // ✅ AI Fields: parsed here
+        samples: [],
         feedback: [],
         followups: []
       };
@@ -170,7 +165,6 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // ✅ AI Fields parsing
     if (trimmed.startsWith('\\sampleresponses{')) {
       const match = trimmed.match(/\\sampleresponses\{(.+?)\}/);
       if (match && currentQuestion) currentQuestion.samples.push(format(match[1]));
@@ -189,7 +183,6 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // --- Simple bold lines ---
     const textbfMatch = trimmed.match(/^\\textbf\{(.+?)\}$/);
     if (textbfMatch) {
       flushCurrentBlock();
@@ -197,66 +190,89 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // --- Handle tables ---
-if (trimmed.startsWith('\\table{')) {
-  flushCurrentBlock();
-  const title = trimmed.match(/\\table\{(.+?)\}/)?.[1] || '';
-  const newTable = {
-    type: 'table',
-    title: format(title),
-    rows: [],
-  };
+    if (trimmed.startsWith('\\table{')) {
+      flushCurrentBlock();
+      const title = trimmed.match(/\\table\{(.+?)\}/)?.[1] || '';
+      const newTable = {
+        type: 'table',
+        title: format(title),
+        rows: [],
+      };
 
-  if (currentQuestion?.type === 'question') {
-    if (!currentQuestion.tableBlocks) currentQuestion.tableBlocks = [];
-    currentQuestion.tableBlocks.push(newTable);
-  } else {
-    currentQuestion = newTable; // standalone table
-  }
-  continue;
-}
-
-
-if (trimmed === '\\endtable') {
-  if (currentQuestion?.type === 'table') {
-    blocks.push(currentQuestion); // standalone table
-    currentQuestion = null;
-  }
-  // inside question: do nothing — already added to `tableBlocks`
-  continue;
-}
-
-if (trimmed.startsWith('\\row')) {
-  const target = currentQuestion?.type === 'question'
-    ? currentQuestion.tableBlocks?.at(-1)
-    : currentQuestion;
-
-  if (target?.type === 'table') {
-    const rawCells = trimmed.replace(/^\\row\s*/, '').split('&');
-    const cells = rawCells.map(cell => {
-      const trimmedCell = cell.trim();
-      const isInput = trimmedCell === '\\tresponse';
-
-      if (isInput && currentQuestion?.type === 'question') {
-        currentQuestion.hasTableResponse = true;
+      if (currentQuestion?.type === 'question') {
+        if (!currentQuestion.tableBlocks) currentQuestion.tableBlocks = [];
+        currentQuestion.tableBlocks.push(newTable);
+      } else {
+        currentQuestion = newTable;
       }
+      continue;
+    }
 
-      return isInput
-        ? { type: 'input' }
-        : { type: 'static', content: format(trimmedCell) };
-    });
+    if (trimmed === '\\endtable') {
+      if (currentQuestion?.type === 'table') {
+        blocks.push(currentQuestion);
+        currentQuestion = null;
+      }
+      continue;
+    }
 
-    target.rows.push(cells);
-  }
-  continue;
-}
-    // --- Default text fallback ---
+    if (trimmed.startsWith('\\row')) {
+      const target = currentQuestion?.type === 'question'
+        ? currentQuestion.tableBlocks?.at(-1)
+        : currentQuestion;
+
+      if (target?.type === 'table') {
+        const rawCells = trimmed.replace(/^\\row\s*/, '').split('&');
+        const cells = rawCells.map(cell => {
+          const trimmedCell = cell.trim();
+          const isInput = trimmedCell === '\\tresponse';
+
+          if (isInput && currentQuestion?.type === 'question') {
+            currentQuestion.hasTableResponse = true;
+          }
+
+          return isInput
+            ? { type: 'input' }
+            : { type: 'static', content: format(trimmedCell) };
+        });
+
+        target.rows.push(cells);
+      }
+      continue;
+    }
+
+    if (trimmed.startsWith('\\file{')) {
+      flushCurrentBlock();
+      inFileBlock = true;
+      const filename = trimmed.match(/\\file\{(.+?)\}/)?.[1]?.trim();
+      currentFile = { type: 'file', filename, lines: [] };
+      continue;
+    }
+
+    if (trimmed === '\\endfile') {
+      if (currentFile) {
+        blocks.push({
+          ...currentFile,
+          content: currentFile.lines.join('\n'),
+        });
+        currentFile = null;
+      }
+      inFileBlock = false;
+      continue;
+    }
+
+    if (inFileBlock && currentFile) {
+      currentFile.lines.push(line);
+      continue;
+    }
+
     currentBlock.push(format(line));
   }
 
   flushCurrentBlock();
   return blocks;
 }
+
 
 export function renderBlocks(blocks, options = {}) {
   const {
@@ -270,6 +286,8 @@ export function renderBlocks(blocks, options = {}) {
     setFollowupAnswers = () => { },
     onCodeChange = null,
     codeFeedbackShown = {},
+    fileContents = {},
+    setFileContents = () => { },
   } = options;
 
   let standaloneCodeCounter = 1;
@@ -315,6 +333,31 @@ export function renderBlocks(blocks, options = {}) {
       );
     }
 
+    if (block.type === 'file') {
+      return (
+        <div key={`file-${index}`} className="mb-3">
+          <strong>📄 File: <code>{block.filename}</code></strong>
+          <Form.Control
+            as="textarea"
+            value={fileContents?.[block.filename] ?? block.content}
+
+            onChange={(e) => {
+              if (editable && setFileContents) {
+                setFileContents(prev => ({
+                  ...prev,
+                  [block.filename]: e.target.value,
+                }));
+              }
+            }}
+            rows={Math.max(4, (fileContents?.[block.filename] ?? block.content).split('\n').length)}
+            readOnly={!editable}
+            className="font-monospace bg-light mt-1"
+          />
+
+        </div>
+      );
+    }
+
     if (block.type === 'python') {
       const groupPrefix = (currentGroupIndex + 1).toString(); // dynamic group number
       const codeKey = `${groupPrefix}code${standaloneCodeCounter++}`;
@@ -332,6 +375,7 @@ export function renderBlocks(blocks, options = {}) {
           responseKey={codeKey}
           onCodeChange={onCodeChange}
           codeFeedbackShown={codeFeedbackShown}
+          fileContents={fileContents}
         />
 
       );
@@ -410,6 +454,7 @@ export function renderBlocks(blocks, options = {}) {
                 responseKey={responseKey}
                 onCodeChange={onCodeChange}
                 codeFeedbackShown={codeFeedbackShown}
+                fileContents={fileContents}
               />
 
             );

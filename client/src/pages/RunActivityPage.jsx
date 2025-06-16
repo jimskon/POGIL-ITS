@@ -19,6 +19,7 @@ export default function RunActivityPage() {
   const [followupsShown, setFollowupsShown] = useState({}); // { qid: followupQuestion }
   const [followupAnswers, setFollowupAnswers] = useState({}); // { qid: studentAnswer }
   const [codeFeedbackShown, setCodeFeedbackShown] = useState({}); // { qid: feedback string }
+  const [fileContents, setFileContents] = useState({});
 
 
 
