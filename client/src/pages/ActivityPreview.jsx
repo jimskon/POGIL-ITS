@@ -43,7 +43,7 @@ export default function ActivityPreview() {
       try {
         await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
         await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
-        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-fs.min.js');  
+        //await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-fs.min.js');  
 
         //await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
         //await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
