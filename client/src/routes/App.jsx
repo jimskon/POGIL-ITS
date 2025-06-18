@@ -16,6 +16,7 @@ import RunActivityPage from '../pages/RunActivityPage';
 import GroupSetupPage from '../pages/GroupSetupPage';
 import ViewGroupsPage from '../pages/ViewGroupsPage';
 import ManageCourseStudentsPage from '../pages/ManageCourseStudentsPage';
+import ManageCourseProgressPage from '../pages/ManageCourseProgressPage';
 
 function AppRoutes() {
   const { user } = useUser();
@@ -31,13 +32,14 @@ function AppRoutes() {
         <Route path="/manage-courses" element={<ManageCoursesPage />} />
         <Route path="/class/:id" element={<ManageActivitiesPage />} />
         <Route path="/preview/:activityId" element={<ActivityPreview />} />
-	      <Route path="/admin/users" element={<AdminUsersPage />} />
-        <Route path="/courses/:courseId/activities" element={<CourseActivitiesPage />} />  
+        <Route path="/admin/users" element={<AdminUsersPage />} />
+        <Route path="/courses/:courseId/activities" element={<CourseActivitiesPage />} />
         <Route path="/run/:instanceId" element={<RunActivityPage />} />
         <Route path="/setup-groups/:courseId/:activityId" element={<GroupSetupPage />} />
         <Route path="/view-groups/:courseId/:activityId" element={<ViewGroupsPage />} />
         <Route path="/courses/:courseId/students" element={<ManageCourseStudentsPage />} />
-     </Routes>
+        <Route path="/courses/:courseId/progress" element={<ManageCourseProgressPage />} />
+      </Routes>
     </>
   );
 }

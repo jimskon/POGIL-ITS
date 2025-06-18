@@ -1,31 +1,37 @@
 const express = require('express');
 const router = express.Router();
-const controller = require('./controller');
+const requireAuth = require('../middleware/requireAuth');
+const classController = require('./controller');
+
 
 // Get all classes
-router.get('/', controller.getAllClasses);
+router.get('/', classController.getAllClasses);
 
 // Create a new class
-router.post('/', controller.createClass);
+router.post('/', classController.createClass);
 
 // Update a class
-router.put('/:id', controller.updateClass);
+router.put('/:id', classController.updateClass);
 
 // Delete a class
-router.delete('/:id', controller.deleteClass);
+router.delete('/:id', classController.deleteClass);
 
 // ✅ Activities for a class
-router.get('/:id/activities', controller.getActivitiesByClass);
-router.post('/:id/activities', controller.createActivityForClass);
-router.put('/:id/activities/:activityName', controller.updateActivityForClass);
-router.delete('/:id/activities/:activityName', controller.deleteActivityFromClass);
+router.get('/:id/activities', classController.getActivitiesByClass);
+router.post('/:id/activities', classController.createActivityForClass);
+router.put('/:id/activities/:activityName', classController.updateActivityForClass);
+router.delete('/:classId/activities/id/:activityId', classController.deleteActivityFromClass);
 
 // ✅ NEW: Get single class info
-router.get('/:id', controller.getClassById);
+router.get('/:id', classController.getClassById);
 
 // Enrollment related
-router.get('/user/:userId/enrollments', controller.getUserEnrollments);
-router.post('/enroll-by-code', controller.enrollByCode);
+router.get('/user/:userId/enrollments', classController.getUserEnrollments);
+router.post('/enroll-by-code', classController.enrollByCode);
+
+// ✅ NEW: Import activities from a folder
+router.post('/:id/import-folder', requireAuth, classController.importFolderActivities);
+
 
 module.exports = router;
 

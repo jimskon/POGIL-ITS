@@ -343,6 +343,62 @@ async function getCourseInfo(req, res) {
   }
 }
 
+async function getCourseProgress(req, res) {
+  const { courseId } = req.params;
+
+  try {
+    // Get enrolled students
+    const [students] = await db.query(
+      `SELECT u.id, u.name, u.email
+       FROM course_enrollments ce
+       JOIN users u ON ce.student_id = u.id
+       WHERE ce.course_id = ?`,
+      [courseId]
+    );
+
+    // Get all activities for the course
+    const [activities] = await db.query(
+      `SELECT id, name FROM pogil_activities WHERE class_id = (
+         SELECT class_id FROM courses WHERE id = ?
+       ) ORDER BY order_index`,
+      [courseId]
+    );
+
+    // Get activity instance statuses per student
+    const [instances] = await db.query(
+      `SELECT ai.id AS instance_id, ai.activity_id, gm.student_id, ai.status
+       FROM activity_instances ai
+       JOIN group_members gm ON gm.activity_instance_id = ai.id
+       WHERE ai.course_id = ?`,
+      [courseId]
+    );
+
+    // Build map: { student_id -> { activity_id -> status } }
+    const progressMap = {};
+    for (const { student_id, activity_id, status } of instances) {
+      if (!progressMap[student_id]) progressMap[student_id] = {};
+      progressMap[student_id][activity_id] = status;
+    }
+
+    // Final structure
+    const studentProgress = students.map((s) => ({
+      id: s.id,
+      name: s.name,
+      email: s.email,
+      progress: activities.reduce((acc, a) => {
+        acc[a.id] = progressMap[s.id]?.[a.id] || "not_started";
+        return acc;
+      }, {}),
+    }));
+
+    res.json({ activities, students: studentProgress });
+  } catch (err) {
+    console.error("❌ Failed to load progress:", err);
+    res.status(500).json({ error: "Failed to get student progress" });
+  }
+}
+
+
 module.exports = {
   getAllCourses,
   createCourse,
@@ -353,5 +409,6 @@ module.exports = {
   getCourseEnrollments,
   getStudentsForCourse,
   unenrollStudentFromCourse,
-  getCourseInfo
+  getCourseInfo,
+  getCourseProgress
 };

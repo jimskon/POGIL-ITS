@@ -144,6 +144,10 @@ export default function ManageCoursesPage() {
               <td>{course.instructor_name}</td>
               <td>{course.class_name || "—"}</td>
               <td>
+                <Button onClick={() => navigate(`/courses/${course.id}/progress`)}>
+                  View Progress
+                </Button>
+
                 <Button
                   size="sm"
                   variant="info"

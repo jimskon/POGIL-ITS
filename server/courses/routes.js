@@ -30,8 +30,11 @@ router.get("/:courseId/students", controller.getStudentsForCourse);
 // Unenroll a student from a course
 router.delete("/:courseId/unenroll/:studentId", controller.unenrollStudentFromCourse);
 
-//
+// Get course info (used in ManageCourseStudentsPage)
 router.get("/:courseId/info", controller.getCourseInfo);
+
+// Get course progress (used in ManageCoursesPage)
+router.get("/:courseId/progress", controller.getCourseProgress);
 
 
 
