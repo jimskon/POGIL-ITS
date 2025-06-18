@@ -12,5 +12,8 @@ router.get('/:instanceId/group', controller.getGroupResponses);
 // router.get('/:instanceId/:groupId', controller.getGroupResponses);
 router.post('/code', controller.createOrUpdateCodeResponse);
 
+router.post('/bulk-save', controller.bulkSaveResponses);
+
+
 
 module.exports = router;

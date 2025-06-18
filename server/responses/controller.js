@@ -169,3 +169,39 @@ exports.getGroupResponses = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch group responses' });
   }
 };
+
+
+
+exports.bulkSaveResponses = async (req, res) => {
+  const { instanceId, userId, answers } = req.body;
+
+  try {
+    const entries = Object.entries(answers);
+    for (const [questionId, responseText] of entries) {
+      // 🛑 Skip saving if this is a follow-up (prompt or answer) that already exists
+      const isFollowup = /^(\d+[a-z]F\d*)$/.test(questionId); // Matches both F1 and FA1
+      if (isFollowup) {
+        const [existing] = await db.query(
+          `SELECT id FROM responses WHERE activity_instance_id = ? AND question_id = ?`,
+          [instanceId, questionId]
+        );
+        if (existing.length > 0) {
+          continue; // Already saved via socket; skip to avoid duplicates
+        }
+      }
+
+      // ✅ Save or update the response
+      await db.query(
+        `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
+         VALUES (?, ?, 'text', ?, ?)
+         ON DUPLICATE KEY UPDATE response = VALUES(response)`,
+        [instanceId, questionId, responseText, userId]
+      );
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ Failed to bulk save responses:", err);
+    res.status(500).json({ error: "Failed to bulk save" });
+  }
+};

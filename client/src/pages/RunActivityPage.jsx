@@ -10,6 +10,8 @@ import { useLocation } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
 import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
+import { io } from 'socket.io-client';
+
 
 export default function RunActivityPage() {
   const { instanceId } = useParams();
@@ -19,6 +21,8 @@ export default function RunActivityPage() {
   const [followupsShown, setFollowupsShown] = useState({}); // { qid: followupQuestion }
   const [followupAnswers, setFollowupAnswers] = useState({}); // { qid: studentAnswer }
   const [codeFeedbackShown, setCodeFeedbackShown] = useState({}); // { qid: feedback string }
+  const [socket, setSocket] = useState(null);
+
 
 
 
@@ -157,6 +161,96 @@ export default function RunActivityPage() {
   useEffect(() => { loadActivity(); }, []);
 
   useEffect(() => {
+    const newSocket = io(API_BASE_URL); // API_BASE_URL should point to your backend
+    setSocket(newSocket);
+
+    return () => {
+      newSocket.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (socket && instanceId) {
+      socket.emit('joinRoom', instanceId);
+    }
+  }, [socket, instanceId]);
+
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleUpdate = ({ responseKey, value, followupPrompt }) => {
+      if (responseKey.endsWith('FA1')) {
+        const qid = responseKey.replace('FA1', '');
+
+        // 1. Update follow-up answer
+        setFollowupAnswers(prev => ({
+          ...prev,
+          [responseKey]: value
+        }));
+
+        // 2. Ensure follow-up prompt is shown
+        setFollowupsShown(prev => ({
+          ...prev,
+          [qid]: followupPrompt || prev[qid] || 'Follow-up question'
+        }));
+      } else {
+        // Sample or original response
+        setExistingAnswers(prev => ({
+          ...prev,
+          [responseKey]: { ...prev[responseKey], response: value, type: 'text' }
+        }));
+      }
+    };
+
+    socket.on('response:update', handleUpdate);
+    return () => {
+      socket.off('response:update', handleUpdate);
+    };
+  }, [socket]);
+
+  useEffect(() => {
+    if (!isActive || !user?.id || !instanceId) return;
+
+    const interval = setInterval(() => {
+      const textToSave = {};
+
+      // Collect sample (original) responses
+      for (const [key, val] of Object.entries(existingAnswers)) {
+        if (val?.type === 'text' && val.response?.trim()) {
+          textToSave[key] = val.response.trim();
+        }
+      }
+
+      // Collect follow-up responses
+      for (const [key, val] of Object.entries(followupAnswers)) {
+        if (val?.trim()) {
+          textToSave[key] = val.trim();
+        }
+      }
+
+      if (Object.keys(textToSave).length > 0) {
+        fetch(`${API_BASE_URL}/api/responses/bulk-save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            instanceId,
+            userId: user.id,
+            answers: textToSave
+          })
+        }).then(res => {
+          if (!res.ok) console.warn('⚠️ Autosave failed');
+        }).catch(err => {
+          console.error('❌ Autosave error:', err);
+        });
+      }
+    }, 10000); // every 10 seconds
+
+    return () => clearInterval(interval);
+  }, [isActive, user?.id, instanceId, existingAnswers, followupAnswers]);
+
+
+  useEffect(() => {
     if (!activeStudentId) return;
     let student = groupMembers.find(m => String(m.student_id) === String(activeStudentId));
     if (!student) {
@@ -220,7 +314,38 @@ export default function RunActivityPage() {
         }
         return merged;
       });
-      setExistingAnswers(answersData);
+      setExistingAnswers(prev => ({
+        ...prev,
+        ...answersData
+      }));
+
+      const newFollowupsData = {};
+      for (const [qid, entry] of Object.entries(answersData)) {
+        if (qid.endsWith('FA1')) {
+          newFollowupsData[qid] = entry.response;
+        }
+      }
+
+
+      setFollowupAnswers(prev => ({
+        ...prev,
+        ...newFollowupsData  // if any
+      }));
+
+
+      const newFollowupsShown = {};
+      for (const [qid, entry] of Object.entries(answersData)) {
+        if (qid.endsWith('F1')) {
+          const baseQid = qid.replace('F1', '');
+          newFollowupsShown[baseQid] = entry.response;
+        }
+      }
+
+      setFollowupsShown(prev => ({
+        ...prev,
+        ...newFollowupsShown
+      }));
+
 
       // Step 6: Parse Google Doc structure
       const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(instanceData.sheet_url)}`);
@@ -392,7 +517,8 @@ export default function RunActivityPage() {
       }
 
       const followupPrompt = followupsShown[qid];
-      const followupAnswer = followupAnswers[qid]?.trim();
+      const followupKey = `${qid}FA1`;
+      const followupAnswer = followupAnswers[followupKey]?.trim();
 
       if (followupPrompt && !followupAnswer) {
         unanswered.push(qid);
@@ -402,10 +528,11 @@ export default function RunActivityPage() {
       if (baseAnswer && followupPrompt && followupAnswer) {
         answers[qid] = baseAnswer;
         answers[`${qid}S`] = 'complete';
-        if (followupPrompt) answers[`${qid}F1`] = followupPrompt;
-        if (followupAnswer) answers[`${qid}FA1`] = followupAnswer;
+        answers[`${qid}F1`] = followupPrompt;
+        answers[followupKey] = followupAnswer;
         continue;
       }
+
 
       if (baseAnswer) {
         answers[qid] = baseAnswer;
@@ -567,9 +694,39 @@ export default function RunActivityPage() {
               followupsShown,
               followupAnswers,
               setFollowupAnswers,
+              socket,                      // ✅ add this
+              instanceId,                  // ✅ add this
+              answeredBy: user?.id,        // ✅ add this
               onCodeChange: handleCodeChange,
-              codeFeedbackShown, // ✅ new prop
+              codeFeedbackShown,
+              onTextChange: (responseKey, value) => {
+                if (responseKey.endsWith('FA1')) {
+                  // 🔄 Follow-up response: update followupAnswers
+                  setFollowupAnswers(prev => ({
+                    ...prev,
+                    [responseKey]: value
+                  }));
+                } else {
+                  // 📝 Sample (original) response: update existingAnswers
+                  setExistingAnswers(prev => ({
+                    ...prev,
+                    [responseKey]: { ...prev[responseKey], response: value, type: 'text' }
+                  }));
+                }
+
+                // 📢 Emit for live sync
+                if (isActive && socket) {
+                  socket.emit('response:update', {
+                    instanceId,
+                    responseKey,
+                    value,
+                    answeredBy: user.id
+                  });
+                }
+              }
+
             })}
+
 
             {editable && (
               <div className="mt-2">
