@@ -41,26 +41,51 @@ export default function ActivityPreview() {
 
     const loadSkulpt = async () => {
       try {
-        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
-        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
-        //await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-fs.min.js');  
+        await loadScript('/skulpt/skulpt.min.js');
+        await loadScript('/skulpt/skulpt-stdlib.js');
 
-        //await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
-        //await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
+        if (window.Sk) {
+          console.log("✅ Skulpt version:", Sk.version);
+          console.log("✅ Skulpt file system support?", typeof Sk.fs !== 'undefined');
 
+          // ✅ Define Sk.fs manually if missing
+          if (!Sk.fs) {
+            console.log("⚙️ Injecting in-memory file system support into Sk");
+            Sk.fs = (function () {
+              const files = {};
 
-        if (window.Sk && window.Sk.builtinFiles) {
-          console.log('✅ Skulpt is ready');
-          setSkulptLoaded(true);
-        } else {
-          console.warn('⚠️ Skulpt scripts loaded, but core objects not initialized');
+              return {
+                writeFile: (name, content) => {
+                  files[name] = typeof content === "string" ? content : content.toString();
+                },
+                readFile: (name) => {
+                  if (!(name in files)) throw new Sk.builtin.IOError(`No such file: ${name}`);
+                  return files[name];
+                },
+                exists: (name) => name in files,
+                deleteFile: (name) => { delete files[name]; },
+                listFiles: () => Object.keys(files),
+              };
+            })();
+          }
+
+          if (Sk.builtinFiles) {
+            console.log('✅ Skulpt is ready');
+            setSkulptLoaded(true);
+          } else {
+            console.warn('⚠️ Skulpt loaded but builtinFiles missing');
+          }
         }
       } catch (err) {
         console.error('🚨 Skulpt failed to load', err);
       }
     };
 
+
     loadSkulpt();
+    
+
+
   }, []);
 
 

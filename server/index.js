@@ -52,6 +52,9 @@ app.use(async (req, res, next) => {
 
 console.log('Resolved staticDir:', staticDir);
 
+// Serve Skulpt and other static assets
+app.use(express.static(path.join(__dirname, '../public')));
+
 // ✅ Serve frontend static assets
 app.use(express.static(staticDir));
 
