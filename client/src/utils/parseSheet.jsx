@@ -334,13 +334,19 @@ export function renderBlocks(blocks, options = {}) {
     }
 
     if (block.type === 'file') {
+      const effectiveContent =
+        editable && fileContents?.[block.filename] !== undefined
+          ? fileContents[block.filename]
+          : block.content;
+      console.log('✏️ file editable?', editable);
+      console.log('📂 fileContents:', fileContents);
       return (
         <div key={`file-${index}`} className="mb-3">
           <strong>📄 File: <code>{block.filename}</code></strong>
           <Form.Control
             as="textarea"
-            value={fileContents?.[block.filename] ?? block.content}
-
+            defaultValue={editable ? effectiveContent : undefined}
+            value={!editable ? effectiveContent : undefined}
             onChange={(e) => {
               if (editable && setFileContents) {
                 setFileContents(prev => ({
@@ -349,14 +355,14 @@ export function renderBlocks(blocks, options = {}) {
                 }));
               }
             }}
-            rows={Math.max(4, (fileContents?.[block.filename] ?? block.content).split('\n').length)}
+            rows={Math.max(4, effectiveContent.split('\n').length)}
             readOnly={!editable}
             className="font-monospace bg-light mt-1"
           />
-
         </div>
       );
     }
+
 
     if (block.type === 'python') {
       const groupPrefix = (currentGroupIndex + 1).toString(); // dynamic group number

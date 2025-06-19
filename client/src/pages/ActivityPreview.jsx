@@ -41,8 +41,11 @@ export default function ActivityPreview() {
 
     const loadSkulpt = async () => {
       try {
-        await loadScript('/skulpt/skulpt.min.js');
-        await loadScript('/skulpt/skulpt-stdlib.js');
+        //await loadScript('/skulpt/skulpt.min.js');
+        //await loadScript('/skulpt/skulpt-stdlib.js');
+        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
+        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
+        console.log("✅ Skulpt scripts loaded");
 
         if (window.Sk) {
           console.log("✅ Skulpt version:", Sk.version);
@@ -83,7 +86,7 @@ export default function ActivityPreview() {
 
 
     loadSkulpt();
-    
+
 
 
   }, []);
@@ -132,7 +135,7 @@ export default function ActivityPreview() {
       setFileContents,
     });
     setElements(rendered);
-  }, [blocks]); // only run once when blocks change
+  }, [blocks, fileContents]);
 
 
   useEffect(() => {

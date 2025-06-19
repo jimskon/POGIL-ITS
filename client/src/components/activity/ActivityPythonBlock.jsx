@@ -1,3 +1,4 @@
+// src: client/src/components/activity/ActivityPythonBlock.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { Form, Button } from 'react-bootstrap';
 import Prism from 'prismjs';
@@ -10,7 +11,7 @@ export default function ActivityPythonBlock({
   responseKey,
   onCodeChange,
   codeFeedbackShown = {},
-  fileContents = {}, 
+  fileContents = {},
 }) {
   const [code, setCode] = useState(initialCode);
   const [savedCode, setSavedCode] = useState(initialCode);
@@ -21,7 +22,14 @@ export default function ActivityPythonBlock({
   const codeRef = useRef(null);
   const outputRef = useRef(null);
   const [outputText, setOutputText] = useState('');
+  const fileContentsRef = useRef(fileContents);
 
+
+  useEffect(() => {
+    // This ensures runPython sees the latest fileContents
+    fileContentsRef.current = fileContents;
+    console.log("📥 Updated fileContentsRef:", fileContentsRef.current);
+  }, [fileContents]);
 
 
   useEffect(() => {
@@ -36,19 +44,23 @@ export default function ActivityPythonBlock({
   }, [initialCode]);
 
 
-  const runPython = () => {
-    if (!window.Sk || !window.Sk.configure) {
-      alert("Skulpt is still loading...");
-      return;
-    }
-    console.log("runPython!!!");
-    runSkulptCode({
-      code,
-      fileContents,
-      setOutput: setOutputText,
-    });
-  };
-  
+const runPython = () => {
+  if (!window.Sk || !window.Sk.configure) {
+    alert("Skulpt is still loading...");
+    return;
+  }
+
+  const currentFiles = { ...fileContentsRef.current };  // 🔍 force fresh copy
+  console.log("🚀 Running with fileContents:", currentFiles); // ✅ must match latest edit
+
+  runSkulptCode({
+    code,
+    fileContents: currentFiles,
+    setOutput: setOutputText,
+  });
+};
+
+
 
   const handleDoneEditing = () => {
     setIsEditing(false);
