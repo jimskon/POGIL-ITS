@@ -108,6 +108,16 @@ io.on('connection', (socket) => {
     });
   });
 
+  // ✅ NEW: Broadcast AI feedback to other users in the room
+  socket.on('feedback:update', ({ instanceId, responseKey, feedback }) => {
+    socket.to(`instance-${instanceId}`).emit('feedback:update', {
+      instanceId,
+      responseKey,
+      feedback
+    });
+  });
+
+
   socket.on('disconnect', () => {
     console.log('❌ Socket.IO client disconnected');
   });

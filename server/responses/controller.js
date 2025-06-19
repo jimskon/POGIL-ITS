@@ -63,6 +63,15 @@ exports.createOrUpdateCodeResponse = async (req, res) => {
       [responseId, feedbackText]
     );
 
+    // ✅ Emit AI feedback to all group members
+    if (global.io) {
+      global.io.to(`instance-${activity_instance_id}`).emit('feedback:update', {
+        instanceId: activity_instance_id,
+        responseKey: question_id,
+        feedback: feedbackText,
+      });
+    }
+
     await conn.commit();
 
     res.json({ success: true, feedback: feedbackText });
@@ -205,3 +214,42 @@ exports.bulkSaveResponses = async (req, res) => {
     res.status(500).json({ error: "Failed to bulk save" });
   }
 };
+
+
+exports.saveFeedback = async (req, res) => {
+  const {
+    question_id,
+    activity_instance_id,
+    user_id,
+    response_type,
+    feedback,
+  } = req.body;
+
+  try {
+    // Step 1: Find the response ID to attach feedback to
+    const [rows] = await db.query(
+      `SELECT id FROM responses WHERE activity_instance_id = ? AND question_id = ? AND answered_by_user_id = ?`,
+      [activity_instance_id, question_id, user_id]
+    );
+
+    const responseId = rows?.[0]?.id;
+    if (!responseId) {
+      return res.status(404).json({ error: "Response not found" });
+    }
+
+    // Step 2: Save feedback into the feedback table
+    await db.query(
+      `INSERT INTO feedback (response_id, feedback_text)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE feedback_text = VALUES(feedback_text)`,
+      [responseId, feedback]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ Error saving feedback:", err);
+    res.status(500).json({ error: "Failed to save feedback" });
+  }
+};
+
+

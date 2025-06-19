@@ -204,9 +204,21 @@ export default function RunActivityPage() {
     };
 
     socket.on('response:update', handleUpdate);
+
+    // 🧠 Listen for AI feedback updates
+    socket.on('feedback:update', ({ responseKey, feedback }) => {
+      console.log(`📡 Received feedback for ${responseKey}:`, feedback);
+      setCodeFeedbackShown(prev => ({
+        ...prev,
+        [responseKey]: feedback,
+      }));
+    });
+
     return () => {
       socket.off('response:update', handleUpdate);
+      socket.off('feedback:update'); // ✅ clean up feedback listener
     };
+
   }, [socket]);
 
   useEffect(() => {
@@ -308,12 +320,13 @@ export default function RunActivityPage() {
       setCodeFeedbackShown(prev => {
         const merged = { ...prev };
         for (const [qid, entry] of Object.entries(answersData)) {
-          if (entry.type === 'python' && entry.python_feedback) {
-            merged[qid] = entry.python_feedback;
+          if (entry.type === 'python') {
+            merged[qid] = entry.python_feedback ?? null;
           }
         }
         return merged;
       });
+
       setExistingAnswers(prev => ({
         ...prev,
         ...answersData
@@ -631,17 +644,54 @@ export default function RunActivityPage() {
       const aiData = await aiRes.json();
       if (aiData.feedback) {
         console.log(`🤖 AI feedback for ${responseKey}:`, aiData.feedback);
+
+        // Save feedback to DB
+        await fetch(`${API_BASE_URL}/api/responses/save-feedback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question_id: responseKey,
+            activity_instance_id: instanceId,
+            user_id: user?.id,
+            response_type: 'python_feedback',
+            feedback: aiData.feedback,
+          }),
+        });
+
+        // 1. Save locally
         setCodeFeedbackShown(prev => ({
           ...prev,
           [responseKey]: aiData.feedback,
         }));
+
+        // 2. 🔁 Emit to observers
+        if (socket && instanceId) {
+          socket.emit('feedback:update', {
+            instanceId,
+            responseKey,
+            feedback: aiData.feedback,
+          });
+        }
+
       } else {
         console.log(`🤖 No feedback needed for ${responseKey}`);
+
+        // Clear feedback locally
         setCodeFeedbackShown(prev => ({
           ...prev,
           [responseKey]: null,
         }));
+
+        // 🔁 Emit empty feedback to clear for observers
+        if (socket && instanceId) {
+          socket.emit('feedback:update', {
+            instanceId,
+            responseKey,
+            feedback: null,
+          });
+        }
       }
+
     } catch (err) {
       console.error("❌ Failed in handleCodeChange:", responseKey, err);
     }
