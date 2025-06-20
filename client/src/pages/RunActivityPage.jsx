@@ -320,12 +320,13 @@ export default function RunActivityPage() {
       setCodeFeedbackShown(prev => {
         const merged = { ...prev };
         for (const [qid, entry] of Object.entries(answersData)) {
-          if (entry.type === 'python') {
-            merged[qid] = entry.python_feedback ?? null;
+          if ('python_feedback' in entry && entry.python_feedback !== undefined) {
+            merged[qid] = entry.python_feedback;
           }
         }
         return merged;
       });
+
 
       setExistingAnswers(prev => ({
         ...prev,
