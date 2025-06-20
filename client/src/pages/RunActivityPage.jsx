@@ -283,7 +283,9 @@ export default function RunActivityPage() {
 
       // Step 1: Fetch activity instance info (includes total_groups)
       const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
-      const instanceData = await instanceRes.json();
+      let instanceData = await instanceRes.json(); // ✅ make it mutable
+
+      console.log("🧾 instanceData.sheet_url =", instanceData.sheet_url);
       setActivity(instanceData);
 
       // Step 2: If total_groups is missing, refresh it from Google Doc
@@ -295,6 +297,7 @@ export default function RunActivityPage() {
         const updatedRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
         const updatedData = await updatedRes.json();
         setActivity(updatedData);
+        instanceData = updatedData; // ✅ FIX: use updated data for doc preview
       }
 
       // Step 3: Get current active student
@@ -362,27 +365,35 @@ export default function RunActivityPage() {
 
 
       // Step 6: Parse Google Doc structure
-      const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(instanceData.sheet_url)}`);
-      const { lines } = await docRes.json();
-      const blocks = parseSheetToBlocks(lines);
 
-      const grouped = [], preamble = [];
-      let currentGroup = null;
-      for (let block of blocks) {
-        if (block.type === 'groupIntro') {
-          if (currentGroup) grouped.push(currentGroup);
-          currentGroup = { intro: block, content: [] };
-        } else if (block.type === 'endGroup') {
-          if (currentGroup) { grouped.push(currentGroup); currentGroup = null; }
-        } else if (currentGroup) {
-          currentGroup.content.push(block);
-        } else {
-          preamble.push(block);
+      const docUrl = instanceData.sheet_url;
+      if (!docUrl || docUrl === 'undefined') {
+        console.warn("❌ Skipping doc preview because sheet_url is missing or undefined:", docUrl);
+      } else {
+        const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(docUrl)}`);
+        const { lines } = await docRes.json();
+        const blocks = parseSheetToBlocks(lines);
+
+        const grouped = [], preamble = [];
+        let currentGroup = null;
+        for (let block of blocks) {
+          if (block.type === 'groupIntro') {
+            if (currentGroup) grouped.push(currentGroup);
+            currentGroup = { intro: block, content: [] };
+          } else if (block.type === 'endGroup') {
+            if (currentGroup) { grouped.push(currentGroup); currentGroup = null; }
+          } else if (currentGroup) {
+            currentGroup.content.push(block);
+          } else {
+            preamble.push(block);
+          }
         }
+
+        setGroups(grouped);
+        setPreamble(preamble);
       }
 
-      setGroups(grouped);
-      setPreamble(preamble);
+
     } catch (err) {
       console.error('Failed to load activity data', err);
     }

@@ -36,26 +36,26 @@ export default function ActivityPreview() {
         };
         document.head.appendChild(script); // use <head> for better priority
       });
-  
-      const loadSkulpt = async () => {
-        try {
-          await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
-          await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
-      
-          if (window.Sk && window.Sk.builtinFiles) {
-            console.log('✅ Skulpt is ready');
-            setSkulptLoaded(true); 
-          } else {
-            console.warn('⚠️ Skulpt scripts loaded, but core objects not initialized');
-          }
-        } catch (err) {
-          console.error('🚨 Skulpt failed to load', err);
+
+    const loadSkulpt = async () => {
+      try {
+        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
+        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
+
+        if (window.Sk && window.Sk.builtinFiles) {
+          console.log('✅ Skulpt is ready');
+          setSkulptLoaded(true);
+        } else {
+          console.warn('⚠️ Skulpt scripts loaded, but core objects not initialized');
         }
-      };
-  
+      } catch (err) {
+        console.error('🚨 Skulpt failed to load', err);
+      }
+    };
+
     loadSkulpt();
   }, []);
-  
+
 
   useEffect(() => {
     const fetchActivityAndSheet = async () => {
@@ -63,6 +63,14 @@ export default function ActivityPreview() {
         const res = await fetch(`${API_BASE_URL}/api/activities/${activityId}`);
         const activityData = await res.json();
         setActivity(activityData);
+        console.log("🧾 activityData.sheet_url =", activityData.sheet_url);
+
+
+        // ✅ Add this guard to prevent undefined docUrl fetch
+        if (!activityData.sheet_url || activityData.sheet_url === 'undefined') {
+          console.warn("❌ Skipping doc preview because sheet_url is missing:", activityData.sheet_url);
+          return;
+        }
 
         const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activityData.sheet_url)}`);
         const { lines } = await docRes.json();
