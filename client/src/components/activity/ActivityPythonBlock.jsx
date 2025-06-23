@@ -11,7 +11,7 @@ export default function ActivityPythonBlock({
   responseKey,
   onCodeChange,
   codeFeedbackShown = {},
-  fileContents = {},
+  fileContentsRef,
 }) {
   const [code, setCode] = useState(initialCode);
   const [savedCode, setSavedCode] = useState(initialCode);
@@ -22,14 +22,11 @@ export default function ActivityPythonBlock({
   const codeRef = useRef(null);
   const outputRef = useRef(null);
   const [outputText, setOutputText] = useState('');
-  const fileContentsRef = useRef(fileContents);
 
 
   useEffect(() => {
-    // This ensures runPython sees the latest fileContents
-    fileContentsRef.current = fileContents;
     console.log("📥 Updated fileContentsRef:", fileContentsRef.current);
-  }, [fileContents]);
+  }, [fileContentsRef.current]);
 
 
   useEffect(() => {
@@ -45,6 +42,8 @@ export default function ActivityPythonBlock({
 
 
 const runPython = () => {
+  console.log("🚀 Running with fileContents:", fileContentsRef.current);
+
   if (!window.Sk || !window.Sk.configure) {
     alert("Skulpt is still loading...");
     return;

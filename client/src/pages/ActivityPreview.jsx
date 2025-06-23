@@ -1,5 +1,5 @@
 // ActivityPreview.jsx
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Container } from 'react-bootstrap';
 import Prism from 'prismjs';
@@ -13,10 +13,21 @@ export default function ActivityPreview() {
   const { activityId } = useParams();
   const [activity, setActivity] = useState(null);
   const [sheetData, setSheetData] = useState([]);
-  const [elements, setElements] = useState([]);
+  //const [elements, setElements] = useState([]);
   const [skulptLoaded, setSkulptLoaded] = useState(false);
   const [fileContents, setFileContents] = useState({});
   const [blocks, setBlocks] = useState([]);
+  const [renderedElements, setRenderedElements] = useState([]);
+  const fileContentsRef = useRef({});
+
+  const handleUpdateFileContents = (updaterFn) => {
+    setFileContents((prev) => {
+      const updated = updaterFn(prev);
+      fileContentsRef.current = updated; // keep ref in sync
+      return updated;
+    });
+  };
+
 
   useEffect(() => {
     const loadScript = (src) =>
@@ -113,6 +124,10 @@ export default function ActivityPreview() {
         setBlocks(parsed);         // save parsed blocks to state
         setFileContents(files);    //  makes the files available to Skulpt
 
+        setBlocks(parsed);         // save parsed blocks to state
+        setFileContents(files);    // updates state for preview and editing
+        fileContentsRef.current = files;
+
       } catch (err) {
         console.error("Failed to fetch preview data", err);
       }
@@ -123,31 +138,33 @@ export default function ActivityPreview() {
     }
   }, [activityId, skulptLoaded]);
 
-  useEffect(() => {
+  /*useEffect(() => {
     console.log("🧾 Preview fileContents:", fileContents);
-  }, [fileContents]);
+  }, [fileContents]);*/
 
   useEffect(() => {
+    console.log("🔁 Rendering blocks due to [blocks]");
     const rendered = renderBlocks(blocks, {
       mode: 'preview',
       editable: true,
-      fileContents,
-      setFileContents,
+      fileContentsRef,
+      setFileContents: handleUpdateFileContents, // ✅ FIXED
     });
-    setElements(rendered);
-  }, [blocks, fileContents]);
+    setRenderedElements(rendered);
+  }, [blocks]);
+
 
 
   useEffect(() => {
     Prism.highlightAll();
-  }, [elements]);
+  }, [renderedElements]);
 
   return (
     <Container>
       <h2>Preview: {activity?.title}</h2>
       {!skulptLoaded
         ? <p>Loading Python engine (Skulpt)...</p>
-        : elements
+        : renderedElements
       }
     </Container>
   );

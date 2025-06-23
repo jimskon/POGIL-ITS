@@ -6,6 +6,51 @@ import ActivityEnvironment from '../components/activity/ActivityEnvironment';
 import ActivityPythonBlock from '../components/activity/ActivityPythonBlock';
 import { Form } from 'react-bootstrap';
 
+import { useState, useEffect } from 'react';
+
+export default function FileBlock({ filename, fileContentsRef, editable, setFileContents }) {
+  const fileContents = fileContentsRef.current || {};
+  const [localValue, setLocalValue] = useState(fileContents?.[filename] || '');
+
+  // Sync localValue when fileContents changes
+  useEffect(() => {
+    if (localValue === '' && fileContentsRef.current?.[filename]) {
+      setLocalValue(fileContentsRef.current[filename]);
+    }
+  }, [filename]);
+
+  const handleChange = (e) => {
+    const updated = e.target.value;
+    setLocalValue(updated);
+
+    if (editable && setFileContents) {
+      setFileContents(prev => {
+        const updatedContents = {
+          ...prev,
+          [filename]: updated,
+        };
+        console.log("💾 File updated:", filename, "=>", updated);
+        return updatedContents;
+      });
+    }
+  };
+
+  return (
+    <div className="mb-3">
+      <strong>📄 File: <code>{filename}</code></strong>
+      <Form.Control
+        as="textarea"
+        value={localValue}
+        onChange={handleChange}
+        rows={Math.max(4, localValue.split('\n').length)}
+        readOnly={!editable}
+        className="font-monospace bg-light mt-1"
+      />
+    </div>
+  );
+}
+
+
 export function parseSheetToBlocks(lines) {
   console.log("🧑‍💻 parseSheetToBlocks invoked");
   const blocks = [];
@@ -286,8 +331,8 @@ export function renderBlocks(blocks, options = {}) {
     setFollowupAnswers = () => { },
     onCodeChange = null,
     codeFeedbackShown = {},
-    fileContents = {},
-    setFileContents = () => { },
+    fileContentsRef,
+    setFileContents,
   } = options;
 
   let standaloneCodeCounter = 1;
@@ -334,34 +379,18 @@ export function renderBlocks(blocks, options = {}) {
     }
 
     if (block.type === 'file') {
-      const effectiveContent =
-        editable && fileContents?.[block.filename] !== undefined
-          ? fileContents[block.filename]
-          : block.content;
-      console.log('✏️ file editable?', editable);
-      console.log('📂 fileContents:', fileContents);
       return (
-        <div key={`file-${index}`} className="mb-3">
-          <strong>📄 File: <code>{block.filename}</code></strong>
-          <Form.Control
-            as="textarea"
-            defaultValue={editable ? effectiveContent : undefined}
-            value={!editable ? effectiveContent : undefined}
-            onChange={(e) => {
-              if (editable && setFileContents) {
-                setFileContents(prev => ({
-                  ...prev,
-                  [block.filename]: e.target.value,
-                }));
-              }
-            }}
-            rows={Math.max(4, effectiveContent.split('\n').length)}
-            readOnly={!editable}
-            className="font-monospace bg-light mt-1"
-          />
-        </div>
+        <FileBlock
+          key={`file-${index}`}
+          filename={block.filename}
+          fileContentsRef={fileContentsRef}
+          editable={editable}
+          setFileContents={setFileContents}
+        />
+
       );
     }
+
 
 
     if (block.type === 'python') {
@@ -381,7 +410,7 @@ export function renderBlocks(blocks, options = {}) {
           responseKey={codeKey}
           onCodeChange={onCodeChange}
           codeFeedbackShown={codeFeedbackShown}
-          fileContents={fileContents}
+          fileContentsRef={fileContentsRef}
         />
 
       );
@@ -460,7 +489,7 @@ export function renderBlocks(blocks, options = {}) {
                 responseKey={responseKey}
                 onCodeChange={onCodeChange}
                 codeFeedbackShown={codeFeedbackShown}
-                fileContents={fileContents}
+                fileContentsRef={fileContentsRef}
               />
 
             );
