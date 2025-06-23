@@ -384,8 +384,8 @@ export function renderBlocks(blocks, options = {}) {
           key={`file-${index}`}
           filename={block.filename}
           fileContentsRef={fileContentsRef}
-          editable={editable}
           setFileContents={setFileContents}
+          editable={true}
         />
 
       );

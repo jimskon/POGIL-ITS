@@ -1,5 +1,5 @@
 // client/src/pages/RunActivityPage.jsx
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Container, Alert, Button, Spinner } from 'react-bootstrap';
 import Prism from 'prismjs';
@@ -20,9 +20,15 @@ export default function RunActivityPage() {
   const [followupAnswers, setFollowupAnswers] = useState({}); // { qid: studentAnswer }
   const [codeFeedbackShown, setCodeFeedbackShown] = useState({}); // { qid: feedback string }
   const [fileContents, setFileContents] = useState({});
+  const fileContentsRef = useRef(fileContents);
 
-
-
+  const handleUpdateFileContents = (updaterFn) => {
+    setFileContents((prev) => {
+      const updated = updaterFn(prev);
+      fileContentsRef.current = updated;
+      return updated;
+    });
+  };
 
   console.log("🔍 User:", user);
 
@@ -87,6 +93,11 @@ export default function RunActivityPage() {
       </Container>
     );
   }
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    fileContentsRef.current = fileContents;
+  }, [fileContents]);
 
   useEffect(() => {
     const interval = setInterval(async () => {
@@ -227,6 +238,16 @@ export default function RunActivityPage() {
       const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(instanceData.sheet_url)}`);
       const { lines } = await docRes.json();
       const blocks = parseSheetToBlocks(lines);
+
+      const files = {};
+      for (const block of blocks) {
+        if (block.type === 'file' && block.filename && block.content) {
+          files[block.filename] = block.content;
+        }
+      }
+      setFileContents(files);
+      fileContentsRef.current = files;
+
 
       const grouped = [], preamble = [];
       let currentGroup = null;
@@ -534,6 +555,8 @@ export default function RunActivityPage() {
         isActive: false,
         mode: 'run',
         codeFeedbackShown, // ✅ FIX added here
+        fileContentsRef,
+        setFileContents: handleUpdateFileContents,
       })}
 
       {groups.map((group, index) => {
@@ -568,6 +591,8 @@ export default function RunActivityPage() {
               followupsShown,
               followupAnswers,
               setFollowupAnswers,
+              fileContentsRef,
+              setFileContents,
               onCodeChange: handleCodeChange,
               codeFeedbackShown, // ✅ new prop
             })}
