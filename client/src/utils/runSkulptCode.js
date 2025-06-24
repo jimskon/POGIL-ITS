@@ -49,6 +49,7 @@ def open(filename, mode='r'):
   const finalCode = injectedPython + '\n' + code;
 
   Sk.python3 = true;
+
   Sk.configure({
     output: (txt) => setOutput((prev) => prev + txt),
     inputfunTakesPrompt: true,
@@ -90,6 +91,7 @@ def open(filename, mode='r'):
   });
 
   try {
+    Sk.execLimit = 50; // prevent infinite hangs
     Sk.python3 = true;
     console.log("🚀 Running with fileContents:", fileContents); 
     await Sk.misceval.asyncToPromise(() => {
