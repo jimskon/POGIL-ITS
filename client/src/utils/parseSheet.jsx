@@ -12,7 +12,12 @@ export default function FileBlock({ filename, fileContentsRef, editable, setFile
   const fileContents = fileContentsRef.current || {};
   const [localValue, setLocalValue] = useState(fileContents?.[filename] || '');
 
-  // Sync localValue when fileContents changes
+  // Sync localValue
+  // 
+  // 
+  // 
+  // 
+  //  when fileContents changes
   useEffect(() => {
     if (localValue === '' && fileContentsRef.current?.[filename]) {
       setLocalValue(fileContentsRef.current[filename]);
@@ -235,6 +240,7 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
+    // --- Handle tables ---
     if (trimmed.startsWith('\\table{')) {
       flushCurrentBlock();
       const title = trimmed.match(/\\table\{(.+?)\}/)?.[1] || '';
@@ -248,7 +254,7 @@ export function parseSheetToBlocks(lines) {
         if (!currentQuestion.tableBlocks) currentQuestion.tableBlocks = [];
         currentQuestion.tableBlocks.push(newTable);
       } else {
-        currentQuestion = newTable;
+        currentQuestion = newTable; // standalone table
       }
       continue;
     }
@@ -290,6 +296,7 @@ export function parseSheetToBlocks(lines) {
       flushCurrentBlock();
       inFileBlock = true;
       const filename = trimmed.match(/\\file\{(.+?)\}/)?.[1]?.trim();
+      console.log("📂 Starting file block for:", filename);
       currentFile = { type: 'file', filename, lines: [] };
       continue;
     }
@@ -430,7 +437,13 @@ export function renderBlocks(blocks, options = {}) {
                         <td key={cellKey}>
                           <Form.Control
                             type="text"
-                            defaultValue={prefill?.[cellKey]?.response || ''}
+                            value={prefill?.[cellKey]?.response || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (options.onTextChange) {
+                                options.onTextChange(cellKey, val);
+                              }
+                            }}
                             readOnly={!editable}
                             data-question-id={cellKey}
                           />
@@ -453,13 +466,14 @@ export function renderBlocks(blocks, options = {}) {
       );
     }
 
+
+
+
     if (block.type === 'question') {
       const responseKey = `${block.groupId}${block.id}`;
-      const followupQs = Object.entries(prefill)
-        .filter(([key]) => key.startsWith(responseKey + 'F') && !key.includes('FA'))
-        .sort(([a], [b]) => a.localeCompare(b));
-      const followupAppeared = !!prefill?.[`${responseKey}F1`] || !!followupsShown?.[responseKey];
+      const followupAppeared = !!followupsShown?.[responseKey];
       const groupComplete = prefill?.[`${responseKey}S`] === 'complete';
+
 
       return (
         <div key={`q-${block.id}`} className="mb-4">
@@ -508,7 +522,13 @@ export function renderBlocks(blocks, options = {}) {
                             <td key={cellKey}>
                               <Form.Control
                                 type="text"
-                                defaultValue={prefill?.[cellKey]?.response || ''}
+                                value={prefill?.[cellKey]?.response || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (options.onTextChange) {
+                                    options.onTextChange(cellKey, val);
+                                  }
+                                }}
                                 readOnly={!editable}
                                 data-question-id={cellKey}
                               />
@@ -536,12 +556,19 @@ export function renderBlocks(blocks, options = {}) {
             <Form.Control
               as="textarea"
               rows={Math.max((block.responseLines || 1), 2)}
-              defaultValue={prefill?.[responseKey]?.response || ''}
+              value={prefill?.[responseKey]?.response || ''}
               readOnly={!editable || (prefill?.[`${block.groupId}state`]?.response === 'complete')}
               data-question-id={responseKey}
               className="mt-2"
               style={{ resize: 'vertical' }}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (options.onTextChange) {
+                  options.onTextChange(responseKey, val);
+                }
+              }}
             />
+
           ) : null}
 
           {mode === 'preview' && (
@@ -553,72 +580,81 @@ export function renderBlocks(blocks, options = {}) {
           )}
 
           {/* Show saved followup Q&A in read-only format */}
-          {followupQs.map(([fqid], i) => {
-            const fq = prefill[fqid]?.response;
-            const faid = fqid.replace('F', 'FA');
-            const fa = prefill[faid]?.response;
+
+
+          {/* Follow-up input or locked view */}
+          {/* Follow-up input or locked view */}
+          {followupsShown?.[responseKey] && (() => {
+            const followupKey = `${responseKey}FA1`;
             return (
-              <div key={fqid} className="mt-3">
-                <div className="text-muted"><strong>Follow-up {i + 1}:</strong> {fq}</div>
-                {fa && <div className="bg-light p-2 rounded mt-1">{fa}</div>}
-              </div>
+              <>
+                <div className="mt-3 text-muted">
+                  <strong>Follow-up:</strong> {followupsShown[responseKey]}
+                  {(prefill?.[followupKey] || !editable) && (
+                    <span
+                      className="ms-2"
+                      title="Follow-up response is locked"
+                      style={{ color: '#888', cursor: 'not-allowed' }}
+                    >
+                      🔒
+                    </span>
+                  )}
+                </div>
+
+                {!editable ||
+                  prefill?.[followupKey] ||
+                  Object.keys(followupsShown)
+                    .filter((k) => k !== responseKey)
+                    .some((k) => {
+                      const [kGroup, kLetter] = k.match(/^(\d+)([a-z])/).slice(1);
+                      const [rGroup, rLetter] = responseKey.match(/^(\d+)([a-z])/).slice(1);
+                      return parseInt(kGroup) > parseInt(rGroup) ||
+                        (parseInt(kGroup) === parseInt(rGroup) && kLetter > rLetter);
+                    })
+                  ? (
+                    <div className="bg-light p-2 rounded mt-1">
+                      {prefill?.[followupKey]?.response || followupAnswers?.[followupKey] || ''}
+
+                    </div>
+                  ) : (
+                    <Form.Control
+                      as="textarea"
+                      rows={2}
+                      value={followupAnswers?.[followupKey] || ''}
+                      placeholder="Respond to the follow-up question here..."
+                      onChange={(e) => {
+                        const val = e.target.value;
+
+                        setFollowupAnswers(prev => ({
+                          ...prev,
+                          [followupKey]: val
+                        }));
+
+                        if (options.isActive && options.socket) {
+                          console.log("📡 EMITTING FOLLOW-UP RESPONSE", {
+                            instanceId: options.instanceId,
+                            responseKey: followupKey,
+                            value: val,
+                            answeredBy: options.answeredBy
+                          });
+
+                          options.socket.emit('response:update', {
+                            instanceId: options.instanceId,
+                            responseKey: followupKey,
+                            value: val,
+                            answeredBy: options.answeredBy,
+                            followupPrompt: options.followupsShown?.[responseKey]
+                          });
+                        }
+                      }}
+                      className="mt-1"
+                      style={{ resize: 'vertical' }}
+                    />
+                  )}
+              </>
             );
-          })}
+          })()}
 
-          {/* Follow-up input or locked view */}
-          {/* Follow-up input or locked view */}
-          {followupsShown?.[responseKey] && (
-            <>
-              <div className="mt-3 text-muted">
-                <strong>Follow-up:</strong> {followupsShown[responseKey]}
-                {(prefill?.[`${responseKey}FA1`] || !editable) && (
-                  <span
-                    className="ms-2"
-                    title="Follow-up response is locked"
-                    style={{ color: '#888', cursor: 'not-allowed' }}
-                  >
-                    🔒
-                  </span>
-                )}
-              </div>
-
-              {!editable ||
-                prefill[`${responseKey}FA1`] ||
-                Object.keys(followupsShown)
-                  .filter((k) => k !== responseKey)
-                  .some((k) => {
-                    const [kGroup, kLetter] = k.match(/^(\d+)([a-z])/).slice(1);
-                    const [rGroup, rLetter] = responseKey.match(/^(\d+)([a-z])/).slice(1);
-                    return parseInt(kGroup) > parseInt(rGroup) ||
-                      (parseInt(kGroup) === parseInt(rGroup) && kLetter > rLetter);
-                  })
-
-
-
-
-                ? (
-                  <div className="bg-light p-2 rounded mt-1">
-                    {prefill?.[`${responseKey}FA1`] || followupAnswers?.[responseKey] || ''}
-                  </div>
-                ) : (
-                  <Form.Control
-                    as="textarea"
-                    rows={2}
-                    value={followupAnswers?.[responseKey] || ''}
-                    placeholder="Respond to the follow-up question here..."
-                    onChange={(e) =>
-                      setFollowupAnswers((prev) => ({
-                        ...prev,
-                        [responseKey]: e.target.value,
-                      }))
-                    }
-                    className="mt-1"
-                    style={{ resize: 'vertical' }}
-                  />
-                )}
-
-            </>
-          )}
 
         </div>
       );

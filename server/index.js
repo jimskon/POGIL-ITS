@@ -82,4 +82,51 @@ app.all('*', (req, res) => {
   res.sendFile(path.resolve(staticDir, 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`ITS server running on port ${PORT}`));
+const http = require('http');
+const { Server } = require('socket.io');
+
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: '*', // 🔐 Change this to your frontend URL in production
+    methods: ['GET', 'POST']
+  }
+});
+
+global.io = io;
+
+io.on('connection', (socket) => {
+  console.log('🔌 Socket.IO client connected');
+
+  socket.on('joinRoom', (instanceId) => {
+    socket.join(`instance-${instanceId}`);
+    console.log(`👥 Client joined room instance-${instanceId}`);
+  });
+
+  socket.on('response:update', ({ instanceId, responseKey, value }) => {
+    socket.to(`instance-${instanceId}`).emit('response:update', {
+      instanceId,
+      responseKey,
+      value
+    });
+  });
+
+  // ✅ NEW: Broadcast AI feedback to other users in the room
+  socket.on('feedback:update', ({ instanceId, responseKey, feedback }) => {
+    socket.to(`instance-${instanceId}`).emit('feedback:update', {
+      instanceId,
+      responseKey,
+      feedback
+    });
+  });
+
+
+  socket.on('disconnect', () => {
+    console.log('❌ Socket.IO client disconnected');
+  });
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`ITS server with Socket.IO running on port ${PORT}`);
+});
+

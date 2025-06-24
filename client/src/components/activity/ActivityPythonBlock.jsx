@@ -25,7 +25,7 @@ export default function ActivityPythonBlock({
 
 
   useEffect(() => {
-    console.log("📥 Updated fileContentsRef:", fileContentsRef.current);
+    //console.log("📥 Updated fileContentsRef:", fileContentsRef.current);
   }, [fileContentsRef.current]);
 
 
