@@ -6,9 +6,10 @@ export async function runSkulptCode({ code, fileContents, setOutput }) {
     return;
   }
 
-const __fileDict = Object.entries(fileContents || {}).map(
-  ([name, content]) => `"${name}": ${JSON.stringify(content)}`
-).join(",\n  ");
+  const __fileDict = Object.entries(fileContents || {}).map(
+    ([name, content]) => `"${name}": ${JSON.stringify(content)}`
+  ).join(",\n  ");
+  console
 
 
   const injectedPython = `
@@ -36,6 +37,13 @@ class FakeFile:
 
     def write(self, s):
         self.content += s
+        # Call into JS to update the textarea live
+        import js
+        selector = 'textarea[data-filename="{}"]'.format(self.name)
+        textarea = js.document.querySelector(selector)
+        if textarea:
+            textarea.value = self.content
+
 
     def close(self):
         self.closed = True
@@ -98,9 +106,9 @@ def open(filename, mode='r'):
   });
 
   try {
-    Sk.execLimit = 50; // prevent infinite hangs
+    Sk.execLimit = 50000; // prevent infinite hangs
     Sk.python3 = true;
-    //console.log("🚀 Running with fileContents:", fileContents); 
+    console.log("🚀 Running with fileContents:", fileContents); 
     await Sk.misceval.asyncToPromise(() => {
       return Sk.importMainWithBody('<stdin>', false, finalCode, true);
     });

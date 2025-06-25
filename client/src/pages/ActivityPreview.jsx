@@ -122,8 +122,8 @@ export default function ActivityPreview() {
         // 🔥 Extract file contents into a map
         const files = {};
         for (const block of parsed) {
-          if (block.type === 'file' && block.filename && block.content) {
-            files[block.filename] = block.content;
+          if (block.type === 'file' && block.filename) {
+            files[block.filename] = block.content || "";  // Preserve even empty files
           }
         }
         setBlocks(parsed);         // save parsed blocks to state

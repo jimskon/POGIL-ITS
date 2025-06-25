@@ -335,8 +335,8 @@ export default function RunActivityPage() {
         const blocks = parseSheetToBlocks(lines);
         const files = {};
         for (const block of blocks) {
-          if (block.type === 'file' && block.filename && block.content) {
-            files[block.filename] = block.content;
+          if (block.type === 'file' && block.filename) {
+            files[block.filename] = block.content || "";  // Preserve even empty files
           }
         }
         setFileContents(prev => {
