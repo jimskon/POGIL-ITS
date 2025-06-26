@@ -11,13 +11,7 @@ import { useState, useEffect } from 'react';
 export default function FileBlock({ filename, fileContentsRef, editable, setFileContents }) {
   const fileContents = fileContentsRef.current || {};
   const [localValue, setLocalValue] = useState(fileContents?.[filename] || '');
-
-  // Sync localValue
-  // 
-  // 
-  // 
-  // 
-  //  when fileContents changes
+  
   useEffect(() => {
     if (localValue === '' && fileContentsRef.current?.[filename]) {
       setLocalValue(fileContentsRef.current[filename]);

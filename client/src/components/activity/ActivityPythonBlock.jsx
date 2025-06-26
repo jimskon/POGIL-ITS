@@ -42,7 +42,7 @@ export default function ActivityPythonBlock({
 
 
 const runPython = () => {
-  console.log("🚀 Running with fileContents:", fileContentsRef.current);
+  //console.log("🚀 Running with fileContents:", fileContentsRef.current);
 
   if (!window.Sk || !window.Sk.configure) {
     alert("Skulpt is still loading...");
@@ -50,7 +50,7 @@ const runPython = () => {
   }
 
   const currentFiles = { ...fileContentsRef.current };  // 🔍 force fresh copy
-  console.log("🚀 Running with fileContents:", currentFiles); // ✅ must match latest edit
+  //console.log("🚀 Running with fileContents:", currentFiles); // ✅ must match latest edit
 
   runSkulptCode({
     code,

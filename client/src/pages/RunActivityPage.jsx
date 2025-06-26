@@ -349,7 +349,15 @@ export default function RunActivityPage() {
             files[block.filename] = block.content;
           }
         }
-        setFileContents(files);
+        setFileContents(prev => {
+          const updated = { ...files };
+          for (const [name, content] of Object.entries(prev)) {
+            updated[name] = content; // Keep existing edits
+          }
+          fileContentsRef.current = updated;
+          return updated;
+        });
+
         fileContentsRef.current = files;
 
         const grouped = [], preamble = [];
@@ -727,9 +735,9 @@ export default function RunActivityPage() {
               followupAnswers,
               setFollowupAnswers,
 
-              socket,                      // ✅ add this
-              instanceId,                  // ✅ add this
-              answeredBy: user?.id,        // ✅ add this
+              socket,
+              instanceId,
+              answeredBy: user?.id,
               fileContentsRef,
               setFileContents: handleUpdateFileContents,
               onCodeChange: handleCodeChange,

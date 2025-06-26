@@ -6,9 +6,10 @@ export async function runSkulptCode({ code, fileContents, setOutput }) {
     return;
   }
 
-  const __fileDict = Object.entries(fileContents || {}).map(([name, content]) =>
-    `"${name}": """${content.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"""`
-  ).join(",\n  ");
+const __fileDict = Object.entries(fileContents || {}).map(
+  ([name, content]) => `"${name}": ${JSON.stringify(content)}`
+).join(",\n  ");
+
 
   const injectedPython = `
 __files__ = {
@@ -39,6 +40,11 @@ class FakeFile:
     def close(self):
         self.closed = True
 
+    def __iter__(self):
+        for line in self.lines[self.index:]:
+            yield line
+
+
 def open(filename, mode='r'):
     if filename in __files__:
         return FakeFile(filename, __files__[filename])
@@ -47,8 +53,10 @@ def open(filename, mode='r'):
 `;
 
   const finalCode = injectedPython + '\n' + code;
+  console.log("📜 Final code to run:", finalCode);
 
   Sk.python3 = true;
+
   Sk.configure({
     output: (txt) => setOutput((prev) => prev + txt),
     inputfunTakesPrompt: true,
@@ -90,8 +98,9 @@ def open(filename, mode='r'):
   });
 
   try {
+    Sk.execLimit = 50; // prevent infinite hangs
     Sk.python3 = true;
-    console.log("🚀 Running with fileContents:", fileContents); 
+    //console.log("🚀 Running with fileContents:", fileContents); 
     await Sk.misceval.asyncToPromise(() => {
       return Sk.importMainWithBody('<stdin>', false, finalCode, true);
     });
