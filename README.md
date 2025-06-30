@@ -145,10 +145,13 @@ npm install googleapis
 npm install mysql2
 npm install react-router-bootstrap
 npm install jsdom
+npm install openai
 
 cd ../client
 npm install react-bootstrap bootstrap
 npm install prismjs
+npm install express-session
+npm install react-icons
 
 ```
 
@@ -247,35 +250,6 @@ sudo systemctl reload apache2
 
 ---
 
-## db-migrate
-```
-cd server
-npm install db-migrate --save-dev
-npm install db-migrate-mysql
-npm install --save-dev db-migrate-pg
-touch database.json
-emacs database.json 
-{
-  "dev": {
-    "driver": "mysql",
-    "host": "localhost",
-    "database": "pogil_db",
-    "user": "pogil_user",
-    "password": "KenyonPOGIL2025""
-  },
-  "prod": {
-    "driver": "pg",
-    "host": "prod-db-host",
-    "database": "mydb_prod",
-    "user": "produser",
-    "password": "prodpassword"
-  }
-
-mkdir migrations
-cd migrations
-npx db-migrate create add-course-id-to-pogil-classes
-npx db-migrate up
-```
 
 ## Final Notes
 
@@ -316,10 +290,7 @@ DB_USER=root
 DB_PASSWORD=yourpassword
 DB_NAME=its_database
 
-# Google API
-GOOGLE_CLIENT_ID=your-google-client-id
-GOOGLE_CLIENT_SECRET=your-google-client-secret
-GOOGLE_REDIRECT_URI=your-google-redirect-uri
+OPENAI_API_KEY=APIKey 
 ```
 
 ## Rebuild:
@@ -351,7 +322,7 @@ GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_REDIRECT_URI=your-google-redirect-uri
 
 # OpenAI API
-OPENAI_API_KEY=APIKey ask for this
+OPENAI_API_KEY=APIKey  --  ask for this
 ```
 
 client/.env
@@ -387,7 +358,41 @@ npm install
 ```
 nohup npm start > out.log 2>&1 &
 ```
+
+Or - to run so it restarts if stopped:
+```
+npm install -g pm2
+pm2 start index.js --name POGIL-ITS
+pm2 save
+pm2 startup
+```
+to restart:
+```
+pm2 restart
+```
+
 # Create rsa key
 ```
 ssh-keygen -t rsa -b 4096 -C "your_email@example.com"
+```
+# Reset Node.js/React Enviornment
+Backend (Node.js):
+```
+rm -rf node_modules package-lock.json
+npm install
+```
+Frontend (React):
+```
+cd client  # or wherever your React app lives
+rm -rf node_modules package-lock.json
+npm install
+```
+
+# Added a new field to activity_instances table 
+```
+mysql -u pogil_user -p
+USE pogil_db;
+ALTER TABLE activity_instances
+ADD COLUMN total_groups INT DEFAULT NULL;
+
 ```

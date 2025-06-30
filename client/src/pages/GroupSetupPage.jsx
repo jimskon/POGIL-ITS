@@ -1,11 +1,13 @@
 // GroupSetupPage.jsx
+
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom'; // ⬅️ Import useNavigate for redirection
 import { Container, Row, Col, Button, Form, Card } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
 
 export default function GroupSetupPage() {
   const { courseId, activityId } = useParams();
+  const navigate = useNavigate(); // ⬅️ Initialize useNavigate
   console.log("GroupSetupPage🔍 courseId:", courseId, "activityId:", activityId);
 
   const [students, setStudents] = useState([]);
@@ -22,7 +24,7 @@ export default function GroupSetupPage() {
         // ✅ Initialize all as selected
         const defaultSelected = {};
         loaded.forEach(student => {
-          defaultSelected[student.id] = true;
+          defaultSelected[student.id] = student.role === 'student'; // ✅ only auto-select students
         });
         setSelected(defaultSelected);
       })
@@ -34,11 +36,9 @@ export default function GroupSetupPage() {
   };
 
   const generateGroups = () => {
-    // ✅ Filter selected students with role === 'student'
     const present = students.filter(s => selected[s.id]);
     const shuffled = [...present].sort(() => 0.5 - Math.random());
 
-    // 👷 Group into chunks of 4, but adjust for edge cases
     const groups = [];
     for (let i = 0; i < shuffled.length; i += 4) {
       groups.push(shuffled.slice(i, i + 4));
@@ -46,43 +46,35 @@ export default function GroupSetupPage() {
 
     const lastGroup = groups[groups.length - 1];
 
-    // 🧠 Fix edge cases
     if (lastGroup.length === 1 && groups.length >= 3) {
-      // merge last 3 groups into 3+3+3
       const merged = groups.splice(-3).flat();
       groups.push(merged.slice(0, 3), merged.slice(3, 6), merged.slice(6));
     } else if (lastGroup.length === 2 && groups.length >= 2) {
-      // merge last 2 groups into 3+3
       const merged = groups.splice(-2).flat();
       groups.push(merged.slice(0, 3), merged.slice(3));
     }
 
-    // 🏷 Assign roles
     const roleNames = ['facilitator', 'spokesperson', 'analyst', 'qc'];
     const finalGroups = groups.map(group => {
       const members = [];
-
       if (group.length === 4) {
         group.forEach((s, i) => {
           members.push({ student_id: s.id, role: roleNames[i] });
         });
       } else if (group.length === 3) {
-        // facilitator = spokesperson
         members.push({ student_id: group[0].id, role: 'facilitator' });
         members.push({ student_id: group[0].id, role: 'spokesperson' });
         members.push({ student_id: group[1].id, role: 'analyst' });
         members.push({ student_id: group[2].id, role: 'qc' });
       } else if (group.length < 3) {
-        // too few — repeat people to fill roles
         const fillers = [...group];
         while (fillers.length < 4) {
-          fillers.push(group[0]); // repeat the first person
+          fillers.push(group[0]);
         }
         fillers.forEach((s, i) => {
           members.push({ student_id: s.id, role: roleNames[i] });
         });
       }
-
       return { members };
     });
 
@@ -104,6 +96,8 @@ export default function GroupSetupPage() {
       const data = await res.json();
       if (res.ok) {
         alert('✅ Groups saved successfully.');
+        // ✅ Redirect to the View Groups page after successful save
+        navigate(`/view-groups/${courseId}/${activityId}`); // ⬅️ Added this line for redirection
       } else {
         alert(`❌ Error: ${data.error}`);
       }
@@ -112,8 +106,6 @@ export default function GroupSetupPage() {
       alert('❌ Failed to save groups.');
     }
   };
-
-
 
   return (
     <Container className="mt-4">
@@ -125,7 +117,7 @@ export default function GroupSetupPage() {
             <Col md={3} key={s.id} className="mb-2">
               <Form.Check
                 type="checkbox"
-                label={s.name}
+                label={s.role === 'student' ? s.name : `${s.name} (${s.role})`}
                 checked={!!selected[s.id]}
                 onChange={() => toggleSelect(s.id)}
               />

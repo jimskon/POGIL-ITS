@@ -1,8 +1,54 @@
+// parseSheet.jsx
+
 import ActivityQuestionBlock from '../components/activity/ActivityQuestionBlock';
 import ActivityHeader from '../components/activity/ActivityHeader';
 import ActivityEnvironment from '../components/activity/ActivityEnvironment';
 import ActivityPythonBlock from '../components/activity/ActivityPythonBlock';
 import { Form } from 'react-bootstrap';
+
+import { useState, useEffect } from 'react';
+
+export default function FileBlock({ filename, fileContentsRef, editable, setFileContents }) {
+  const fileContents = fileContentsRef.current || {};
+  const [localValue, setLocalValue] = useState(fileContents?.[filename] || '');
+  
+  useEffect(() => {
+    if (localValue === '' && fileContentsRef.current?.[filename]) {
+      setLocalValue(fileContentsRef.current[filename]);
+    }
+  }, [filename]);
+
+  const handleChange = (e) => {
+    const updated = e.target.value;
+    setLocalValue(updated);
+
+    if (editable && setFileContents) {
+      setFileContents(prev => {
+        const updatedContents = {
+          ...prev,
+          [filename]: updated,
+        };
+        console.log("💾 File updated:", filename, "=>", updated);
+        return updatedContents;
+      });
+    }
+  };
+
+  return (
+    <div className="mb-3">
+      <strong>📄 File: <code>{filename}</code></strong>
+      <Form.Control
+        as="textarea"
+        value={localValue}
+        onChange={handleChange}
+        rows={Math.max(4, localValue.split('\n').length)}
+        readOnly={!editable}
+        className="font-monospace bg-light mt-1"
+      />
+    </div>
+  );
+}
+
 
 export function parseSheetToBlocks(lines) {
   console.log("🧑‍💻 parseSheetToBlocks invoked");
@@ -14,33 +60,31 @@ export function parseSheetToBlocks(lines) {
   let currentQuestion = null;
   let currentField = 'prompt';
   let currentBlock = [];
-  let currentGroupIntro = null;
-
   let inList = false;
   let listType = null;
   let listItems = [];
+  let inFileBlock = false;
+  let currentFile = null;
 
   const flushCurrentBlock = () => {
     if (currentBlock.length > 0) {
       blocks.push({
         type: 'text',
-        content: currentBlock.join(' ').trim()
+        content: format(currentBlock.join(' ').trim())
       });
       currentBlock = [];
     }
   };
 
   const format = (text) =>
-    text
-      .replace(/\\textbf\{(.+?)\}/g, '<strong>$1</strong>')
+    text.replace(/\\textbf\{(.+?)\}/g, '<strong>$1</strong>')
       .replace(/\\textit\{(.+?)\}/g, '<em>$1</em>')
-      .replace(/\\text\{(.+?)\}/g, '$1');
+      .replace(/\\text\{(.+?)\}/g, '$1')
+      .replace(/\\\\/g, '<br>');
 
   for (let line of lines) {
     const trimmed = line.trim();
-    console.log("Processing line:", trimmed);
 
-    // --- Lists ---
     if (trimmed === '\\begin{itemize}' || trimmed === '\\begin{enumerate}') {
       inList = true;
       listType = trimmed.includes('itemize') ? 'ul' : 'ol';
@@ -49,11 +93,7 @@ export function parseSheetToBlocks(lines) {
     }
 
     if (trimmed === '\\end{itemize}' || trimmed === '\\end{enumerate}') {
-      blocks.push({
-        type: 'list',
-        listType,
-        items: listItems.map(format)
-      });
+      blocks.push({ type: 'list', listType, items: listItems.map(format) });
       inList = false;
       listType = null;
       listItems = [];
@@ -65,7 +105,6 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // --- Python block ---
     if (trimmed === '\\python') {
       flushCurrentBlock();
       currentField = 'python';
@@ -74,19 +113,18 @@ export function parseSheetToBlocks(lines) {
         if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
         currentQuestion.pythonBlocks.push({ lines: [] });
       } else {
-        currentQuestion = { type: 'python', lines: [] };
+        blocks.push({ type: 'python', lines: [] });
       }
+
       continue;
     }
 
     if (trimmed === '\\endpython') {
       if (currentField === 'python') {
-        if (currentQuestion?.type === 'python') {
-          blocks.push({
-            type: 'python',
-            content: currentQuestion.lines.join('\n')
-          });
-          currentQuestion = null;
+        const lastBlock = blocks.at(-1);
+        if (lastBlock?.type === 'python' && lastBlock.lines) {
+          lastBlock.content = lastBlock.lines.join('\n');
+          delete lastBlock.lines;
         } else if (currentQuestion?.pythonBlocks?.length > 0) {
           const block = currentQuestion.pythonBlocks.pop();
           currentQuestion.pythonBlocks.push({
@@ -100,53 +138,36 @@ export function parseSheetToBlocks(lines) {
     }
 
     if (currentField === 'python') {
-      if (currentQuestion?.type === 'python') {
-        currentQuestion.lines.push(line);
-      } else if (currentQuestion?.pythonBlocks?.length > 0) {
-        const lastBlock = currentQuestion.pythonBlocks[currentQuestion.pythonBlocks.length - 1];
+      const lastBlock = blocks.at(-1);
+      if (lastBlock?.type === 'python' && lastBlock.lines) {
         lastBlock.lines.push(line);
+      } else if (currentQuestion?.pythonBlocks?.length > 0) {
+        const lastQuestionBlock = currentQuestion.pythonBlocks.at(-1);
+        lastQuestionBlock.lines.push(line);
       }
       continue;
     }
 
-    // --- Headers ---
-    // --- Simple headers (title, name) ---
     const headerMatch = trimmed.match(/^\\(title|name)\{(.+?)\}$/);
     if (headerMatch) {
       flushCurrentBlock();
-      blocks.push({
-        type: 'header',
-        tag: headerMatch[1],
-        content: format(headerMatch[2])
-      });
+      blocks.push({ type: 'header', tag: headerMatch[1], content: format(headerMatch[2]) });
       continue;
     }
 
-    // --- Sections (e.g., Learning Objectives, Content, Process)
     const sectionMatch = trimmed.match(/^\\section\*?\{(.+?)\}$/);
     if (sectionMatch) {
       flushCurrentBlock();
-      blocks.push({
-        type: 'section',
-        name: format(sectionMatch[1]),
-        content: []      // you may later collect nested blocks here if you want true sub‐trees
-      });
+      blocks.push({ type: 'section', title: format(sectionMatch[1]) });
       continue;
     }
 
-
-
-    // --- Group start ---
     if (trimmed.startsWith('\\questiongroup{')) {
       flushCurrentBlock();
       groupNumber++;
       questionLetterCode = 97;
       const content = trimmed.match(/\\questiongroup\{(.+?)\}/)?.[1] || '';
-      blocks.push({
-        type: 'groupIntro',
-        groupId: groupNumber,
-        content: format(content)
-      });
+      blocks.push({ type: 'groupIntro', groupId: groupNumber, content: format(content) });
       continue;
     }
 
@@ -155,14 +176,13 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // --- Question ---
     if (trimmed.startsWith('\\question{')) {
       const content = trimmed.match(/\\question\{(.+?)\}/)?.[1] || '';
       const id = String.fromCharCode(questionLetterCode++);
       currentQuestion = {
         type: 'question',
         id,
-        groupId: groupNumber,              // ✅ Add group number to use in ID
+        groupId: groupNumber,
         label: `${id}.`,
         responseId: responseId++,
         prompt: format(content),
@@ -174,24 +194,18 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-
     if (trimmed === '\\endquestion') {
-      if (currentQuestion !== null) {
-        blocks.push(currentQuestion);
-      } else {
-        console.warn("⚠️ \\endquestion found without matching \\question");
-      }
+      if (currentQuestion !== null) blocks.push(currentQuestion);
       currentQuestion = null;
       continue;
     }
 
     if (trimmed.startsWith('\\textresponse')) {
       const match = trimmed.match(/\\textresponse\{(\d+)\}/);
-      if (!currentQuestion) {
-        console.warn("⚠️ \\textresponse found outside of a question block");
-        continue;
+      if (match && currentQuestion) {
+        currentQuestion.responseLines = parseInt(match[1]);
+        currentQuestion.hasTextResponse = true;
       }
-      if (match) currentQuestion.responseLines = parseInt(match[1]);
       continue;
     }
 
@@ -213,18 +227,91 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // --- \textbf as line ---
     const textbfMatch = trimmed.match(/^\\textbf\{(.+?)\}$/);
     if (textbfMatch) {
       flushCurrentBlock();
-      blocks.push({
-        type: 'text',
-        content: `<strong>${textbfMatch[1]}</strong>`
-      });
+      blocks.push({ type: 'text', content: `<strong>${textbfMatch[1]}</strong>` });
       continue;
     }
 
-    // --- Text fallback ---
+    // --- Handle tables ---
+    if (trimmed.startsWith('\\table{')) {
+      flushCurrentBlock();
+      const title = trimmed.match(/\\table\{(.+?)\}/)?.[1] || '';
+      const newTable = {
+        type: 'table',
+        title: format(title),
+        rows: [],
+      };
+
+      if (currentQuestion?.type === 'question') {
+        if (!currentQuestion.tableBlocks) currentQuestion.tableBlocks = [];
+        currentQuestion.tableBlocks.push(newTable);
+      } else {
+        currentQuestion = newTable; // standalone table
+      }
+      continue;
+    }
+
+    if (trimmed === '\\endtable') {
+      if (currentQuestion?.type === 'table') {
+        blocks.push(currentQuestion);
+        currentQuestion = null;
+      }
+      continue;
+    }
+
+    if (trimmed.startsWith('\\row')) {
+      const target = currentQuestion?.type === 'question'
+        ? currentQuestion.tableBlocks?.at(-1)
+        : currentQuestion;
+
+      if (target?.type === 'table') {
+        const rawCells = trimmed.replace(/^\\row\s*/, '').split('&');
+        const cells = rawCells.map(cell => {
+          const trimmedCell = cell.trim();
+          const isInput = trimmedCell === '\\tresponse';
+
+          if (isInput && currentQuestion?.type === 'question') {
+            currentQuestion.hasTableResponse = true;
+          }
+
+          return isInput
+            ? { type: 'input' }
+            : { type: 'static', content: format(trimmedCell) };
+        });
+
+        target.rows.push(cells);
+      }
+      continue;
+    }
+
+    if (trimmed.startsWith('\\file{')) {
+      flushCurrentBlock();
+      inFileBlock = true;
+      const filename = trimmed.match(/\\file\{(.+?)\}/)?.[1]?.trim();
+      console.log("📂 Starting file block for:", filename);
+      currentFile = { type: 'file', filename, lines: [] };
+      continue;
+    }
+
+    if (trimmed === '\\endfile') {
+      if (currentFile) {
+        blocks.push({
+          ...currentFile,
+          content: currentFile.lines.join('\n'),
+        });
+        currentFile = null;
+      }
+      inFileBlock = false;
+      continue;
+    }
+
+    if (inFileBlock && currentFile) {
+      currentFile.lines.push(line);
+      continue;
+    }
+
     currentBlock.push(format(line));
   }
 
@@ -239,17 +326,30 @@ export function renderBlocks(blocks, options = {}) {
     isActive = false,
     prefill = {},
     mode = 'preview',
-    currentGroupIndex = null // only used in 'run' mode
+    currentGroupIndex = null,
+    followupsShown = {},
+    followupAnswers = {},
+    setFollowupAnswers = () => { },
+    onCodeChange = null,
+    codeFeedbackShown = {},
+    fileContentsRef,
+    setFileContents,
   } = options;
 
-  console.log("🧪 prefill keys:", Object.keys(prefill));
-
+  let standaloneCodeCounter = 1;
   const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
 
   return blocks.map((block, index) => {
     if (hiddenTypes.includes(block.type) && mode !== 'preview') return null;
-
     if (block.type === 'endGroup') return null;
+
+    if (block.type === 'section') {
+      return (
+        <h2 key={`section-${index}`} className="my-3">
+          {block.title}
+        </h2>
+      );
+    }
 
     if (block.type === 'text') {
       return (
@@ -273,47 +373,283 @@ export function renderBlocks(blocks, options = {}) {
     if (block.type === 'groupIntro') {
       return (
         <div key={`groupIntro-${index}`} className="mb-2">
-          <strong>{block.content}</strong>
+          <strong>{block.groupId}. <span dangerouslySetInnerHTML={{ __html: block.content }} /></strong>
+        </div>
+
+      );
+    }
+
+    if (block.type === 'file') {
+      return (
+        <FileBlock
+          key={`file-${index}`}
+          filename={block.filename}
+          fileContentsRef={fileContentsRef}
+          setFileContents={setFileContents}
+          editable={true}
+        />
+
+      );
+    }
+
+
+
+    if (block.type === 'python') {
+      const groupPrefix = (currentGroupIndex + 1).toString(); // dynamic group number
+      const codeKey = `${groupPrefix}code${standaloneCodeCounter++}`;
+
+      return (
+        <ActivityPythonBlock
+          key={`py-${codeKey}-${index}-${prefill?.[codeKey]?.response || ''}-${codeFeedbackShown?.[codeKey] || ''}`}
+          code={
+            prefill?.[codeKey]?.response
+            || block.content
+            || ''
+          }
+          blockIndex={`py-${codeKey}-${index}`}
+          editable={editable && isActive}
+          responseKey={codeKey}
+          onCodeChange={onCodeChange}
+          codeFeedbackShown={codeFeedbackShown}
+          fileContentsRef={fileContentsRef}
+        />
+
+      );
+    }
+    if (block.type === 'table') {
+      return (
+        <div key={`table-${index}`} className="my-4">
+          <h4 className="mb-2">{block.title}</h4>
+          <table className="table table-bordered">
+            <tbody>
+              {block.rows.map((row, i) => (
+                <tr key={`table-${index}-row-${i}`}>
+                  {row.map((cell, j) => {
+                    const cellKey = `table${index}cell${i}_${j}`;
+                    if (cell.type === 'input') {
+                      return (
+                        <td key={cellKey}>
+                          <Form.Control
+                            type="text"
+                            value={prefill?.[cellKey]?.response || ''}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              if (options.onTextChange) {
+                                options.onTextChange(cellKey, val);
+                              }
+                            }}
+                            readOnly={!editable}
+                            data-question-id={cellKey}
+                          />
+                        </td>
+                      );
+                    } else {
+                      return (
+                        <td
+                          key={cellKey}
+                          dangerouslySetInnerHTML={{ __html: cell.content }}
+                        />
+                      );
+                    }
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       );
     }
 
-    if (block.type === 'python') {
-      return (
-        <ActivityPythonBlock
-          key={`py-${index}`}
-          code={block.content}
-          blockIndex={index}
-          editable={editable && isActive}
-        />
-      );
-    }
+
+
 
     if (block.type === 'question') {
       const responseKey = `${block.groupId}${block.id}`;
-      console.log("🔍 prefill:", prefill);
-      console.log("🔍 Looking for key:", responseKey);
+      const followupAppeared = !!followupsShown?.[responseKey];
+      const groupComplete = prefill?.[`${responseKey}S`] === 'complete';
+
 
       return (
         <div key={`q-${block.id}`} className="mb-4">
-          <p><strong>{block.label}</strong> <span dangerouslySetInnerHTML={{ __html: block.prompt }} /></p>
-          {block.pythonBlocks?.map((py, i) => (
-            <ActivityPythonBlock
-              key={`q-${block.id}-py-${i}`}
-              code={py.content}
-              blockIndex={`${index}-${i}`}
-              editable={editable && isActive}
-            />
+          <p>
+            <strong>{block.label}</strong>{' '}
+            <span dangerouslySetInnerHTML={{ __html: block.prompt }} />
+            {followupAppeared && (
+              <span
+                className="ms-2"
+                title="Response locked due to follow-up"
+                style={{ color: '#888', cursor: 'not-allowed' }}
+              >
+                🔒
+              </span>
+            )}
+          </p>
+
+          {block.pythonBlocks?.map((py, i) => {
+            const responseKey = `${block.groupId}${block.id}code${i + 1}`;
+            const savedResponse = prefill?.[responseKey]?.response || py.content;
+            return (
+              <ActivityPythonBlock
+                key={`q-${currentGroupIndex}-${block.id}-${i}-${savedResponse}-${codeFeedbackShown?.[responseKey] || ''}`}
+                code={savedResponse}
+                blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}
+                editable={editable && isActive}
+                responseKey={responseKey}
+                onCodeChange={onCodeChange}
+                codeFeedbackShown={codeFeedbackShown}
+                fileContentsRef={fileContentsRef}
+              />
+
+            );
+          })}
+          {block.tableBlocks?.map((table, i) => (
+            <div key={`q-table-${index}-${i}`} className="my-3">
+              <h5>{table.title}</h5>
+              <table className="table table-bordered">
+                <tbody>
+                  {table.rows.map((row, ri) => (
+                    <tr key={`row-${ri}`}>
+                      {row.map((cell, ci) => {
+                        const cellKey = `${block.groupId}${block.id}table${i}cell${ri}_${ci}`;
+                        if (cell.type === 'input') {
+                          return (
+                            <td key={cellKey}>
+                              <Form.Control
+                                type="text"
+                                value={prefill?.[cellKey]?.response || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (options.onTextChange) {
+                                    options.onTextChange(cellKey, val);
+                                  }
+                                }}
+                                readOnly={!editable}
+                                data-question-id={cellKey}
+                              />
+                            </td>
+                          );
+                        } else {
+                          return (
+                            <td
+                              key={cellKey}
+                              dangerouslySetInnerHTML={{ __html: cell.content }}
+                            />
+                          );
+                        }
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ))}
 
-          <Form.Control
-            as="textarea"
-            rows={block.responseLines || 1}
-            defaultValue={prefill?.[responseKey]?.response || ''}
-            readOnly={!editable}
-            data-question-id={responseKey}
-            className="mt-2"
-          />
+
+
+          {block.hasTextResponse || !block.hasTableResponse ? (
+            <Form.Control
+              as="textarea"
+              rows={Math.max((block.responseLines || 1), 2)}
+              value={prefill?.[responseKey]?.response || ''}
+              readOnly={!editable || (prefill?.[`${block.groupId}state`]?.response === 'complete')}
+              data-question-id={responseKey}
+              className="mt-2"
+              style={{ resize: 'vertical' }}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (options.onTextChange) {
+                  options.onTextChange(responseKey, val);
+                }
+              }}
+            />
+
+          ) : null}
+
+          {mode === 'preview' && (
+            <>
+              {block.samples?.length > 0 && <p className="text-muted"><em>Sample: {block.samples.join('; ')}</em></p>}
+              {block.feedback?.length > 0 && <p className="text-muted"><em>Feedback: {block.feedback.join('; ')}</em></p>}
+              {block.followups?.length > 0 && <p className="text-muted"><em>Follow-up: {block.followups.join('; ')}</em></p>}
+            </>
+          )}
+
+          {/* Show saved followup Q&A in read-only format */}
+
+
+          {/* Follow-up input or locked view */}
+          {/* Follow-up input or locked view */}
+          {followupsShown?.[responseKey] && (() => {
+            const followupKey = `${responseKey}FA1`;
+            return (
+              <>
+                <div className="mt-3 text-muted">
+                  <strong>Follow-up:</strong> {followupsShown[responseKey]}
+                  {(prefill?.[followupKey] || !editable) && (
+                    <span
+                      className="ms-2"
+                      title="Follow-up response is locked"
+                      style={{ color: '#888', cursor: 'not-allowed' }}
+                    >
+                      🔒
+                    </span>
+                  )}
+                </div>
+
+                {!editable ||
+                  prefill?.[followupKey] ||
+                  Object.keys(followupsShown)
+                    .filter((k) => k !== responseKey)
+                    .some((k) => {
+                      const [kGroup, kLetter] = k.match(/^(\d+)([a-z])/).slice(1);
+                      const [rGroup, rLetter] = responseKey.match(/^(\d+)([a-z])/).slice(1);
+                      return parseInt(kGroup) > parseInt(rGroup) ||
+                        (parseInt(kGroup) === parseInt(rGroup) && kLetter > rLetter);
+                    })
+                  ? (
+                    <div className="bg-light p-2 rounded mt-1">
+                      {prefill?.[followupKey]?.response || followupAnswers?.[followupKey] || ''}
+
+                    </div>
+                  ) : (
+                    <Form.Control
+                      as="textarea"
+                      rows={2}
+                      value={followupAnswers?.[followupKey] || ''}
+                      placeholder="Respond to the follow-up question here..."
+                      onChange={(e) => {
+                        const val = e.target.value;
+
+                        setFollowupAnswers(prev => ({
+                          ...prev,
+                          [followupKey]: val
+                        }));
+
+                        if (options.isActive && options.socket) {
+                          console.log("📡 EMITTING FOLLOW-UP RESPONSE", {
+                            instanceId: options.instanceId,
+                            responseKey: followupKey,
+                            value: val,
+                            answeredBy: options.answeredBy
+                          });
+
+                          options.socket.emit('response:update', {
+                            instanceId: options.instanceId,
+                            responseKey: followupKey,
+                            value: val,
+                            answeredBy: options.answeredBy,
+                            followupPrompt: options.followupsShown?.[responseKey]
+                          });
+                        }
+                      }}
+                      className="mt-1"
+                      style={{ resize: 'vertical' }}
+                    />
+                  )}
+              </>
+            );
+          })()}
+
+
         </div>
       );
     }
@@ -322,4 +658,5 @@ export function renderBlocks(blocks, options = {}) {
   });
 }
 
-//End parseSheet.jsx
+
+// End parseSheet.jsx

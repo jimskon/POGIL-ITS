@@ -1,52 +1,83 @@
+// src: client/src/components/activity/ActivityPythonBlock.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { Form, Button } from 'react-bootstrap';
 import Prism from 'prismjs';
+import { runSkulptCode } from '../../utils/runSkulptCode';
 
-export default function ActivityPythonBlock({ code, blockIndex }) {
+
+export default function ActivityPythonBlock({
+  code: initialCode,
+  blockIndex,
+  responseKey,
+  onCodeChange,
+  codeFeedbackShown = {},
+  fileContentsRef,
+}) {
+  const [code, setCode] = useState(initialCode);
+  const [savedCode, setSavedCode] = useState(initialCode);
   const [isEditing, setIsEditing] = useState(false);
+
   const outputId = `sk-output-${blockIndex}`;
   const codeId = `sk-code-${blockIndex}`;
-  const codeRef = useRef(null); // Add a ref to <code>
+  const codeRef = useRef(null);
+  const outputRef = useRef(null);
+  const [outputText, setOutputText] = useState('');
+
+
+  useEffect(() => {
+    //console.log("📥 Updated fileContentsRef:", fileContentsRef.current);
+  }, [fileContentsRef.current]);
+
 
   useEffect(() => {
     if (!isEditing && codeRef.current) {
-      Prism.highlightElement(codeRef.current); // Highlight when shown
+      Prism.highlightElement(codeRef.current);
     }
-  }, [isEditing]);
+  }, [isEditing, code]);
 
-  const runPython = () => {
-    const userCode = document.getElementById(codeId)?.value || code;
-    const outputEl = document.getElementById(outputId);
-    if (!outputEl) return;
+  useEffect(() => {
+    setCode(initialCode);
+    setSavedCode(initialCode);
+  }, [initialCode]);
 
-    if (!window.Sk || !window.Sk.configure) {
-      alert("Skulpt is still loading...");
-      return;
+
+const runPython = () => {
+  //console.log("🚀 Running with fileContents:", fileContentsRef.current);
+
+  if (!window.Sk || !window.Sk.configure) {
+    alert("Skulpt is still loading...");
+    return;
+  }
+
+  const currentFiles = { ...fileContentsRef.current };  // 🔍 force fresh copy
+  //console.log("🚀 Running with fileContents:", currentFiles); // ✅ must match latest edit
+
+  runSkulptCode({
+    code,
+    fileContents: currentFiles,
+    setOutput: setOutputText,
+  });
+};
+
+
+
+  const handleDoneEditing = () => {
+    setIsEditing(false);
+    if (code !== savedCode && onCodeChange && responseKey) {
+      onCodeChange(responseKey, code);
+      setSavedCode(code);
+      // ❌ Do NOT runPython here — we don't want to wipe output
+      // setTimeout(runPython, 100);
     }
-
-    outputEl.textContent = '';
-
-    Sk.configure({
-      output: (text) => (outputEl.textContent += text),
-      read: (file) => {
-        if (Sk.builtinFiles === undefined || Sk.builtinFiles["files"][file] === undefined) {
-          throw `File not found: '${file}'`;
-        }
-        return Sk.builtinFiles["files"][file];
-      },
-    });
-
-    Sk.misceval
-      .asyncToPromise(() => Sk.importMainWithBody("__main__", false, userCode, true))
-      .catch((err) => outputEl.textContent = err.toString());
   };
+
 
   return (
     <div className="mb-4">
       <Button
         variant="secondary"
         className="mb-2 me-2"
-        onClick={() => setIsEditing(!isEditing)}
+        onClick={isEditing ? handleDoneEditing : () => setIsEditing(true)}
       >
         {isEditing ? "Done Editing" : "Edit Code"}
       </Button>
@@ -59,15 +90,19 @@ export default function ActivityPythonBlock({ code, blockIndex }) {
         Run Python
       </Button>
 
-      {isEditing ? (
+      {isEditing && (
         <Form.Control
           as="textarea"
           id={codeId}
-          defaultValue={code}
+          data-response-key={responseKey}
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
           rows={Math.max(6, code.split("\n").length)}
           className="font-monospace bg-dark text-white mt-2"
         />
-      ) : (
+      )}
+
+      {!isEditing && (
         <pre className="mt-2">
           <code
             id={codeId}
@@ -79,7 +114,17 @@ export default function ActivityPythonBlock({ code, blockIndex }) {
         </pre>
       )}
 
-      <pre id={outputId} className="mt-2 bg-light p-2 border" />
+
+      <pre className="mt-2 bg-light p-2 border">{outputText}</pre>
+
+
+      {/* ✅ AI Feedback block */}
+      {codeFeedbackShown[responseKey] && (
+        <div className="mt-2 p-3 border rounded bg-warning-subtle">
+          <strong>AI Feedback:</strong>
+          <pre className="mb-0">{codeFeedbackShown[responseKey]}</pre>
+        </div>
+      )}
     </div>
   );
 }

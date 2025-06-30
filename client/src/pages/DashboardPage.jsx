@@ -88,14 +88,13 @@ export default function DashboardPage() {
                     <tr key={course.id}>
                       <td
                         style={{ cursor: 'pointer', textDecoration: 'underline', color: 'blue' }}
-                        onClick={() => 
-                          navigate(`/courses/${course.id}/activities`,{
-                            state: {courseName: course.name}
-                          })
-                        }
+                        onClick={() => navigate(`/courses/${course.id}/activities`, {
+                          state: { courseName: course.name }  // ✅ pass courseName to next page
+                        })}
                       >
                         {course.name}
                       </td>
+
                       <td>{course.code}</td>
                       <td>{course.section}</td>
                       <td>{course.semester}</td>

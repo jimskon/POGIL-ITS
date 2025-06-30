@@ -10,5 +10,12 @@ router.get('/:instanceId/group', controller.getGroupResponses);
 
 // Optional: keep if you still use this route format, else remove
 // router.get('/:instanceId/:groupId', controller.getGroupResponses);
+router.post('/code', controller.createOrUpdateCodeResponse);
+
+router.post('/bulk-save', controller.bulkSaveResponses);
+
+router.post('/save-feedback', controller.saveFeedback); // ✅ Add this line
+
+
 
 module.exports = router;
