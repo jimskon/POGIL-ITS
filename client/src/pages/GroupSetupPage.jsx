@@ -24,7 +24,7 @@ export default function GroupSetupPage() {
         // ✅ Initialize all as selected
         const defaultSelected = {};
         loaded.forEach(student => {
-          defaultSelected[student.id] = true;
+          defaultSelected[student.id] = student.role === 'student'; // ✅ only auto-select students
         });
         setSelected(defaultSelected);
       })
@@ -117,7 +117,7 @@ export default function GroupSetupPage() {
             <Col md={3} key={s.id} className="mb-2">
               <Form.Check
                 type="checkbox"
-                label={s.name}
+                label={s.role === 'student' ? s.name : `${s.name} (${s.role})`}
                 checked={!!selected[s.id]}
                 onChange={() => toggleSelect(s.id)}
               />

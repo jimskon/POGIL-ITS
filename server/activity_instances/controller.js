@@ -140,7 +140,7 @@ async function getActivityInstanceById(req, res) {
   const { id } = req.params;
   try {
     const [[instance]] = await db.query(
-      `SELECT ai.id, ai.course_id, ai.activity_id, ai.group_number, a.name AS activity_name, a.sheet_url
+      `SELECT ai.id, ai.course_id, ai.activity_id, ai.group_number, a.title AS title, a.name AS activity_name, a.sheet_url
        FROM activity_instances ai
        JOIN pogil_activities a ON ai.activity_id = a.id
        WHERE ai.id = ?`,
@@ -179,16 +179,15 @@ async function recordHeartbeat(req, res) {
   if (!userId) return res.status(400).json({ error: 'Missing userId' });
 
   try {
-    // Find the courseId for this instanceId
     const [[instance]] = await db.query(
-      `SELECT course_id FROM activity_instances WHERE id = ?`,
+      `SELECT course_id, active_student_id FROM activity_instances WHERE id = ?`,
       [instanceId]
     );
     if (!instance) return res.status(404).json({ error: 'Instance not found' });
 
     const courseId = instance.course_id;
+    const activeStudentId = instance.active_student_id;
 
-    // Update connected status across all instances for this course
     await db.query(
       `UPDATE group_members gm
        JOIN activity_instances ai ON gm.activity_instance_id = ai.id
@@ -197,12 +196,37 @@ async function recordHeartbeat(req, res) {
       [userId, courseId]
     );
 
-    res.json({ success: true });
+    let isDisconnected = false;
+    if (activeStudentId) {
+      const [[status]] = await db.query(
+        `SELECT connected FROM group_members
+         WHERE activity_instance_id = ? AND student_id = ?`,
+        [instanceId, activeStudentId]
+      );
+      isDisconnected = status?.connected === 0;
+    }
+
+    const [[userRow]] = await db.query(`SELECT role FROM users WHERE id = ?`, [userId]);
+    if (!userRow || userRow.role !== 'student') {
+      console.log(`🚫 Skipping heartbeat auto-assign — user ${userId} is not a student`);
+      return res.json({ success: true, becameActive: false });
+    }
+
+    if (!activeStudentId || isDisconnected) {
+      await db.query(
+        `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+        [userId, instanceId]
+      );
+      console.log(`⚡ Auto-assigned active student to student ${userId} for instance ${instanceId}`);
+      return res.json({ success: true, becameActive: true });
+    }
+
+    return res.json({ success: true, becameActive: false });
   } catch (err) {
-    console.error('❌ Failed to update heartbeat across instances:', err);
-    res.status(500).json({ error: 'Failed to record heartbeat' });
+    console.error("❌ recordHeartbeat error:", err);
+    return res.status(500).json({ error: 'Failed to record heartbeat' });
   }
-}
+} // ✅ END OF FUNCTION
 
 
 
@@ -282,9 +306,22 @@ async function setupMultipleGroupInstances(req, res) {
           [instanceId, member.student_id, member.role]);
       }
 
-      const random = group.members[Math.floor(Math.random() * group.members.length)];
-      await db.query(`UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
-        [random.student_id, instanceId]);
+      // Select only students from group
+      const [studentRows] = await db.query(
+        `SELECT u.id FROM users u
+   JOIN group_members gm ON u.id = gm.student_id
+   WHERE gm.activity_instance_id = ? AND u.role = 'student'`,
+        [instanceId]
+      );
+
+      if (studentRows.length > 0) {
+        const randomStudentId = studentRows[Math.floor(Math.random() * studentRows.length)].id;
+        await db.query(`UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+          [randomStudentId, instanceId]);
+      } else {
+        console.warn(`⚠️ No student found in group ${i + 1}, skipping active assignment.`);
+      }
+
     }
     res.json({ success: true, instanceIds });
   } catch (err) {
@@ -424,18 +461,19 @@ async function getInstanceGroups(req, res) {
 async function getInstancesForActivityInCourse(req, res) {
   const { courseId, activityId } = req.params;
   try {
-    // Fetch course name
     const [[course]] = await db.query(`SELECT name FROM courses WHERE id = ?`, [courseId]);
+    const [[activity]] = await db.query(`SELECT title FROM pogil_activities WHERE id = ?`, [activityId]);
+
     const courseName = course?.name || 'Unknown Course';
+    const activityTitle = activity?.title || '';
 
     const [instances] = await db.query(
       `SELECT id AS instance_id, group_number, active_student_id, total_groups
-   FROM activity_instances
-   WHERE course_id = ? AND activity_id = ?
-   ORDER BY group_number`,
+       FROM activity_instances
+       WHERE course_id = ? AND activity_id = ?
+       ORDER BY group_number`,
       [courseId, activityId]
     );
-
 
     const groups = [];
     for (const inst of instances) {
@@ -462,14 +500,11 @@ async function getInstancesForActivityInCourse(req, res) {
         if (state?.response === 'complete') {
           completedGroups++;
         } else {
-          break; // Stop at first incomplete group
+          break;
         }
       }
 
       progress = completedGroups === totalGroups ? 'Complete' : `${completedGroups + 1}`;
-
-
-
 
       groups.push({
         instance_id: inst.instance_id,
@@ -486,7 +521,7 @@ async function getInstancesForActivityInCourse(req, res) {
       });
     }
 
-    res.json({ courseName, groups });
+    res.json({ courseName, activityTitle, groups });
   } catch (err) {
     console.error("❌ getInstancesForActivityInCourse:", err);
     res.status(500).json({ error: 'Failed to fetch instances' });

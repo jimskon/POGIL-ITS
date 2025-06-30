@@ -1,6 +1,6 @@
 // client/src/pages/RunActivityPage.jsx
-import React, { useEffect, useState, useMemo } from 'react';
-import { useParams } from 'react-router-dom';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { useParams, useLocation } from 'react-router-dom';
 import { Container, Alert, Button, Spinner } from 'react-bootstrap';
 import Prism from 'prismjs';
 import 'prismjs/themes/prism.css';
@@ -9,14 +9,233 @@ import 'prismjs/components/prism-python';
 import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
 import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
+import { io } from 'socket.io-client';
 
 export default function RunActivityPage() {
   const { instanceId } = useParams();
+  const location = useLocation();
+  const courseName = location.state?.courseName;
   const { user, loading } = useUser();
   const [followupsShown, setFollowupsShown] = useState({}); // { qid: followupQuestion }
   const [followupAnswers, setFollowupAnswers] = useState({}); // { qid: studentAnswer }
   const [codeFeedbackShown, setCodeFeedbackShown] = useState({}); // { qid: feedback string }
+  const [socket, setSocket] = useState(null);
+  const [fileContents, setFileContents] = useState({});
+  const fileContentsRef = useRef(fileContents);
 
+
+  const [activity, setActivity] = useState(null);
+  const [groups, setGroups] = useState([]);
+  const [groupMembers, setGroupMembers] = useState([]);
+  const [activeStudentId, setActiveStudentId] = useState(null);
+  const [activeStudentName, setActiveStudentName] = useState('');
+  const [preamble, setPreamble] = useState([]);
+  const [existingAnswers, setExistingAnswers] = useState({});
+  const [skulptLoaded, setSkulptLoaded] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const isActive = user && user.id === activeStudentId;
+  const isInstructor = user?.role === 'instructor' || user?.role === 'root' || user?.role === 'creator';
+
+  const currentQuestionGroupIndex = useMemo(() => {
+    if (!existingAnswers || Object.keys(existingAnswers).length === 0) return 0;
+    let count = 0;
+    while (count < groups.length && existingAnswers[`${count + 1}state`]?.response === 'complete') {
+      count++;
+    }
+    return count;
+  }, [existingAnswers, groups]);
+
+  const handleUpdateFileContents = (updaterFn) => {
+    setFileContents((prev) => {
+      const updated = updaterFn(prev);
+      fileContentsRef.current = updated;
+      return updated;
+    });
+  };
+
+  useEffect(() => { fileContentsRef.current = fileContents; }, [fileContents]);
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
+        const data = await res.json();
+        if (data.activeStudentId !== activeStudentId) {
+          await loadActivity();
+        }
+      } catch { }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [instanceId, activeStudentId]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadActivity();
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [instanceId]);
+
+  useEffect(() => {
+    const sendHeartbeat = async () => {
+      if (!user?.id || !instanceId) return;
+      try {
+        await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/heartbeat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.id })
+        });
+      } catch { }
+    };
+    sendHeartbeat();
+    const interval = setInterval(sendHeartbeat, 20000);
+    return () => clearInterval(interval);
+  }, [user?.id, instanceId]);
+
+  useEffect(() => {
+    const loadScript = (src) => new Promise((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)) return resolve();
+      const script = document.createElement('script');
+      script.src = src;
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error(`Failed to load ${src}`));
+      document.head.appendChild(script);
+    });
+    const loadSkulpt = async () => {
+      try {
+        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
+        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
+        if (window.Sk && window.Sk.builtinFiles) setSkulptLoaded(true);
+      } catch { }
+    };
+    loadSkulpt();
+  }, []);
+
+  useEffect(() => {
+    if (user?.id) {
+      loadActivity();
+    }
+  }, [user?.id, instanceId]);
+
+  useEffect(() => {
+    const newSocket = io(API_BASE_URL); // API_BASE_URL should point to your backend
+    setSocket(newSocket);
+
+    return () => {
+      newSocket.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (socket && instanceId) {
+      socket.emit('joinRoom', instanceId);
+    }
+  }, [socket, instanceId]);
+
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleUpdate = ({ responseKey, value, followupPrompt }) => {
+      if (responseKey.endsWith('FA1')) {
+        const qid = responseKey.replace('FA1', '');
+
+        // 1. Update follow-up answer
+        setFollowupAnswers(prev => ({
+          ...prev,
+          [responseKey]: value
+        }));
+
+        // 2. Ensure follow-up prompt is shown
+        setFollowupsShown(prev => ({
+          ...prev,
+          [qid]: followupPrompt || prev[qid] || 'Follow-up question'
+        }));
+      } else {
+        // Sample or original response
+        setExistingAnswers(prev => ({
+          ...prev,
+          [responseKey]: { ...prev[responseKey], response: value, type: 'text' }
+        }));
+      }
+    };
+
+    socket.on('response:update', handleUpdate);
+
+    // 🧠 Listen for AI feedback updates
+    socket.on('feedback:update', ({ responseKey, feedback }) => {
+      console.log(`📡 Received feedback for ${responseKey}:`, feedback);
+      setCodeFeedbackShown(prev => ({
+        ...prev,
+        [responseKey]: feedback,
+      }));
+    });
+
+    return () => {
+      socket.off('response:update', handleUpdate);
+      socket.off('feedback:update'); // ✅ clean up feedback listener
+    };
+
+  }, [socket]);
+
+  useEffect(() => {
+    if (!isActive || !user?.id || !instanceId) return;
+
+    const interval = setInterval(() => {
+      const textToSave = {};
+
+      // Collect sample (original) responses
+      for (const [key, val] of Object.entries(existingAnswers)) {
+        if (val?.type === 'text' && val.response?.trim()) {
+          textToSave[key] = val.response.trim();
+        }
+      }
+
+      // Collect follow-up responses
+      for (const [key, val] of Object.entries(followupAnswers)) {
+        if (val?.trim()) {
+          textToSave[key] = val.trim();
+        }
+      }
+
+      if (Object.keys(textToSave).length > 0) {
+        fetch(`${API_BASE_URL}/api/responses/bulk-save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            instanceId,
+            userId: user.id,
+            answers: textToSave
+          })
+        }).then(res => {
+          if (!res.ok) console.warn('⚠️ Autosave failed');
+        }).catch(err => {
+          console.error('❌ Autosave error:', err);
+        });
+      }
+    }, 10000); // every 10 seconds
+
+    return () => clearInterval(interval);
+  }, [isActive, user?.id, instanceId, existingAnswers, followupAnswers]);
+
+
+  useEffect(() => {
+    if (!activeStudentId) return;
+    const student = groupMembers.find(m => String(m.student_id) === String(activeStudentId));
+    if (student) {
+      setActiveStudentName(student.name);
+    } else {
+      fetch(`${API_BASE_URL}/api/users/${activeStudentId}`)
+        .then(res => res.json())
+        .then(userData => setActiveStudentName(userData.name || '(unknown)'))
+        .catch(() => setActiveStudentName('(unknown)'));
+    }
+  }, [activeStudentId, groupMembers]);
+
+  useEffect(() => {
+    Prism.highlightAll();
+  }, [groups]);
 
 
 
@@ -37,200 +256,133 @@ export default function RunActivityPage() {
       </Container>
     );
   }
-  const [activity, setActivity] = useState(null);
-  const [groups, setGroups] = useState([]);
-  const [groupMembers, setGroupMembers] = useState([]);
-  const [activeStudentId, setActiveStudentId] = useState(null);
-  const [activeStudentName, setActiveStudentName] = useState('');
-  const [preamble, setPreamble] = useState([]);
-  const [existingAnswers, setExistingAnswers] = useState({});
-  const [skulptLoaded, setSkulptLoaded] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false); // ✅ Spinner control
 
-  const isActive = user && user.id === activeStudentId;
-  const isInstructor = user?.role === 'instructor' || user?.role === 'root' || user?.role === 'creator';
-  console.log("👤 User role:", user.role, "→ isInstructor:", isInstructor);
-
-
-  const currentQuestionGroupIndex = useMemo(() => {
-    console.log("🧩 existingAnswers snapshot:", existingAnswers);
-
-    if (!existingAnswers || Object.keys(existingAnswers).length === 0) {
-      console.log("⚠️ existingAnswers not ready yet");
-      return 0;
-    }
-
-    let count = 0;
-    while (count < groups.length && existingAnswers[`${count + 1}state`]?.response === 'complete') {
-      console.log(`✅ Skipping group ${count + 1} as complete`);
-      count++;
-    }
-
-    console.log(`✅ currentQuestionGroupIndex after skipping:`, count);
-    if (count === groups.length) {
-      console.log("🎉 All groups complete");
-    }
-
-    return count;
-  }, [existingAnswers, groups]);
-
-
-
-  if (!user) {
-    return (
-      <Container className="mt-4">
-        <Alert variant="danger">User not loaded. Please log in again.</Alert>
-      </Container>
-    );
-  }
-
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        console.log("🔄2222 Loading activity instance:", instanceId);
-        const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
-        const data = await res.json();
-        if (data.activeStudentId !== activeStudentId) {
-          await loadActivity();
-        }
-      } catch { }
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [instanceId, activeStudentId]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      console.log("🔁 Polling activity for all users (code + feedback)");
-      loadActivity(); // This will refresh all answers + feedback from the DB
-    }, 10000); // every 10 seconds
-
-    return () => clearInterval(interval); // cleanup when unmounting
-  }, [instanceId]);
-
-
-  useEffect(() => {
-    const sendHeartbeat = async () => {
-      if (!user?.id || !instanceId) return;
-      try {
-        await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/heartbeat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: user.id })
-        });
-      } catch (err) {
-        console.error('❌ Heartbeat failed:', err);
-      }
-    };
-    sendHeartbeat();
-    const interval = setInterval(sendHeartbeat, 20000);
-    return () => clearInterval(interval);
-  }, [user?.id, instanceId]);
-
-  useEffect(() => {
-    const loadScript = (src) =>
-      new Promise((resolve, reject) => {
-        if (document.querySelector(`script[src="${src}"]`)) {
-          resolve(); return;
-        }
-        const script = document.createElement('script');
-        script.src = src;
-        script.async = true;
-        script.onload = () => resolve();
-        script.onerror = () => reject(new Error(`Failed to load script ${src}`));
-        document.head.appendChild(script);
-      });
-    const loadSkulpt = async () => {
-      try {
-        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt.min.js');
-        await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
-        if (window.Sk && window.Sk.builtinFiles) setSkulptLoaded(true);
-      } catch (err) {
-        console.error('Skulpt failed to load', err);
-      }
-    };
-    loadSkulpt();
-  }, []);
-
-  useEffect(() => { loadActivity(); }, []);
-
-  useEffect(() => {
-    if (!activeStudentId) return;
-    let student = groupMembers.find(m => String(m.student_id) === String(activeStudentId));
-    if (!student) {
-      fetch(`${API_BASE_URL}/api/users/${activeStudentId}`)
-        .then(res => res.json())
-        .then(userData => setActiveStudentName(userData.name || '(unknown)'))
-        .catch(() => setActiveStudentName('(unknown)'));
-    } else {
-      setActiveStudentName(student.name);
-    }
-  }, [activeStudentId, groupMembers]);
-
-  useEffect(() => { Prism.highlightAll(); }, [groups]);
 
   async function loadActivity() {
     try {
-      console.log("🔄 Loading activity instance:", instanceId);
       const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
-      const instanceData = await instanceRes.json();
+      let instanceData = await instanceRes.json(); // ✅ make it mutable
+
+      console.log("🧾 instanceData.sheet_url =", instanceData.sheet_url);
       setActivity(instanceData);
 
-      const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`, { credentials: 'include' });
-      const activeData = await res.json();
+      if (!instanceData.total_groups) {
+        await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/refresh-groups`);
+        const updatedRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
+        const updatedData = await updatedRes.json();
+        setActivity(updatedData);
+        instanceData = updatedData; // ✅ FIX: use updated data for doc preview
+      }
+
+      const activeRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`, {
+        credentials: 'include',
+      });
+      const activeData = await activeRes.json();
       setActiveStudentId(activeData.activeStudentId);
 
       const groupRes = await fetch(`${API_BASE_URL}/api/groups/instance/${instanceId}`);
       const groupData = await groupRes.json();
-
-      const userGroup = groupData.groups.find(g => g.members.some(m => m.student_id === user.id));
-      if (userGroup) {
-        setGroupMembers(userGroup.members);
+      let userGroup = null;
+      if (user?.id) {
+        userGroup = groupData.groups.find(g => g.members.some(m => m.student_id === user.id));
       }
 
-      // Always load answers, even if user is not in a group
+      if (userGroup) setGroupMembers(userGroup.members);
+
       const answersRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/responses`);
       const answersData = await answersRes.json();
-      console.log("📦 Observer fetched answers:", answersData);
-
-      // ✅ Extract AI feedback for each Python block
       setCodeFeedbackShown(prev => {
         const merged = { ...prev };
         for (const [qid, entry] of Object.entries(answersData)) {
-          if (entry.type === 'python' && entry.python_feedback) {
+          if ('python_feedback' in entry && entry.python_feedback !== undefined) {
             merged[qid] = entry.python_feedback;
           }
         }
         return merged;
       });
 
-      setExistingAnswers(answersData);
-
-
-      const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(instanceData.sheet_url)}`);
-      const { lines } = await docRes.json();
-      const blocks = parseSheetToBlocks(lines);
-
-      const grouped = [], preamble = [];
-      let currentGroup = null;
-      for (let block of blocks) {
-        if (block.type === 'groupIntro') {
-          if (currentGroup) grouped.push(currentGroup);
-          currentGroup = { intro: block, content: [] };
-        } else if (block.type === 'endGroup') {
-          if (currentGroup) { grouped.push(currentGroup); currentGroup = null; }
-        } else if (currentGroup) {
-          currentGroup.content.push(block);
-        } else {
-          preamble.push(block);
+      setExistingAnswers(prev => ({
+        ...prev,
+        ...answersData
+      }));
+      const newFollowupsData = {};
+      for (const [qid, entry] of Object.entries(answersData)) {
+        if (qid.endsWith('FA1')) {
+          newFollowupsData[qid] = entry.response;
         }
       }
-      setGroups(grouped);
-      setPreamble(preamble);
+
+
+      setFollowupAnswers(prev => ({
+        ...prev,
+        ...newFollowupsData  // if any
+      }));
+
+
+      const newFollowupsShown = {};
+      for (const [qid, entry] of Object.entries(answersData)) {
+        if (qid.endsWith('F1')) {
+          const baseQid = qid.replace('F1', '');
+          newFollowupsShown[baseQid] = entry.response;
+        }
+      }
+
+      setFollowupsShown(prev => ({
+        ...prev,
+        ...newFollowupsShown
+      }));
+
+
+      // Step 6: Parse Google Doc structure
+
+      const docUrl = instanceData.sheet_url;
+      if (!docUrl || docUrl === 'undefined') {
+        console.warn("❌ Skipping doc preview because sheet_url is missing or undefined:", docUrl);
+      } else {
+        const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(docUrl)}`);
+        const { lines } = await docRes.json();
+        const blocks = parseSheetToBlocks(lines);
+        const files = {};
+        for (const block of blocks) {
+          if (block.type === 'file' && block.filename && block.content) {
+            files[block.filename] = block.content;
+          }
+        }
+        setFileContents(prev => {
+          const updated = { ...files };
+          for (const [name, content] of Object.entries(prev)) {
+            updated[name] = content; // Keep existing edits
+          }
+          fileContentsRef.current = updated;
+          return updated;
+        });
+
+        fileContentsRef.current = files;
+
+        const grouped = [], preamble = [];
+        let currentGroup = null;
+        for (let block of blocks) {
+          if (block.type === 'groupIntro') {
+            if (currentGroup) grouped.push(currentGroup);
+            currentGroup = { intro: block, content: [] };
+          } else if (block.type === 'endGroup') {
+            if (currentGroup) { grouped.push(currentGroup); currentGroup = null; }
+          } else if (currentGroup) {
+            currentGroup.content.push(block);
+          } else {
+            preamble.push(block);
+          }
+        }
+
+        setGroups(grouped);
+        setPreamble(preamble);
+      }
+
+
     } catch (err) {
       console.error('Failed to load activity data', err);
     }
   }
-
 
   async function evaluateResponseWithAI(questionBlock, studentAnswer) {
     const body = {
@@ -374,7 +526,8 @@ export default function RunActivityPage() {
       }
 
       const followupPrompt = followupsShown[qid];
-      const followupAnswer = followupAnswers[qid]?.trim();
+      const followupKey = `${qid}FA1`;
+      const followupAnswer = followupAnswers[followupKey]?.trim();
 
       if (followupPrompt && !followupAnswer) {
         unanswered.push(qid);
@@ -384,10 +537,11 @@ export default function RunActivityPage() {
       if (baseAnswer && followupPrompt && followupAnswer) {
         answers[qid] = baseAnswer;
         answers[`${qid}S`] = 'complete';
-        if (followupPrompt) answers[`${qid}F1`] = followupPrompt;
-        if (followupAnswer) answers[`${qid}FA1`] = followupAnswer;
+        answers[`${qid}F1`] = followupPrompt;
+        answers[followupKey] = followupAnswer;
         continue;
       }
+
 
       if (baseAnswer) {
         answers[qid] = baseAnswer;
@@ -486,26 +640,62 @@ export default function RunActivityPage() {
       const aiData = await aiRes.json();
       if (aiData.feedback) {
         console.log(`🤖 AI feedback for ${responseKey}:`, aiData.feedback);
+
+        // Save feedback to DB
+        await fetch(`${API_BASE_URL}/api/responses/save-feedback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question_id: responseKey,
+            activity_instance_id: instanceId,
+            user_id: user?.id,
+            response_type: 'python_feedback',
+            feedback: aiData.feedback,
+          }),
+        });
+
+        // 1. Save locally
         setCodeFeedbackShown(prev => ({
           ...prev,
           [responseKey]: aiData.feedback,
         }));
+
+        // 2. 🔁 Emit to observers
+        if (socket && instanceId) {
+          socket.emit('feedback:update', {
+            instanceId,
+            responseKey,
+            feedback: aiData.feedback,
+          });
+        }
+
       } else {
         console.log(`🤖 No feedback needed for ${responseKey}`);
+
+        // Clear feedback locally
         setCodeFeedbackShown(prev => ({
           ...prev,
           [responseKey]: null,
         }));
+
+        // 🔁 Emit empty feedback to clear for observers
+        if (socket && instanceId) {
+          socket.emit('feedback:update', {
+            instanceId,
+            responseKey,
+            feedback: null,
+          });
+        }
       }
+
     } catch (err) {
       console.error("❌ Failed in handleCodeChange:", responseKey, err);
     }
   }
 
-
   return (
     <Container className="mt-4">
-      <h2>Run Activity: {activity?.title || activity?.name}</h2>
+      <h2>{activity?.title ? `Activity: ${activity.title}` : (courseName ? `Course: ${courseName}` : "Untitled Activity")}</h2>
       {isActive
         ? <Alert variant="success">You are the active student. You may submit responses.</Alert>
         : <Alert variant="info">You are currently observing. The active student is {activeStudentName || '(unknown)'}</Alert>}
@@ -514,7 +704,7 @@ export default function RunActivityPage() {
         editable: false,
         isActive: false,
         mode: 'run',
-        codeFeedbackShown, // ✅ FIX added here
+        codeFeedbackShown, // ✅ FIX added here                                                                     
       })}
 
       {groups.map((group, index) => {
@@ -525,13 +715,7 @@ export default function RunActivityPage() {
 
         const editable = isActive && isCurrent && !isComplete;
         const showGroup = isInstructor || isComplete || isCurrent;
-
-        console.log(
-          `👁️ Group ${index + 1} -- isInstructor: ${isInstructor}, isComplete: ${isComplete}, isCurrent: ${isCurrent}, isFuture: ${isFuture}, showGroup: ${showGroup}, editable: ${editable}`
-        );
-
         if (!showGroup) return null;
-        console.log("📦 Total groups loaded:", groups.length);
 
         return (
           <div
@@ -549,9 +733,42 @@ export default function RunActivityPage() {
               followupsShown,
               followupAnswers,
               setFollowupAnswers,
+
+              socket,
+              instanceId,
+              answeredBy: user?.id,
+              fileContentsRef,
+              setFileContents: handleUpdateFileContents,
               onCodeChange: handleCodeChange,
-              codeFeedbackShown, // ✅ new prop
+              codeFeedbackShown,
+              onTextChange: (responseKey, value) => {
+                if (responseKey.endsWith('FA1')) {
+                  // 🔄 Follow-up response: update followupAnswers
+                  setFollowupAnswers(prev => ({
+                    ...prev,
+                    [responseKey]: value
+                  }));
+                } else {
+                  // 📝 Sample (original) response: update existingAnswers
+                  setExistingAnswers(prev => ({
+                    ...prev,
+                    [responseKey]: { ...prev[responseKey], response: value, type: 'text' }
+                  }));
+                }
+
+                // 📢 Emit for live sync
+                if (isActive && socket) {
+                  socket.emit('response:update', {
+                    instanceId,
+                    responseKey,
+                    value,
+                    answeredBy: user.id
+                  });
+                }
+              }
+
             })}
+
 
             {editable && (
               <div className="mt-2">
@@ -571,8 +788,6 @@ export default function RunActivityPage() {
           </div>
         );
       })}
-
-
 
       {currentQuestionGroupIndex === groups.length && (
         <Alert variant="success">All groups complete! Review your responses above.</Alert>

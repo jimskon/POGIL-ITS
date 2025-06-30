@@ -23,6 +23,8 @@ export default function ManageActivitiesPage() {
   const [showModal, setShowModal] = useState(false);
   const [pendingActivity, setPendingActivity] = useState(null);
   const canManage = user?.role === 'root' || user?.role === 'creator';
+  const [showFolderModal, setShowFolderModal] = useState(false);
+  const [folderUrl, setFolderUrl] = useState('');
 
   useEffect(() => {
     if (!canManage) {
@@ -62,6 +64,22 @@ export default function ManageActivitiesPage() {
 
     setPendingActivity(activity);
     setShowModal(true);
+  };
+
+  const handleBulkImport = async () => {
+    setShowFolderModal(false);
+    const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/import-folder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ folderUrl, createdBy: user.id })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setActivities([...activities, ...data.imported]);
+      setFolderUrl('');
+    } else {
+      alert(data.error || "Folder import failed.");
+    }
   };
 
   const saveActivity = async (activity) => {
@@ -114,17 +132,19 @@ export default function ManageActivitiesPage() {
     setPendingActivity(null);
   };
 
-  const handleDelete = async (name) => {
-    const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/activities/${name}`, {
+  const handleDelete = async (activityId) => {
+    const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/activities/id/${activityId}`, {
       method: 'DELETE'
     });
 
     if (res.ok) {
-      setActivities(activities.filter(a => a.name !== name));
+      setActivities(activities.filter(a => a.id !== activityId));
     } else {
-      alert("Delete failed.");
+      const data = await res.json();
+      alert(data.error || "Delete failed.");
     }
   };
+
 
   const handleUpdate = async (activity) => {
     const payload = {
@@ -195,6 +215,15 @@ export default function ManageActivitiesPage() {
           />
         </Form.Group>
         <Button variant="primary" onClick={handleAdd}>Add Activity</Button>
+        <Button
+  variant="secondary"
+  className="mb-4"
+  onClick={() => setShowFolderModal(true)}
+>
+  Import Activities from Google Folder
+</Button>
+
+
       </Form>
 
       <h4>Current Activities</h4>
@@ -249,22 +278,39 @@ export default function ManageActivitiesPage() {
           ))}
         </tbody>
       </Table>
-
-      {pendingActivity?.sheet_url && pendingActivity.sheet_url.trim() !== '' && (
-      <Modal show={showModal} onHide={() => setShowModal(false)}>
+      <Modal show={showFolderModal} onHide={() => setShowFolderModal(false)}>
         <Modal.Header closeButton>
-          <Modal.Title>Share Document Access</Modal.Title>
+          <Modal.Title>Import from Google Folder</Modal.Title>
         </Modal.Header>
         <Modal.Body>
-          <p>If your activity uses a Google Sheet or Doc, please ensure it is shared with:</p>
-          <code>{SERVICE_ACCOUNT_EMAIL}</code>
-          <p className="mt-3">Click "Continue" once you've shared access or if no document is being used.</p>
+          <Form.Control
+            type="text"
+            placeholder="Enter Google Drive folder URL"
+            value={folderUrl}
+            onChange={(e) => setFolderUrl(e.target.value)}
+          />
+          <p className="mt-2">Make sure the folder is shared with: <code>{SERVICE_ACCOUNT_EMAIL}</code></p>
         </Modal.Body>
         <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowModal(false)}>Cancel</Button>
-          <Button variant="primary" onClick={confirmShareAndCheckAccess}>Continue</Button>
+          <Button variant="secondary" onClick={() => setShowFolderModal(false)}>Cancel</Button>
+          <Button variant="primary" onClick={handleBulkImport}>Import</Button>
         </Modal.Footer>
       </Modal>
+      {pendingActivity?.sheet_url && pendingActivity.sheet_url.trim() !== '' && (
+        <Modal show={showModal} onHide={() => setShowModal(false)}>
+          <Modal.Header closeButton>
+            <Modal.Title>Share Document Access</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            <p>If your activity uses a Google Sheet or Doc, please ensure it is shared with:</p>
+            <code>{SERVICE_ACCOUNT_EMAIL}</code>
+            <p className="mt-3">Click "Continue" once you've shared access or if no document is being used.</p>
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="secondary" onClick={() => setShowModal(false)}>Cancel</Button>
+            <Button variant="primary" onClick={confirmShareAndCheckAccess}>Continue</Button>
+          </Modal.Footer>
+        </Modal>
       )}
     </Container>
   );

@@ -9,6 +9,28 @@ const rl = readline.createInterface({
 const BASE_URL = 'http://localhost:4000/api';
 const PASSWORD = 'pinhead';
 
+function getRandomName() {
+  const firstNames = [
+    "James", "Mary", "John", "Patricia", "Robert", "Jennifer", "Michael", "Linda", "William", "Elizabeth",
+    "David", "Barbara", "Richard", "Susan", "Joseph", "Jessica", "Thomas", "Sarah", "Charles", "Karen",
+    "Christopher", "Nancy", "Daniel", "Lisa", "Matthew", "Betty", "Anthony", "Margaret", "Donald", "Sandra",
+    "Mark", "Ashley", "Paul", "Kimberly", "Steven", "Emily", "Andrew", "Donna", "Kenneth", "Michelle",
+    "George", "Dorothy", "Joshua", "Carol", "Kevin", "Amanda", "Brian", "Melissa", "Edward", "Deborah"
+  ];
+
+  const lastNames = [
+    "Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez",
+    "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin",
+    "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark", "Ramirez", "Lewis", "Robinson",
+    "Walker", "Young", "Allen", "King", "Wright", "Scott", "Torres", "Nguyen", "Hill", "Flores",
+    "Green", "Adams", "Nelson", "Baker", "Hall", "Rivera", "Campbell", "Mitchell", "Carter", "Roberts"
+  ];
+
+  const first = firstNames[Math.floor(Math.random() * firstNames.length)];
+  const last = lastNames[Math.floor(Math.random() * lastNames.length)];
+  return `${first} ${last}`;
+}
+
 function prompt(question) {
   return new Promise(resolve => rl.question(question, resolve));
 }
@@ -95,7 +117,7 @@ async function main() {
     const creators = [];
     for (let i = 1; i <= numCreators; i++) {
       const email = creatorTemplate.replace('@', `${i}@`);
-      const user = await registerUser(email, `Creator ${i}`, 'creator');
+      const user = await registerUser(email, getRandomName(), 'creator');
       if (user) creators.push(user);
     }
 
@@ -104,7 +126,7 @@ async function main() {
     const instructors = [];
     for (let i = 1; i <= numInstructors; i++) {
       const email = instructorTemplate.replace('@', `${i}@`);
-      const user = await registerUser(email, `Instructor ${i}`, 'instructor');
+      const user = await registerUser(email, getRandomName(), 'instructor');
       if (user) instructors.push(user);
     }
 
@@ -113,7 +135,7 @@ async function main() {
     const students = [];
     for (let i = 1; i <= numStudents; i++) {
       const email = studentTemplate.replace('@', `${i}@`);
-      const user = await registerUser(email, `Student ${i}`, 'student');
+      const user = await registerUser(email, getRandomName(), 'student');
       if (user) students.push(user);
     }
 

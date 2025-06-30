@@ -1,13 +1,17 @@
+// src: client/src/components/activity/ActivityPythonBlock.jsx
 import React, { useState, useEffect, useRef } from 'react';
 import { Form, Button } from 'react-bootstrap';
 import Prism from 'prismjs';
+import { runSkulptCode } from '../../utils/runSkulptCode';
+
 
 export default function ActivityPythonBlock({
   code: initialCode,
   blockIndex,
   responseKey,
   onCodeChange,
-  codeFeedbackShown = {}, // ✅ Accept feedback
+  codeFeedbackShown = {},
+  fileContentsRef,
 }) {
   const [code, setCode] = useState(initialCode);
   const [savedCode, setSavedCode] = useState(initialCode);
@@ -19,6 +23,10 @@ export default function ActivityPythonBlock({
   const outputRef = useRef(null);
   const [outputText, setOutputText] = useState('');
 
+
+  useEffect(() => {
+    //console.log("📥 Updated fileContentsRef:", fileContentsRef.current);
+  }, [fileContentsRef.current]);
 
 
   useEffect(() => {
@@ -33,39 +41,24 @@ export default function ActivityPythonBlock({
   }, [initialCode]);
 
 
-  const runPython = () => {
-    if (!window.Sk || !window.Sk.configure) {
-      alert("Skulpt is still loading...");
-      return;
-    }
+const runPython = () => {
+  //console.log("🚀 Running with fileContents:", fileContentsRef.current);
 
-    setOutputText(''); // Clear previous output
+  if (!window.Sk || !window.Sk.configure) {
+    alert("Skulpt is still loading...");
+    return;
+  }
 
-    Sk.configure({
-      output: (text) => {
-        setOutputText((prev) => prev + text);
-      },
-      read: (file) => {
-        if (!Sk.builtinFiles?.["files"][file]) {
-          throw `File not found: '${file}'`;
-        }
-        return Sk.builtinFiles["files"][file];
-      },
-      inputfun: function (promptText) {
-        const response = window.prompt(promptText || "Please enter input:");
-        if (response === null) {
-          throw new Error("User cancelled input.");
-        }
-        return response;
-      },
-      inputfunTakesPrompt: true,
-    });
+  const currentFiles = { ...fileContentsRef.current };  // 🔍 force fresh copy
+  //console.log("🚀 Running with fileContents:", currentFiles); // ✅ must match latest edit
 
+  runSkulptCode({
+    code,
+    fileContents: currentFiles,
+    setOutput: setOutputText,
+  });
+};
 
-    Sk.misceval
-      .asyncToPromise(() => Sk.importMainWithBody("__main__", false, code, true))
-      .catch((err) => setOutputText((prev) => prev + '\n' + err.toString()));
-  };
 
 
   const handleDoneEditing = () => {

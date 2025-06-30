@@ -60,6 +60,7 @@ export default function DashboardPage() {
 
   const canManage = user?.role === 'root' || user?.role === 'creator';
 
+  const nonStudent = ['root', 'creator', 'instructor'].includes(user?.role);
   return (
     <Container className="mt-4">
       <h2>Welcome, {user?.name}</h2>
@@ -70,7 +71,7 @@ export default function DashboardPage() {
             <Spinner animation="border" />
           ) : enrolledCourses.length > 0 ? (
             <>
-              <h4>Your Enrolled Courses</h4>
+              <h4>{nonStudent ? 'Your Managed Courses' : 'Your Enrolled Courses'}</h4>
               <Table striped bordered hover>
                 <thead>
                   <tr>
@@ -87,10 +88,13 @@ export default function DashboardPage() {
                     <tr key={course.id}>
                       <td
                         style={{ cursor: 'pointer', textDecoration: 'underline', color: 'blue' }}
-                        onClick={() => navigate(`/courses/${course.id}/activities`)}
+                        onClick={() => navigate(`/courses/${course.id}/activities`, {
+                          state: { courseName: course.name }  // ✅ pass courseName to next page
+                        })}
                       >
                         {course.name}
                       </td>
+
                       <td>{course.code}</td>
                       <td>{course.section}</td>
                       <td>{course.semester}</td>

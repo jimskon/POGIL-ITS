@@ -94,18 +94,30 @@ CREATE TABLE IF NOT EXISTS group_members (
 );
 
 --- Responses
-CREATE TABLE IF NOT EXISTS responses (
+CREATE TABLE responses (
   id INT AUTO_INCREMENT PRIMARY KEY,
+
   activity_instance_id INT NOT NULL,
-  question_id TEXT NOT NULL,
+  question_id VARCHAR(50) NOT NULL,  -- TEXT can't be indexed for UNIQUE; use VARCHAR
   response_type ENUM('text', 'python', 'cpp') NOT NULL DEFAULT 'text',
   response TEXT NOT NULL,
+
   submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
   answered_by_user_id INT NOT NULL,
+
+  -- Foreign Keys
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE,
-  FOREIGN KEY (answered_by_user_id) REFERENCES users(id) ON DELETE CASCADE
+  FOREIGN KEY (answered_by_user_id) REFERENCES users(id) ON DELETE CASCADE,
+
+  -- Enforce uniqueness of response per user/question/type
+  UNIQUE KEY unique_response (
+    activity_instance_id,
+    question_id
+  )
 );
+
 
 
 -- AI Feedback
@@ -148,4 +160,13 @@ CREATE TABLE IF NOT EXISTS event_log (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS pending_users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255),
+  email VARCHAR(255) UNIQUE,
+  password_hash VARCHAR(255),
+  code VARCHAR(6),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
