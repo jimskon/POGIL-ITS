@@ -147,3 +147,12 @@ CREATE TABLE IF NOT EXISTS event_log (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS pending_users (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255),
+  email VARCHAR(255) UNIQUE,
+  password_hash VARCHAR(255),
+  code VARCHAR(6),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
