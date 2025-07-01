@@ -53,7 +53,7 @@ def open(filename, mode='r'):
 `;
 
   const finalCode = injectedPython + '\n' + code;
-  console.log("📜 Final code to run:", finalCode);
+  //console.log("📜 Final code to run:", finalCode);
 
   Sk.python3 = true;
 
