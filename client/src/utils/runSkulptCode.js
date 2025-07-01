@@ -1,4 +1,4 @@
-export async function runSkulptCode({ code, fileContents, setOutput }) {
+export async function runSkulptCode({ code, fileContents, setOutput, setFileContents }) {
   setOutput('');
 
   if (!window.Sk || !Sk.configure) {
@@ -6,49 +6,13 @@ export async function runSkulptCode({ code, fileContents, setOutput }) {
     return;
   }
 
-  // ✅ Expose setFileContent so Python code can call it
-  window.setFileContent = function (filename, content) {
-    if (fileContents && filename) {
-      // UNWRAP Skulpt string objects
-      if (typeof filename === 'object' && filename.v !== undefined) {
-        filename = filename.v;
-      }
-      if (typeof content === 'object' && content.v !== undefined) {
-        content = content.v;
-      }
-      fileContents[filename] = String(content);
-    }
-  };
+  /** ✅ 1. Build initial file dictionary as a Python literal */
+  const __fileDict = Object.entries(fileContents || {}).map(
+    ([name, content]) =>
+      `"${name}": """${String(content).replace(/\\/g, "\\\\").replace(/"""/g, '\\"\\"\\"')}"""`
+  ).join(",\n  ");
 
-  // ✅ Setup Skulpt external js module
-  Sk.externalLibraries = {
-    js: {
-      path: '',
-      dependencies: [],
-      load: () => {
-        console.log("[Skulpt external load] returning js module");
-        return {
-          setFileContent: new Sk.builtin.func((filename, content) => {
-            console.log("[Skulpt setFileContent] called with", filename, content);
-            window.setFileContent(filename, content);
-            return Sk.builtin.none.none$;
-          }),
-          document: window.document,
-        };
-      },
-    },
-  };
-
-  // ✅ Prepare file dictionary for injection
-const __fileDict = Object.entries(fileContents || {}).map(
-  ([name, content]) =>
-    `"${name}": """${String(content).replace(/\\/g, "\\\\").replace(/"""/g, '\\"\\"\\"')}"""`
-).join(",\n  ");
-
-
-
-  //print ("Injecting files:", __fileDict);
-
+  /** ✅ 2. Injected Python shims for open(), FakeFile, etc. */
   const injectedPython = `
 __files__ = {
   ${__fileDict}
@@ -57,75 +21,37 @@ __files__ = {
 for k in __files__:
     __files__[k] = str(__files__[k])
 
-def safe_split_lines(content):
-    # Always get a real Python str
-    try:
-        content = str(content)
-    except Exception as e:
-        print("Error coercing to string:", e)
-        content = ""
-    # Split manually (avoiding .splitlines() bug in Skulpt)
-    result = []
-    current = ""
-    for c in content:
-        if c == "\\n":
-            result.append(current + "\\n")
-            current = ""
-        else:
-            current += c
-    if current:
-        result.append(current)
-    print("Safe split lines result:", result)
-    return result
-
 class FakeFile:
     def __init__(self, name, content):
-        content = str(content)
-        print("TYPE:", type(content), "CONTENT:", content, "DIR:", dir(content))
-        print("IF POSSIBLE v:", getattr(content, 'v', 'no v'))
-        #self.lines = str(content).split("\\n")
-        self.lines = [str(line) for line in safe_split_lines(content)]
-
+        self.name = name
+        self.content = str(content)
         self.index = 0
         self.closed = False
-        self.name = name
-        self.content = content
 
     def read(self):
-        print("Reading file:", self.name, "Content length:", len(self.lines))
-        return ''.join(self.lines[self.index:])
+        return self.content[self.index:]
 
     def readline(self):
-        if self.index < len(self.lines):
-            line = self.lines[self.index]
-            self.index += 1
+        newline_index = self.content.find("\\n", self.index)
+        if newline_index == -1:
+            line = self.content[self.index:]
+            self.index = len(self.content)
             return line
-        return ''
+        line = self.content[self.index: newline_index + 1]
+        self.index = newline_index + 1
+        return line
 
     def write(self, s):
         s = str(s)
         self.content += s
-
-        print("Writing to file:", self.name, "Content:", s)
-        print("Type of content:", type(self.content))
-        self.lines = safe_split_lines(self.content)
-
-        setFileContent = __import__('js').setFileContent
-        setFileContent(self.name, self.content)
-
-        jsdoc = __import__('js').document
-        selector = 'textarea[data-filename="{}"]'.format(self.name)
-        textarea = jsdoc.querySelector(selector)
-        if textarea:
-            textarea.value = self.content
-
+        print("##FILEWRITE## {} {}".format(self.name, self.content))
 
     def close(self):
         self.closed = True
 
     def __iter__(self):
-        for line in self.lines[self.index:]:
-            yield line
+        while self.index < len(self.content):
+            yield self.readline()
 
 def open(filename, mode='r'):
     if filename in __files__:
@@ -134,12 +60,33 @@ def open(filename, mode='r'):
         raise FileNotFoundError("No such file: {}".format(filename))
 `;
 
+  /** ✅ 3. User code appended */
   const finalCode = injectedPython + '\n' + code;
-  console.log("📜 Final code to run:", finalCode);
 
+  /** ✅ 4. Configure Skulpt runtime */
   Sk.python3 = true;
   Sk.configure({
-    output: (txt) => setOutput((prev) => prev + txt),
+    output: (txt) => {
+      if (txt.startsWith('##FILEWRITE## ')) {
+        // Special marker line from Python
+        const payload = txt.slice('##FILEWRITE## '.length);
+        const spaceIndex = payload.indexOf(' ');
+        if (spaceIndex !== -1) {
+          const filename = payload.slice(0, spaceIndex);
+          const content = payload.slice(spaceIndex + 1);
+          console.log("[runSkulptCode] Intercepted FILEWRITE:", filename, content);
+          if (setFileContents) {
+            setFileContents(prev => ({
+              ...prev,
+              [filename]: content
+            }));
+          }
+        }
+      } else {
+        // Normal print output
+        setOutput((prev) => prev + txt);
+      }
+    },
     inputfunTakesPrompt: true,
     read: (fname) => {
       if (Sk.builtinFiles?.files[fname]) {
@@ -179,14 +126,17 @@ def open(filename, mode='r'):
     }
   });
 
+  /** ✅ 5. Run user's code */
   try {
     Sk.execLimit = 50000;
     Sk.sysmodules = new Sk.builtin.dict([]);
-    await Sk.misceval.asyncToPromise(() => {
-      return Sk.importMainWithBody('<stdin>', false, finalCode, true);
-    });
+    await Sk.misceval.asyncToPromise(() =>
+      Sk.importMainWithBody('<stdin>', false, finalCode, true)
+    );
   } catch (e) {
-    const errText = Sk.misceval.printError ? Sk.misceval.printError(e) : e.toString();
+    const errText = Sk.misceval.printError
+      ? Sk.misceval.printError(e)
+      : e.toString();
     setOutput((prev) => prev + "\n❌ Error: " + errText);
   }
 }
