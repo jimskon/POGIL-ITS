@@ -305,7 +305,6 @@ export default function RunActivityPage() {
         ...prev,
         ...answersData
       }));
-
       const newFollowupsData = {};
       for (const [qid, entry] of Object.entries(answersData)) {
         if (qid.endsWith('FA1')) {
