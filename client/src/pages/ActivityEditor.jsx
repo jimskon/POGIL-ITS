@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Container, Row, Col, Button, Form, Alert } from 'react-bootstrap';
 import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
@@ -13,6 +13,18 @@ export default function ActivityEditor() {
   const [copySuccess, setCopySuccess] = useState('');
   const [previewKey, setPreviewKey] = useState(Date.now());
   const [autoCompileEnabled, setAutoCompileEnabled] = useState(true);
+
+  // 🔁 New states and ref for file contents (for Python blocks)
+  const [fileContents, setFileContents] = useState({});
+  const fileContentsRef = useRef({});
+
+  const handleUpdateFileContents = (updaterFn) => {
+    setFileContents((prev) => {
+      const updated = updaterFn(prev);
+      fileContentsRef.current = updated;
+      return updated;
+    });
+  };
 
   // Load Skulpt
   useEffect(() => {
@@ -51,17 +63,15 @@ export default function ActivityEditor() {
         const cached = localStorage.getItem(`activity-${activityId}`);
         if (cached) {
           setRawText(cached);
-          setTimeout(() => handleCompile(), 0);
+          setTimeout(() => handleCompile(cached), 0);
         } else {
           const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activityData.sheet_url)}`);
           const { lines } = await docRes.json();
           const text = lines.join('\n');
           setRawText(text);
           localStorage.setItem(`activity-${activityId}`, text);
-          setTimeout(() => handleCompile(), 0);
+          setTimeout(() => handleCompile(text), 0);
         }
-
-
       } catch (err) {
         console.error("Failed to fetch activity", err);
       }
@@ -70,25 +80,40 @@ export default function ActivityEditor() {
     if (skulptLoaded) fetchActivity();
   }, [activityId, skulptLoaded]);
 
-  // Compile handler
-  const handleCompile = () => {
-    console.log('🧑‍💻 parseSheetToBlocks invoked');
-    const lines = rawText.split('\n');
-    console.log('📄 Compiling lines:', lines);
+  // 🔁 Compile handler
+  const handleCompile = (sourceText = rawText) => {
+    const lines = sourceText.split('\n');
     const blocks = parseSheetToBlocks(lines);
-    console.log('📦 Parsed blocks:', blocks);
-    const rendered = renderBlocks(blocks, { mode: 'preview' });
-    console.log('🧩 Rendered elements:', rendered);
+
+    // ✅ Extract files for Python execution
+    const files = {};
+    for (const block of blocks) {
+      if (block.type === 'file' && block.filename && block.content) {
+        files[block.filename] = block.content;
+      }
+    }
+    setFileContents(files);
+    fileContentsRef.current = files;
+
+    const rendered = renderBlocks(blocks, {
+      mode: 'preview',
+      editable: true,
+      fileContentsRef,
+      setFileContents: handleUpdateFileContents,
+    });
+
     setElements(rendered);
     setPreviewKey(Date.now());
-    localStorage.setItem(`activity-${activityId}`, rawText);
+    localStorage.setItem(`activity-${activityId}`, sourceText);
   };
 
+  // Auto-compile on change
   useEffect(() => {
     if (autoCompileEnabled && rawText.trim()) {
       handleCompile();
     }
   }, [rawText, autoCompileEnabled]);
+
   // Copy handler
   const handleCopy = async () => {
     try {
@@ -113,6 +138,24 @@ export default function ActivityEditor() {
     }
   };
 
+  const handleRecover = async () => {
+    if (!activity?.sheet_url) return;
+
+    const confirmed = window.confirm("This will discard all unsaved changes and recover the original text from the source document. Are you sure?");
+    if (!confirmed) return;
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activity.sheet_url)}`);
+      const { lines } = await res.json();
+      const recoveredText = lines.join('\n');
+      setRawText(recoveredText);
+      localStorage.setItem(`activity-${activityId}`, recoveredText);
+      handleCompile(recoveredText);
+    } catch (err) {
+      console.error("Failed to recover original text", err);
+    }
+  };
+  
   return (
     <Container fluid style={{ height: '100vh', overflow: 'hidden', padding: '1rem' }}>
       <style>{`
@@ -163,8 +206,9 @@ export default function ActivityEditor() {
             onChange={() => setAutoCompileEnabled(prev => !prev)}
             className="ms-3"
           />
-          <Button variant="primary" onClick={handleCompile}>Compile</Button>{' '}
-          <Button variant="secondary" onClick={handleCopy}>Copy</Button>
+          <Button variant="primary" onClick={() => handleCompile()}>Compile</Button>{' '}
+          <Button variant="secondary" onClick={handleCopy}>Copy</Button>{' '}
+          <Button variant="warning" onClick={handleRecover}>Recover</Button>
         </div>
       </div>
 
