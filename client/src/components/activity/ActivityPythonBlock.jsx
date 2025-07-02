@@ -12,6 +12,7 @@ export default function ActivityPythonBlock({
   onCodeChange,
   codeFeedbackShown = {},
   fileContentsRef,
+  setFileContents,
 }) {
   const [code, setCode] = useState(initialCode);
   const [savedCode, setSavedCode] = useState(initialCode);
@@ -25,7 +26,7 @@ export default function ActivityPythonBlock({
 
 
   useEffect(() => {
-    //console.log("📥 Updated fileContentsRef:", fileContentsRef.current);
+    console.log("✅ fileContentsRef updated:", fileContentsRef.current);
   }, [fileContentsRef.current]);
 
 
@@ -41,23 +42,25 @@ export default function ActivityPythonBlock({
   }, [initialCode]);
 
 
-const runPython = () => {
-  //console.log("🚀 Running with fileContents:", fileContentsRef.current);
+  const runPython = () => {
+    console.log("🚀 Running with fileContents:", fileContentsRef.current);
 
-  if (!window.Sk || !window.Sk.configure) {
-    alert("Skulpt is still loading...");
-    return;
-  }
+    if (!window.Sk || !window.Sk.configure) {
+      alert("Skulpt is still loading...");
+      return;
+    }
 
-  const currentFiles = { ...fileContentsRef.current };  // 🔍 force fresh copy
-  //console.log("🚀 Running with fileContents:", currentFiles); // ✅ must match latest edit
+    const currentFiles = { ...fileContentsRef.current };  // 🔍 force fresh copy
+    console.log("🚀 Running with fileContents:", currentFiles); // ✅ must match latest edit
 
-  runSkulptCode({
-    code,
-    fileContents: currentFiles,
-    setOutput: setOutputText,
-  });
-};
+    runSkulptCode({
+      code,
+      fileContents: fileContentsRef.current,
+      setOutput: setOutputText,
+      setFileContents,
+    });
+    console.log("*** Running with fileContents:", currentFiles);
+  };
 
 
 

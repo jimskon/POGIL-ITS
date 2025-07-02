@@ -122,8 +122,8 @@ export default function ActivityPreview() {
         // 🔥 Extract file contents into a map
         const files = {};
         for (const block of parsed) {
-          if (block.type === 'file' && block.filename) {
-            files[block.filename] = block.content || "";  // Preserve even empty files
+          if (block.type === 'file' && block.filename && block.content) {
+            files[block.filename] = block.content;
           }
         }
         setBlocks(parsed);         // save parsed blocks to state
@@ -152,11 +152,11 @@ export default function ActivityPreview() {
     const rendered = renderBlocks(blocks, {
       mode: 'preview',
       editable: true,
-      fileContentsRef,
+      fileContents,
       setFileContents: handleUpdateFileContents, // ✅ FIXED
     });
     setRenderedElements(rendered);
-  }, [blocks]);
+  }, [blocks, fileContents]);
 
 
 

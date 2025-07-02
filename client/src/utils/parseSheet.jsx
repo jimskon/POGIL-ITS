@@ -8,29 +8,16 @@ import { Form } from 'react-bootstrap';
 
 import { useState, useEffect } from 'react';
 
-export default function FileBlock({ filename, fileContentsRef, editable, setFileContents }) {
-  const fileContents = fileContentsRef.current || {};
-  const [localValue, setLocalValue] = useState(fileContents?.[filename] || '');
-  
-  useEffect(() => {
-    if (localValue === '' && fileContentsRef.current?.[filename]) {
-      setLocalValue(fileContentsRef.current[filename]);
-    }
-  }, [filename]);
+export default function FileBlock({ filename, fileContents, editable, setFileContents }) {
+  const value = fileContents?.[filename] || '';
 
   const handleChange = (e) => {
     const updated = e.target.value;
-    setLocalValue(updated);
-
     if (editable && setFileContents) {
-      setFileContents(prev => {
-        const updatedContents = {
-          ...prev,
-          [filename]: updated,
-        };
-        console.log("💾 File updated:", filename, "=>", updated);
-        return updatedContents;
-      });
+      setFileContents(prev => ({
+        ...prev,
+        [filename]: updated,
+      }));
     }
   };
 
@@ -39,15 +26,16 @@ export default function FileBlock({ filename, fileContentsRef, editable, setFile
       <strong>📄 File: <code>{filename}</code></strong>
       <Form.Control
         as="textarea"
-        value={localValue}
+        value={value}
         onChange={handleChange}
-        rows={Math.max(4, localValue.split('\n').length)}
+        rows={Math.max(4, value.split('\n').length)}
         readOnly={!editable}
         className="font-monospace bg-light mt-1"
       />
     </div>
   );
 }
+
 
 
 export function parseSheetToBlocks(lines) {
@@ -332,7 +320,7 @@ export function renderBlocks(blocks, options = {}) {
     setFollowupAnswers = () => { },
     onCodeChange = null,
     codeFeedbackShown = {},
-    fileContentsRef,
+    fileContents,
     setFileContents,
   } = options;
 
@@ -384,7 +372,7 @@ export function renderBlocks(blocks, options = {}) {
         <FileBlock
           key={`file-${index}`}
           filename={block.filename}
-          fileContentsRef={fileContentsRef}
+          fileContents={fileContents}
           setFileContents={setFileContents}
           editable={true}
         />
@@ -411,7 +399,8 @@ export function renderBlocks(blocks, options = {}) {
           responseKey={codeKey}
           onCodeChange={onCodeChange}
           codeFeedbackShown={codeFeedbackShown}
-          fileContentsRef={fileContentsRef}
+          fileContents={fileContents}
+          setFileContents={setFileContents}
         />
 
       );
@@ -497,7 +486,8 @@ export function renderBlocks(blocks, options = {}) {
                 responseKey={responseKey}
                 onCodeChange={onCodeChange}
                 codeFeedbackShown={codeFeedbackShown}
-                fileContentsRef={fileContentsRef}
+                fileContents={fileContents}
+                setFileContents={setFileContents}
               />
 
             );

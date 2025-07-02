@@ -6,43 +6,36 @@ export async function runSkulptCode({ code, fileContents, setOutput, setFileCont
     return;
   }
 
-  /** ✅ 1. Build initial file dictionary as a Python literal */
   const __fileDict = Object.entries(fileContents || {}).map(
-    ([name, content]) =>
-      `"${name}": """${String(content).replace(/\\/g, "\\\\").replace(/"""/g, '\\"\\"\\"')}"""`
+    ([name, content]) => `"${name}": ${JSON.stringify(content)}`
   ).join(",\n  ");
 
-  /** ✅ 2. Injected Python shims for open(), FakeFile, etc. */
+
   const injectedPython = `
 __files__ = {
   ${__fileDict}
 }
 
-for k in __files__:
-    __files__[k] = str(__files__[k])
-
 class FakeFile:
     def __init__(self, name, content):
-        self.name = name
-        self.content = str(content)
+        self.lines = content.splitlines(True)
         self.index = 0
         self.closed = False
+        self.name = name
+        self.content = content
 
     def read(self):
-        return self.content[self.index:]
+        return ''.join(self.lines[self.index:])
 
     def readline(self):
-        newline_index = self.content.find("\\n", self.index)
-        if newline_index == -1:
-            line = self.content[self.index:]
-            self.index = len(self.content)
+        if self.index < len(self.lines):
+            line = self.lines[self.index]
+            self.index += 1
             return line
-        line = self.content[self.index: newline_index + 1]
-        self.index = newline_index + 1
-        return line
+        return ''
 
     def write(self, s):
-        s = str(s)
+        print("WRITE!!!!")
         self.content += s
         print("##FILEWRITE## {} {}".format(self.name, self.content))
 
@@ -50,31 +43,34 @@ class FakeFile:
         self.closed = True
 
     def __iter__(self):
-        while self.index < len(self.content):
-            yield self.readline()
+        for line in self.lines[self.index:]:
+            yield line
 
 def open(filename, mode='r'):
-    if filename in __files__:
+    if 'w' in mode:
+        return FakeFile(filename, "")
+    elif filename in __files__:
         return FakeFile(filename, __files__[filename])
     else:
         raise FileNotFoundError("No such file: {}".format(filename))
+
 `;
 
-  /** ✅ 3. User code appended */
   const finalCode = injectedPython + '\n' + code;
+  //console.log("📜 Final code to run:", finalCode);
 
-  /** ✅ 4. Configure Skulpt runtime */
   Sk.python3 = true;
+
   Sk.configure({
     output: (txt) => {
       if (txt.startsWith('##FILEWRITE## ')) {
-        // Special marker line from Python
         const payload = txt.slice('##FILEWRITE## '.length);
         const spaceIndex = payload.indexOf(' ');
         if (spaceIndex !== -1) {
           const filename = payload.slice(0, spaceIndex);
           const content = payload.slice(spaceIndex + 1);
-          console.log("[runSkulptCode] Intercepted FILEWRITE:", filename, content);
+          console.log("[runSkulptCode] FILEWRITE detected:", filename, content);
+          // Save to your React state
           if (setFileContents) {
             setFileContents(prev => ({
               ...prev,
@@ -83,18 +79,10 @@ def open(filename, mode='r'):
           }
         }
       } else {
-        // Normal print output
         setOutput((prev) => prev + txt);
       }
     },
-    inputfunTakesPrompt: true,
-    read: (fname) => {
-      if (Sk.builtinFiles?.files[fname]) {
-        return Sk.builtinFiles.files[fname];
-      }
-      throw new Error("File not found: " + fname);
-    },
-    syspath: ['.'],
+
     __future__: {
       nested_scopes: true,
       generators: true,
@@ -126,17 +114,15 @@ def open(filename, mode='r'):
     }
   });
 
-  /** ✅ 5. Run user's code */
   try {
-    Sk.execLimit = 50000;
-    Sk.sysmodules = new Sk.builtin.dict([]);
-    await Sk.misceval.asyncToPromise(() =>
-      Sk.importMainWithBody('<stdin>', false, finalCode, true)
-    );
+    Sk.execLimit = 50; // prevent infinite hangs
+    Sk.python3 = true;
+    //console.log("🚀 Running with fileContents:", fileContents); 
+    await Sk.misceval.asyncToPromise(() => {
+      return Sk.importMainWithBody('<stdin>', false, finalCode, true);
+    });
   } catch (e) {
-    const errText = Sk.misceval.printError
-      ? Sk.misceval.printError(e)
-      : e.toString();
+    const errText = Sk.misceval.printError ? Sk.misceval.printError(e) : e.toString();
     setOutput((prev) => prev + "\n❌ Error: " + errText);
   }
 }
