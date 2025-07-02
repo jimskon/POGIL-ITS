@@ -18,15 +18,12 @@ export default function ActivityPreview() {
   const [fileContents, setFileContents] = useState({});
   const [blocks, setBlocks] = useState([]);
   const [renderedElements, setRenderedElements] = useState([]);
-  const fileContentsRef = useRef({});
+  //const fileContentsRef = useRef({});
 
   const handleUpdateFileContents = (updaterFn) => {
-    setFileContents((prev) => {
-      const updated = updaterFn(prev);
-      fileContentsRef.current = updated; // keep ref in sync
-      return updated;
-    });
+    setFileContents((prev) => updaterFn(prev));
   };
+
 
 
   useEffect(() => {
@@ -131,7 +128,7 @@ export default function ActivityPreview() {
 
         setBlocks(parsed);         // save parsed blocks to state
         setFileContents(files);    // updates state for preview and editing
-        fileContentsRef.current = files;
+        //fileContentsRef.current = files;
 
       } catch (err) {
         console.error("Failed to fetch preview data", err);

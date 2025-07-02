@@ -9,10 +9,18 @@ import { Form } from 'react-bootstrap';
 import { useState, useEffect } from 'react';
 
 export default function FileBlock({ filename, fileContents, editable, setFileContents }) {
-  const value = fileContents?.[filename] || '';
+  // ✅ Local editing buffer
+  const [localValue, setLocalValue] = useState(fileContents?.[filename] || '');
+
+  // ✅ Sync local when fileContents changes from outside (initial load or external update)
+  useEffect(() => {
+    setLocalValue(fileContents?.[filename] || '');
+  }, [fileContents, filename]);
 
   const handleChange = (e) => {
     const updated = e.target.value;
+    setLocalValue(updated);
+
     if (editable && setFileContents) {
       setFileContents(prev => ({
         ...prev,
@@ -26,15 +34,16 @@ export default function FileBlock({ filename, fileContents, editable, setFileCon
       <strong>📄 File: <code>{filename}</code></strong>
       <Form.Control
         as="textarea"
-        value={value}
+        value={localValue}
         onChange={handleChange}
-        rows={Math.max(4, value.split('\n').length)}
+        rows={Math.max(4, localValue.split('\n').length)}
         readOnly={!editable}
         className="font-monospace bg-light mt-1"
       />
     </div>
   );
 }
+
 
 
 

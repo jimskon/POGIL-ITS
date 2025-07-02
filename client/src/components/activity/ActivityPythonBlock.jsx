@@ -11,23 +11,16 @@ export default function ActivityPythonBlock({
   responseKey,
   onCodeChange,
   codeFeedbackShown = {},
-  fileContentsRef,
+  fileContents,
   setFileContents,
 }) {
   const [code, setCode] = useState(initialCode);
   const [savedCode, setSavedCode] = useState(initialCode);
   const [isEditing, setIsEditing] = useState(false);
 
-  const outputId = `sk-output-${blockIndex}`;
   const codeId = `sk-code-${blockIndex}`;
   const codeRef = useRef(null);
-  const outputRef = useRef(null);
   const [outputText, setOutputText] = useState('');
-
-
-  useEffect(() => {
-    console.log("✅ fileContentsRef updated:", fileContentsRef.current);
-  }, [fileContentsRef.current]);
 
 
   useEffect(() => {
@@ -43,25 +36,23 @@ export default function ActivityPythonBlock({
 
 
   const runPython = () => {
-    console.log("🚀 Running with fileContents:", fileContentsRef.current);
+    console.log("🚀 Running with fileContents:", fileContents);
 
     if (!window.Sk || !window.Sk.configure) {
       alert("Skulpt is still loading...");
       return;
     }
 
-    const currentFiles = { ...fileContentsRef.current };  // 🔍 force fresh copy
-    console.log("🚀 Running with fileContents:", currentFiles); // ✅ must match latest edit
+    const currentFiles = { ...fileContents };  // Fresh copy for Skulpt
+    console.log("🚀 Using currentFiles:", currentFiles);
 
     runSkulptCode({
       code,
-      fileContents: fileContentsRef.current,
+      fileContents: currentFiles,
       setOutput: setOutputText,
       setFileContents,
     });
-    console.log("*** Running with fileContents:", currentFiles);
   };
-
 
 
   const handleDoneEditing = () => {
@@ -69,8 +60,6 @@ export default function ActivityPythonBlock({
     if (code !== savedCode && onCodeChange && responseKey) {
       onCodeChange(responseKey, code);
       setSavedCode(code);
-      // ❌ Do NOT runPython here — we don't want to wipe output
-      // setTimeout(runPython, 100);
     }
   };
 
@@ -117,11 +106,8 @@ export default function ActivityPythonBlock({
         </pre>
       )}
 
-
       <pre className="mt-2 bg-light p-2 border">{outputText}</pre>
 
-
-      {/* ✅ AI Feedback block */}
       {codeFeedbackShown[responseKey] && (
         <div className="mt-2 p-3 border rounded bg-warning-subtle">
           <strong>AI Feedback:</strong>

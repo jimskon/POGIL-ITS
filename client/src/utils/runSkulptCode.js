@@ -35,7 +35,6 @@ class FakeFile:
         return ''
 
     def write(self, s):
-        print("WRITE!!!!")
         self.content += s
         print("##FILEWRITE## {} {}".format(self.name, self.content))
 
