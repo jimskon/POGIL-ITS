@@ -379,7 +379,7 @@ export function renderBlocks(blocks, options = {}) {
     if (block.type === 'file') {
       return (
         <FileBlock
-          key={`file-${index}`}
+          key={`file-${block.filename}`} // ✅ stable and unique
           filename={block.filename}
           fileContents={fileContents}
           setFileContents={setFileContents}
@@ -397,7 +397,8 @@ export function renderBlocks(blocks, options = {}) {
 
       return (
         <ActivityPythonBlock
-          key={`py-${codeKey}-${index}-${prefill?.[codeKey]?.response || ''}-${codeFeedbackShown?.[codeKey] || ''}`}
+          key={`py-${index}-${block.content?.slice(0, 10) || ''}`}
+
           code={
             prefill?.[codeKey]?.response
             || block.content
@@ -468,7 +469,8 @@ export function renderBlocks(blocks, options = {}) {
 
 
       return (
-        <div key={`q-${block.id}`} className="mb-4">
+        <div key={`q-${block.groupId}-${block.id}`}  // ✅ unique per question
+          className="mb-4">
           <p>
             <strong>{block.label}</strong>{' '}
             <span dangerouslySetInnerHTML={{ __html: block.prompt }} />
@@ -488,7 +490,8 @@ export function renderBlocks(blocks, options = {}) {
             const savedResponse = prefill?.[responseKey]?.response || py.content;
             return (
               <ActivityPythonBlock
-                key={`q-${currentGroupIndex}-${block.id}-${i}-${savedResponse}-${codeFeedbackShown?.[responseKey] || ''}`}
+                key={`q-${block.groupId}-${block.id}-py-${i}`} // ✅ stable per question/code block
+
                 code={savedResponse}
                 blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}
                 editable={editable && isActive}

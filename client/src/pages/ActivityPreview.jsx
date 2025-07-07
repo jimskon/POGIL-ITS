@@ -18,6 +18,7 @@ export default function ActivityPreview() {
   const [fileContents, setFileContents] = useState({});
   const [blocks, setBlocks] = useState([]);
   const [renderedElements, setRenderedElements] = useState([]);
+  const fetchedRef = useRef(false);
   //const fileContentsRef = useRef({});
 
   const handleUpdateFileContents = (updaterFn) => {
@@ -126,8 +127,8 @@ export default function ActivityPreview() {
         setBlocks(parsed);         // save parsed blocks to state
         setFileContents(files);    //  makes the files available to Skulpt
 
-        setBlocks(parsed);         // save parsed blocks to state
-        setFileContents(files);    // updates state for preview and editing
+        //setBlocks(parsed);         // save parsed blocks to state
+        // setFileContents(files);    // updates state for preview and editing
         //fileContentsRef.current = files;
 
       } catch (err) {
@@ -135,8 +136,9 @@ export default function ActivityPreview() {
       }
     };
 
-    if (skulptLoaded) {
-      fetchActivityAndSheet(); // Only fetch once Skulpt is loaded
+    if (skulptLoaded && !fetchedRef.current) {
+      fetchedRef.current = true;
+      fetchActivityAndSheet();
     }
   }, [activityId, skulptLoaded]);
 
