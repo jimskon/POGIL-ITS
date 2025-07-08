@@ -780,7 +780,7 @@ export default function RunActivityPage() {
         );
       })}
 
-      {currentQuestionGroupIndex === groups.length && (
+      {groups.length > 0 && currentQuestionGroupIndex === groups.length && (
         <Alert variant="success">All groups complete! Review your responses above.</Alert>
       )}
     </Container>
