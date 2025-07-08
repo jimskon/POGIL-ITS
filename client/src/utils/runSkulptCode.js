@@ -1,4 +1,4 @@
-export async function runSkulptCode({ code, fileContents, setOutput, setFileContents }) {
+export async function runSkulptCode({ code, fileContents, setOutput, setFileContents, execLimit = 50000 }) {
   setOutput('');
 
   if (!window.Sk || !Sk.configure) {
@@ -114,7 +114,7 @@ def open(filename, mode='r'):
   });
 
   try {
-    Sk.execLimit = 50; // prevent infinite hangs
+    Sk.execLimit = execLimit;
     Sk.python3 = true;
     //console.log("🚀 Running with fileContents:", fileContents); 
     await Sk.misceval.asyncToPromise(() => {
