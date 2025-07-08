@@ -728,7 +728,7 @@ export default function RunActivityPage() {
               socket,
               instanceId,
               answeredBy: user?.id,
-              fileContentsRef,
+              fileContents,
               setFileContents: handleUpdateFileContents,
               onCodeChange: handleCodeChange,
               codeFeedbackShown,
