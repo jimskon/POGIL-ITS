@@ -13,6 +13,7 @@ export default function ActivityPythonBlock({
   codeFeedbackShown = {},
   fileContents,
   setFileContents,
+  timeLimit, // <-- new prop
 }) {
   const [code, setCode] = useState(initialCode);
   const [savedCode, setSavedCode] = useState(initialCode);
@@ -51,6 +52,7 @@ export default function ActivityPythonBlock({
       fileContents: currentFiles,
       setOutput: setOutputText,
       setFileContents,
+      execLimit: timeLimit || 50000
     });
   };
 
