@@ -38,11 +38,11 @@ export default function ActivityPreview() {
         script.src = src;
         script.async = true;
         script.onload = () => {
-          console.log(`✅ Loaded ${src}`);
+          //console.log(`✅ Loaded ${src}`);
           resolve();
         };
         script.onerror = () => {
-          console.error(`❌ Failed to load ${src}`);
+          //console.error(`❌ Failed to load ${src}`);
           reject(new Error(`Failed to load script ${src}`));
         };
         document.head.appendChild(script); // use <head> for better priority
@@ -57,12 +57,12 @@ export default function ActivityPreview() {
         console.log("✅ Skulpt scripts loaded");
 
         if (window.Sk) {
-          console.log("✅ Skulpt version:", Sk.version);
-          console.log("✅ Skulpt file system support?", typeof Sk.fs !== 'undefined');
+          //console.log("✅ Skulpt version:", Sk.version);
+          //console.log("✅ Skulpt file system support?", typeof Sk.fs !== 'undefined');
 
           // ✅ Define Sk.fs manually if missing
           if (!Sk.fs) {
-            console.log("⚙️ Injecting in-memory file system support into Sk");
+            //console.log("⚙️ Injecting in-memory file system support into Sk");
             Sk.fs = (function () {
               const files = {};
 
@@ -147,7 +147,7 @@ export default function ActivityPreview() {
   }, [fileContents]);*/
 
   useEffect(() => {
-    console.log("🔁 Rendering blocks due to [blocks]");
+    //console.log("🔁 Rendering blocks due to [blocks]");
     const rendered = renderBlocks(blocks, {
       mode: 'preview',
       editable: true,

@@ -271,9 +271,9 @@ export default function ManageActivitiesPage() {
                     navigate(`/preview/${activity.id}`);
                   }
                 }} className="me-2">Preview</Button>
-                <Button variant="danger" size="sm" onClick={() => handleDelete(activity.id)}>
-                  Delete
-                </Button>              </td>
+                <Button variant="warning" size="sm" onClick={() => navigate(`/editor/${activity.id}`)} className="me-2">Edit</Button>
+                <Button variant="danger" size="sm" onClick={() => handleDelete(activity.name)}>Delete</Button>
+              </td>
             </tr>
           ))}
         </tbody>
