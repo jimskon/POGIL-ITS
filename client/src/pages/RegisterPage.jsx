@@ -21,9 +21,9 @@ export default function RegisterPage() {
 
       const data = await res.json();
       if (res.ok) {
-        alert('Registration successful!');
-        navigate('/');
-      } else {
+        navigate('/verify', { state: { email } });
+      } 
+      else {
         setError(data.error || 'Registration failed');
       }
     } catch (err) {
