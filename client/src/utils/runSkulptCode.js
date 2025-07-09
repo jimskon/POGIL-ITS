@@ -68,7 +68,7 @@ def open(filename, mode='r'):
         if (spaceIndex !== -1) {
           const filename = payload.slice(0, spaceIndex);
           const content = payload.slice(spaceIndex + 1);
-          console.log("[runSkulptCode] FILEWRITE detected:", filename, content);
+          //console.log("[runSkulptCode] FILEWRITE detected:", filename, content);
           // Save to your React state
           if (setFileContents) {
             setFileContents(prev => ({
