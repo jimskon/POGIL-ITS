@@ -2,15 +2,29 @@ import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Navbar, Nav, Container, Button } from 'react-bootstrap';
 import { useUser } from '../context/UserContext';
+import { API_BASE_URL } from '../config';
+
 
 export default function NavBar() {
-  const { user, setUser } = useUser();
+  const { user, setUser, loading } = useUser();
+
   const navigate = useNavigate();
 
-  const handleLogout = () => {
-    setUser(null);
-    navigate("/");
+  const handleLogout = async () => {
+    await fetch(`${API_BASE_URL}/api/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    }); // Optional: only if your backend supports logout
+
+    localStorage.removeItem('user'); // Clear persisted user
+    setUser(null);                   // Update context
+    navigate("/", { replace: true }); // Redirect without reloading the page
   };
+
+
+  if (loading || user === null) return null;
+
+
 
   return (
     <Navbar bg="dark" variant="dark" expand="lg" className="mb-4">
