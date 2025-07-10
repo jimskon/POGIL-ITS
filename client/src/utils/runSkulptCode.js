@@ -16,7 +16,6 @@ __files__ = {
   ${__fileDict}
 }
 
-print("__files__:",__files__)
 class FakeFile:
     def __init__(self, name, content):
         self.lines = content.splitlines(True)
