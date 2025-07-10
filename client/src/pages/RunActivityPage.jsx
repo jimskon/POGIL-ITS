@@ -23,23 +23,6 @@ export default function RunActivityPage() {
   const [fileContents, setFileContents] = useState({});
   const fileContentsRef = useRef(fileContents);
 
-  console.log("🔍 User:", user);
-
-  if (loading) {
-    return (
-      <Container className="mt-4">
-        <Spinner animation="border" />
-      </Container>
-    );
-  }
-
-  if (!user) {
-    return (
-      <Container className="mt-4">
-        <Alert variant="danger">User not loaded. Please log in again.</Alert>
-      </Container>
-    );
-  }
 
   const [activity, setActivity] = useState(null);
   const [groups, setGroups] = useState([]);
@@ -130,8 +113,10 @@ export default function RunActivityPage() {
   }, []);
 
   useEffect(() => {
-    loadActivity();
-  }, []);
+    if (user?.id) {
+      loadActivity();
+    }
+  }, [user?.id, instanceId]);
 
   useEffect(() => {
     const newSocket = io(API_BASE_URL); // API_BASE_URL should point to your backend
@@ -252,6 +237,27 @@ export default function RunActivityPage() {
     Prism.highlightAll();
   }, [groups]);
 
+
+
+  console.log("🔍 User:", user);
+
+  if (loading) {
+    return (
+      <Container className="mt-4">
+        <Spinner animation="border" />
+      </Container>
+    );
+  }
+
+  if (!user) {
+    return (
+      <Container className="mt-4">
+        <Alert variant="danger">User not loaded. Please log in again.</Alert>
+      </Container>
+    );
+  }
+
+
   async function loadActivity() {
     try {
       const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
@@ -276,7 +282,11 @@ export default function RunActivityPage() {
 
       const groupRes = await fetch(`${API_BASE_URL}/api/groups/instance/${instanceId}`);
       const groupData = await groupRes.json();
-      const userGroup = groupData.groups.find(g => g.members.some(m => m.student_id === user.id));
+      let userGroup = null;
+      if (user?.id) {
+        userGroup = groupData.groups.find(g => g.members.some(m => m.student_id === user.id));
+      }
+
       if (userGroup) setGroupMembers(userGroup.members);
 
       const answersRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/responses`);
@@ -295,7 +305,6 @@ export default function RunActivityPage() {
         ...prev,
         ...answersData
       }));
-
       const newFollowupsData = {};
       for (const [qid, entry] of Object.entries(answersData)) {
         if (qid.endsWith('FA1')) {
@@ -780,7 +789,7 @@ export default function RunActivityPage() {
         );
       })}
 
-      {currentQuestionGroupIndex === groups.length && (
+      {groups.length > 0 && currentQuestionGroupIndex === groups.length && (
         <Alert variant="success">All groups complete! Review your responses above.</Alert>
       )}
     </Container>

@@ -102,19 +102,24 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    if (trimmed === '\\python') {
+    const pythonMatch = trimmed.match(/^\\python(?:\{(\d+)\})?$/);
+    if (pythonMatch) {
       flushCurrentBlock();
       currentField = 'python';
+      const timeLimit = pythonMatch[1] ? parseInt(pythonMatch[1]) : 50000;
+
+      const blockObj = { type: 'python', lines: [], timeLimit };
 
       if (currentQuestion && currentQuestion.type === 'question') {
         if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
-        currentQuestion.pythonBlocks.push({ lines: [] });
+        currentQuestion.pythonBlocks.push(blockObj);
       } else {
-        blocks.push({ type: 'python', lines: [] });
+        blocks.push(blockObj);
       }
 
       continue;
     }
+
 
     if (trimmed === '\\endpython') {
       if (currentField === 'python') {
@@ -126,8 +131,10 @@ export function parseSheetToBlocks(lines) {
           const block = currentQuestion.pythonBlocks.pop();
           currentQuestion.pythonBlocks.push({
             type: 'python',
-            content: block.lines.join('\n')
+            content: block.lines.join('\n'),
+            timeLimit: block.timeLimit || 50000
           });
+
         }
         currentField = 'prompt';
       }
@@ -411,6 +418,7 @@ export function renderBlocks(blocks, options = {}) {
           codeFeedbackShown={codeFeedbackShown}
           fileContents={fileContents}
           setFileContents={setFileContents}
+          timeLimit={block.timeLimit || 50000}
         />
 
       );

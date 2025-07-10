@@ -16,6 +16,7 @@ __files__ = {
   ${__fileDict}
 }
 
+print("__files__:",__files__)
 class FakeFile:
     def __init__(self, name, content):
         self.lines = content.splitlines(True)
@@ -37,6 +38,7 @@ class FakeFile:
     def write(self, s):
         self.content += s
         print("##FILEWRITE## {} {}".format(self.name, self.content))
+        __files__[self.name] += s
 
     def close(self):
         self.closed = True
@@ -47,6 +49,7 @@ class FakeFile:
 
 def open(filename, mode='r'):
     if 'w' in mode:
+        __files__[filename] = ""
         return FakeFile(filename, "")
     elif filename in __files__:
         return FakeFile(filename, __files__[filename])
@@ -68,7 +71,7 @@ def open(filename, mode='r'):
         if (spaceIndex !== -1) {
           const filename = payload.slice(0, spaceIndex);
           const content = payload.slice(spaceIndex + 1);
-          console.log("[runSkulptCode] FILEWRITE detected:", filename, content);
+          //console.log("[runSkulptCode] FILEWRITE detected:", filename, content);
           // Save to your React state
           if (setFileContents) {
             setFileContents(prev => ({

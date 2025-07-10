@@ -65,7 +65,6 @@ export default function CourseActivitiesPage() {
   return (
     <Container className="mt-4">
     <h2>{courseName ? `Course: ${courseName}` : 'Available Activities'}</h2>
-
       {loading ? (
         <Spinner animation="border" />
       ) : error ? (
