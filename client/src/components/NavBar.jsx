@@ -22,7 +22,8 @@ export default function NavBar() {
   };
 
 
-  if (loading || user === null) return null;
+  if (loading) return null;
+
 
 
 
@@ -35,27 +36,30 @@ export default function NavBar() {
         <Navbar.Toggle aria-controls="pogil-navbar" />
         <Navbar.Collapse id="pogil-navbar">
           <Nav className="me-auto">
-            <Nav.Link as={Link} to="/dashboard">
-              Dashboard
-            </Nav.Link>
-            {["root", "creator", "instructor"].includes(user?.role) && (
-              <Nav.Link as={Link} to="/manage-courses">
-                Manage Courses
-              </Nav.Link>
-            )}
-
-            {(user?.role === "root" || user?.role === "creator") && (
-              <Nav.Link as={Link} to="/manage-classes">
-                Manage Classes
-              </Nav.Link>
-            )}
-
-            {user?.role === "root" && (
-              <Nav.Link as={Link} to="/admin/users">
-                Manage Users
-              </Nav.Link>
+            {user && (
+              <>
+                <Nav.Link as={Link} to="/dashboard">
+                  Dashboard
+                </Nav.Link>
+                {["root", "creator", "instructor"].includes(user.role) && (
+                  <Nav.Link as={Link} to="/manage-courses">
+                    Manage Courses
+                  </Nav.Link>
+                )}
+                {(user.role === "root" || user.role === "creator") && (
+                  <Nav.Link as={Link} to="/manage-classes">
+                    Manage Classes
+                  </Nav.Link>
+                )}
+                {user.role === "root" && (
+                  <Nav.Link as={Link} to="/admin/users">
+                    Manage Users
+                  </Nav.Link>
+                )}
+              </>
             )}
           </Nav>
+
 
           <Nav className="ms-auto align-items-center">
             {!user ? (
