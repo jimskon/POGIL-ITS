@@ -47,7 +47,7 @@
 ## Hyperlinks
 | Syntax                | Description             | Example                                                                            |
 | --------------------- | ----------------------- | ---------------------------------------------------------------------------------- |
-| \link{URL}{Link text} | Hyperlink to a web page | \link{https://pogil.org/roles}{POGIL}(https://pogil.org/roles}{POGIL) Roles Page} |
+| \link{URL}{Link text} | Hyperlink to a web page | \link{https://pogil.org/roles}{POGIL} |
 
 ---
 
