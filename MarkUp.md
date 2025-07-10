@@ -44,6 +44,11 @@
 | `\feedbackprompt{...}`      | Instructor feedback guidance                                 | `\feedbackprompt{Check if they mention def}`  |
 | `\followupprompt{...}`      | Follow-up prompt to ask student a deeper question            | `\followupprompt{Ask about use of def}`       |
 
+## Hyperlinks
+| Syntax                | Description             | Example                                                                            |
+| --------------------- | ----------------------- | ---------------------------------------------------------------------------------- |
+| \link{URL}{Link text} | Hyperlink to a web page | \link{[https://pogil.org/roles}{POGIL](https://pogil.org/roles}{POGIL) Roles Page} |
+
 ---
 
 ## Examples
