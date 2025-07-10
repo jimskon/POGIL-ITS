@@ -693,12 +693,24 @@ export default function RunActivityPage() {
     }
   }
 
+  const userRole = groupMembers.find(m => String(m.student_id) === String(user.id))?.role || 'unknown';
+  const activeStudentRole = groupMembers.find(m => String(m.student_id) === String(activeStudentId))?.role || 'unknown';
+
+
   return (
     <Container className="mt-4">
       <h2>{activity?.title ? `Activity: ${activity.title}` : (courseName ? `Course: ${courseName}` : "Untitled Activity")}</h2>
-      {isActive
-        ? <Alert variant="success">You are the active student. You may submit responses.</Alert>
-        : <Alert variant="info">You are currently observing. The active student is {activeStudentName || '(unknown)'}</Alert>}
+      {isActive ? (
+        <Alert variant="success">
+          You are the active student. Your role is <strong>{userRole}</strong>. You may submit responses.
+        </Alert>
+      ) : (
+        <Alert variant="info">
+          You are currently observing. Your role is <strong>{userRole}</strong>. The active student is <strong>{activeStudentName || '(unknown)'}</strong> (<strong>{activeStudentRole}</strong>).
+        </Alert>
+      )}
+
+
 
       {renderBlocks(preamble, {
         editable: false,
