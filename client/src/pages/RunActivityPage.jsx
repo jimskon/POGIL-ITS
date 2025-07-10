@@ -693,8 +693,18 @@ export default function RunActivityPage() {
     }
   }
 
-  const userRole = groupMembers.find(m => String(m.student_id) === String(user.id))?.role || 'unknown';
-  const activeStudentRole = groupMembers.find(m => String(m.student_id) === String(activeStudentId))?.role || 'unknown';
+  const userRoles = groupMembers
+    .filter(m => String(m.student_id) === String(user.id))
+    .map(m => m.role)
+    .filter(Boolean); // remove undefined/null
+  const userRole = userRoles.length > 0 ? userRoles.join(', ') : 'unknown';
+
+  const activeStudentRoles = groupMembers
+    .filter(m => String(m.student_id) === String(activeStudentId))
+    .map(m => m.role)
+    .filter(Boolean);
+  const activeStudentRole = activeStudentRoles.length > 0 ? activeStudentRoles.join(', ') : 'unknown';
+
 
 
   return (
@@ -706,9 +716,18 @@ export default function RunActivityPage() {
         </Alert>
       ) : (
         <Alert variant="info">
-          You are currently observing. Your role is <strong>{userRole}</strong>. The active student is <strong>{activeStudentName || '(unknown)'}</strong> (<strong>{activeStudentRole}</strong>).
+          You are currently observing.
+          {!isInstructor && userRole !== 'unknown' && (
+            <> Your role is <strong>{userRole}</strong>.</>
+          )}
+          {" "}
+          The active student is <strong>{activeStudentName || '(unknown)'}</strong>
+          {!isInstructor && activeStudentRole !== 'unknown' && (
+            <> (<strong>{activeStudentRole}</strong>).</>
+          )}
         </Alert>
       )}
+
 
 
 
