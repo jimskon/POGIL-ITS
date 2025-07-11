@@ -64,7 +64,7 @@ export default function CourseActivitiesPage() {
 
   return (
     <Container className="mt-4">
-    <h2>{courseName ? `Course: ${courseName}` : 'Available Activities'}</h2>
+      <h2>{courseName ? `Course: ${courseName}` : 'Available Activities'}</h2>
       {loading ? (
         <Spinner animation="border" />
       ) : error ? (
@@ -89,7 +89,7 @@ export default function CourseActivitiesPage() {
                     <Button variant="success" onClick={() => handleDoActivity(activity)}>
                       Start
                     </Button>
-                  ) : (user.role === 'instructor' || user.role === 'root') ? (
+                  ) : (user.role === 'instructor' || user.role === 'root' || user.role === 'creator') ? (
                     <>
                       {!activity.has_groups ? (
                         <Button variant="primary" onClick={() => handleDoActivity(activity, true)}>
