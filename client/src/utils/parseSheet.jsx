@@ -325,7 +325,11 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    currentBlock.push(format(line));
+    if (currentQuestion) {
+      currentQuestion.prompt += ' ' + format(line);
+    } else {
+      currentBlock.push(format(line));
+    }
   }
 
   flushCurrentBlock();
