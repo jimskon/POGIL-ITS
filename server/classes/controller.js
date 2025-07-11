@@ -114,6 +114,7 @@ exports.updateActivityForClass = async (req, res) => {
 
 exports.deleteActivityFromClass = async (req, res) => {
   const { classId, activityId } = req.params;
+  console.log(`Deleting activity "${activityId}" from class ${classId}`);
 
   try {
     const [activity] = await db.query(
@@ -125,7 +126,6 @@ exports.deleteActivityFromClass = async (req, res) => {
       return res.status(404).json({ error: "Activity not found." });
     }
 
-    // ✅ This is now safe
     const activityIdNum = activity[0].id;
 
     const [instances] = await db.query(
@@ -147,6 +147,7 @@ exports.deleteActivityFromClass = async (req, res) => {
     res.status(500).json({ error: "Server error." });
   }
 };
+
 
 
 exports.getUserEnrollments = async (req, res) => {

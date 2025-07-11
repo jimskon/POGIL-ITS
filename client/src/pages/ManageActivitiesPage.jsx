@@ -133,7 +133,7 @@ export default function ManageActivitiesPage() {
   };
 
   const handleDelete = async (activityId) => {
-    const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/activities/id/${activityId}`, {
+    const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/activities/${activityId}`, {
       method: 'DELETE'
     });
 
@@ -216,12 +216,12 @@ export default function ManageActivitiesPage() {
         </Form.Group>
         <Button variant="primary" onClick={handleAdd}>Add Activity</Button>
         <Button
-  variant="secondary"
-  className="mb-4"
-  onClick={() => setShowFolderModal(true)}
->
-  Import Activities from Google Folder
-</Button>
+          variant="secondary"
+          className="mb-4"
+          onClick={() => setShowFolderModal(true)}
+        >
+          Import Activities from Google Folder
+        </Button>
 
 
       </Form>
@@ -272,7 +272,7 @@ export default function ManageActivitiesPage() {
                   }
                 }} className="me-2">Preview</Button>
                 <Button variant="warning" size="sm" onClick={() => navigate(`/editor/${activity.id}`)} className="me-2">Edit</Button>
-                <Button variant="danger" size="sm" onClick={() => handleDelete(activity.name)}>Delete</Button>
+                <Button variant="danger" size="sm" onClick={() => handleDelete(activity.id)}>Delete</Button>
               </td>
             </tr>
           ))}
