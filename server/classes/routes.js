@@ -20,7 +20,7 @@ router.delete('/:id', classController.deleteClass);
 router.get('/:id/activities', classController.getActivitiesByClass);
 router.post('/:id/activities', classController.createActivityForClass);
 router.put('/:id/activities/:activityName', classController.updateActivityForClass);
-router.delete('/:classId/activities/id/:activityId', classController.deleteActivityFromClass);
+router.delete('/:classId/activities/:activityId', classController.deleteActivityFromClass);
 
 // ✅ NEW: Get single class info
 router.get('/:id', classController.getClassById);
