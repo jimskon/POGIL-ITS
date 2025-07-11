@@ -82,6 +82,15 @@ export function parseSheetToBlocks(lines) {
   for (let line of lines) {
     const trimmed = line.trim();
 
+    const linkMatch = trimmed.match(/^\\link\{(.+?)\}\{(.+?)\}$/);
+    if (linkMatch) {
+      flushCurrentBlock();
+      const url = linkMatch[1].trim();
+      const label = linkMatch[2].trim();
+      blocks.push({ type: 'link', url, label });
+      continue;
+    }
+
     if (trimmed === '\\begin{itemize}' || trimmed === '\\begin{enumerate}') {
       inList = true;
       listType = trimmed.includes('itemize') ? 'ul' : 'ol';
@@ -373,6 +382,17 @@ export function renderBlocks(blocks, options = {}) {
         </ListTag>
       );
     }
+
+    if (block.type === 'link') {
+      return (
+        <p key={`link-${index}`}>
+          <a href={block.url} target="_blank" rel="noopener noreferrer">
+            {block.label}
+          </a>
+        </p>
+      );
+    }
+
 
     if (block.type === 'groupIntro') {
       return (
