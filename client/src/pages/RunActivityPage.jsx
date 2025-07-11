@@ -13,7 +13,7 @@ import { io } from 'socket.io-client';
 
 
 
-export default function RunActivityPage({ setRoleLabel, setStatusText }) {
+export default function RunActivityPage({ setRoleLabel, setStatusText, groupMembers, setGroupMembers, activeStudentId, setActiveStudentId, }) {
   const { instanceId } = useParams();
   const location = useLocation();
   const courseName = location.state?.courseName;
@@ -28,8 +28,8 @@ export default function RunActivityPage({ setRoleLabel, setStatusText }) {
 
   const [activity, setActivity] = useState(null);
   const [groups, setGroups] = useState([]);
-  const [groupMembers, setGroupMembers] = useState([]);
-  const [activeStudentId, setActiveStudentId] = useState(null);
+  //const [groupMembers, setGroupMembers] = useState([]);
+  //const [activeStudentId, setActiveStudentId] = useState(null);
   const [activeStudentName, setActiveStudentName] = useState('');
   const [preamble, setPreamble] = useState([]);
   const [existingAnswers, setExistingAnswers] = useState({});

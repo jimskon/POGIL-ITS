@@ -32,16 +32,19 @@ function AppRoutes() {
 
   const [roleLabel, setRoleLabel] = React.useState("");
   const [statusText, setStatusText] = React.useState("");
+  const [groupMembers, setGroupMembers] = React.useState([]);
+  const [activeStudentId, setActiveStudentId] = React.useState(null);
 
 
   return (
     <>
       <NavBar
-        user={user}
         bgColor="dark"
         fixed={true}
         roleLabel={isRunActivityPage ? roleLabel : ""}
         statusText={isRunActivityPage ? statusText : ""}
+        groupMembers={isRunActivityPage ? groupMembers : []}
+        activeStudentId={isRunActivityPage ? activeStudentId : null}
       />
 
       <Routes>
@@ -54,7 +57,7 @@ function AppRoutes() {
         <Route path="/preview/:activityId" element={<ActivityPreview />} />
         <Route path="/admin/users" element={<AdminUsersPage />} />
         <Route path="/courses/:courseId/activities" element={<CourseActivitiesPage />} />
-        <Route path="/run/:instanceId" element={<RunActivityPage setRoleLabel={setRoleLabel} setStatusText={setStatusText} />} />
+        <Route path="/run/:instanceId" element={<RunActivityPage setRoleLabel={setRoleLabel} setStatusText={setStatusText} groupMembers={groupMembers} setGroupMembers={setGroupMembers} activeStudentId={activeStudentId} setActiveStudentId={setActiveStudentId} />} />
         <Route path="/setup-groups/:courseId/:activityId" element={<GroupSetupPage />} />
         <Route path="/view-groups/:courseId/:activityId" element={<ViewGroupsPage />} />
         <Route path="/editor/:activityId" element={<ActivityEditor />} />
@@ -63,6 +66,7 @@ function AppRoutes() {
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/courses/:courseId/students" element={<ManageCourseStudentsPage />} />
         <Route path="/courses/:courseId/progress" element={<ManageCourseProgressPage />} />
+
       </Routes>
     </>
   );
