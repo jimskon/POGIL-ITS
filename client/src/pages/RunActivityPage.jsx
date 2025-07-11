@@ -11,7 +11,9 @@ import { API_BASE_URL } from '../config';
 import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
 import { io } from 'socket.io-client';
 
-export default function RunActivityPage() {
+
+
+export default function RunActivityPage({ setRoleLabel, setStatusText }) {
   const { instanceId } = useParams();
   const location = useLocation();
   const courseName = location.state?.courseName;
@@ -34,8 +36,23 @@ export default function RunActivityPage() {
   const [skulptLoaded, setSkulptLoaded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+
   const isActive = user && user.id === activeStudentId;
   const isInstructor = user?.role === 'instructor' || user?.role === 'root' || user?.role === 'creator';
+
+
+  const userRoles = groupMembers
+    .filter(m => String(m.student_id) === String(user.id))
+    .map(m => m.role)
+    .filter(Boolean); // remove undefined/null
+  const userRole = userRoles.length > 0 ? userRoles.join(', ') : 'unknown';
+
+  const activeStudentRoles = groupMembers
+    .filter(m => String(m.student_id) === String(activeStudentId))
+    .map(m => m.role)
+    .filter(Boolean);
+  const activeStudentRole = activeStudentRoles.length > 0 ? activeStudentRoles.join(', ') : 'unknown';
+
 
   const currentQuestionGroupIndex = useMemo(() => {
     if (!existingAnswers || Object.keys(existingAnswers).length === 0) return 0;
@@ -238,6 +255,32 @@ export default function RunActivityPage() {
   }, [groups]);
 
 
+  useEffect(() => {
+    if (setRoleLabel) setRoleLabel(userRole);
+    if (setStatusText) setStatusText(isActive ? "You are the active student" : "You are currently observing");
+  }, [userRole, isActive, setRoleLabel, setStatusText]);
+
+
+  useEffect(() => {
+    const navbar = document.querySelector('.navbar');
+
+    if (navbar) {
+      if (user?.id === activeStudentId) {
+        navbar.classList.remove('bg-primary', 'bg-dark');
+        navbar.classList.add('bg-success');
+      } else {
+        navbar.classList.remove('bg-success', 'bg-dark');
+        navbar.classList.add('bg-primary');
+      }
+    }
+
+    return () => {
+      if (navbar) {
+        navbar.classList.remove('bg-success', 'bg-primary');
+        navbar.classList.add('bg-dark');
+      }
+    };
+  }, [user?.id, activeStudentId]);
 
   console.log("🔍 User:", user);
 
@@ -693,136 +736,130 @@ export default function RunActivityPage() {
     }
   }
 
-  const userRoles = groupMembers
-    .filter(m => String(m.student_id) === String(user.id))
-    .map(m => m.role)
-    .filter(Boolean); // remove undefined/null
-  const userRole = userRoles.length > 0 ? userRoles.join(', ') : 'unknown';
-
-  const activeStudentRoles = groupMembers
-    .filter(m => String(m.student_id) === String(activeStudentId))
-    .map(m => m.role)
-    .filter(Boolean);
-  const activeStudentRole = activeStudentRoles.length > 0 ? activeStudentRoles.join(', ') : 'unknown';
-
 
 
   return (
-    <Container className="mt-4">
-      <h2>{activity?.title ? `Activity: ${activity.title}` : (courseName ? `Course: ${courseName}` : "Untitled Activity")}</h2>
-      {isActive ? (
-        <Alert variant="success">
-          You are the active student. Your role is <strong>{userRole}</strong>. You may submit responses.
-        </Alert>
-      ) : (
-        <Alert variant="info">
-          You are currently observing.
-          {!isInstructor && userRole !== 'unknown' && (
-            <> Your role is <strong>{userRole}</strong>.</>
-          )}
-          {" "}
-          The active student is <strong>{activeStudentName || '(unknown)'}</strong>
-          {!isInstructor && activeStudentRole !== 'unknown' && (
-            <> (<strong>{activeStudentRole}</strong>).</>
-          )}
-        </Alert>
-      )}
+    <>
+
+      <Container className="pt-3 mt-2">
 
 
 
-
-      {renderBlocks(preamble, {
-        editable: false,
-        isActive: false,
-        mode: 'run',
-        codeFeedbackShown, // ✅ FIX added here                                                                     
-      })}
-
-      {groups.map((group, index) => {
-        const stateKey = `${index + 1}state`;
-        const isComplete = existingAnswers[stateKey]?.response === 'complete';
-        const isCurrent = index === currentQuestionGroupIndex;
-        const isFuture = index > currentQuestionGroupIndex;
-
-        const editable = isActive && isCurrent && !isComplete;
-        const showGroup = isInstructor || isComplete || isCurrent;
-        if (!showGroup) return null;
-
-        return (
-          <div
-            key={`group-${index}`}
-            className="mb-4"
-            data-current-group={editable ? "true" : undefined}
-          >
-            <p><strong>{index + 1}.</strong> {group.intro.content}</p>
-            {renderBlocks(group.content, {
-              editable,
-              isActive,
-              mode: 'run',
-              prefill: existingAnswers,
-              currentGroupIndex: index,
-              followupsShown,
-              followupAnswers,
-              setFollowupAnswers,
-
-              socket,
-              instanceId,
-              answeredBy: user?.id,
-              fileContents,
-              setFileContents: handleUpdateFileContents,
-              onCodeChange: handleCodeChange,
-              codeFeedbackShown,
-              onTextChange: (responseKey, value) => {
-                if (responseKey.endsWith('FA1')) {
-                  // 🔄 Follow-up response: update followupAnswers
-                  setFollowupAnswers(prev => ({
-                    ...prev,
-                    [responseKey]: value
-                  }));
-                } else {
-                  // 📝 Sample (original) response: update existingAnswers
-                  setExistingAnswers(prev => ({
-                    ...prev,
-                    [responseKey]: { ...prev[responseKey], response: value, type: 'text' }
-                  }));
-                }
-
-                // 📢 Emit for live sync
-                if (isActive && socket) {
-                  socket.emit('response:update', {
-                    instanceId,
-                    responseKey,
-                    value,
-                    answeredBy: user.id
-                  });
-                }
-              }
-
-            })}
-
-
-            {editable && (
-              <div className="mt-2">
-                <Button onClick={handleSubmit} disabled={isSubmitting}>
-                  {isSubmitting ? (
-                    <>
-                      <Spinner animation="border" size="sm" className="me-2" />
-                      Loading...
-                    </>
-                  ) : (
-                    "Submit and Continue"
-                  )}
-                </Button>
-              </div>
+        <h2>{activity?.title ? `Activity: ${activity.title}` : (courseName ? `Course: ${courseName}` : "Untitled Activity")}</h2>
+        {isActive ? (
+          <Alert variant="success">
+            You are the active student. Your role is <strong>{userRole}</strong>. You may submit responses.
+          </Alert>
+        ) : (
+          <Alert variant="info">
+            You are currently observing.
+            {!isInstructor && userRole !== 'unknown' && (
+              <> Your role is <strong>{userRole}</strong>.</>
             )}
+            {" "}
+            The active student is <strong>{activeStudentName || '(unknown)'}</strong>
+            {!isInstructor && activeStudentRole !== 'unknown' && (
+              <> (<strong>{activeStudentRole}</strong>).</>
+            )}
+          </Alert>
+        )}
 
-          </div>
-        );
-      })}
 
-      {groups.length > 0 && currentQuestionGroupIndex === groups.length && (
-        <Alert variant="success">All groups complete! Review your responses above.</Alert>
-      )}
-    </Container>
+
+
+        {renderBlocks(preamble, {
+          editable: false,
+          isActive: false,
+          mode: 'run',
+          codeFeedbackShown, // ✅ FIX added here                                                                     
+        })}
+
+        {groups.map((group, index) => {
+          const stateKey = `${index + 1}state`;
+          const isComplete = existingAnswers[stateKey]?.response === 'complete';
+          const isCurrent = index === currentQuestionGroupIndex;
+          const isFuture = index > currentQuestionGroupIndex;
+
+          const editable = isActive && isCurrent && !isComplete;
+          const showGroup = isInstructor || isComplete || isCurrent;
+          if (!showGroup) return null;
+
+          return (
+            <div
+              key={`group-${index}`}
+              className="mb-4"
+              data-current-group={editable ? "true" : undefined}
+            >
+              <p><strong>{index + 1}.</strong> {group.intro.content}</p>
+              {renderBlocks(group.content, {
+                editable,
+                isActive,
+                mode: 'run',
+                prefill: existingAnswers,
+                currentGroupIndex: index,
+                followupsShown,
+                followupAnswers,
+                setFollowupAnswers,
+
+                socket,
+                instanceId,
+                answeredBy: user?.id,
+                fileContents,
+                setFileContents: handleUpdateFileContents,
+                onCodeChange: handleCodeChange,
+                codeFeedbackShown,
+                onTextChange: (responseKey, value) => {
+                  if (responseKey.endsWith('FA1')) {
+                    // 🔄 Follow-up response: update followupAnswers
+                    setFollowupAnswers(prev => ({
+                      ...prev,
+                      [responseKey]: value
+                    }));
+                  } else {
+                    // 📝 Sample (original) response: update existingAnswers
+                    setExistingAnswers(prev => ({
+                      ...prev,
+                      [responseKey]: { ...prev[responseKey], response: value, type: 'text' }
+                    }));
+                  }
+
+                  // 📢 Emit for live sync
+                  if (isActive && socket) {
+                    socket.emit('response:update', {
+                      instanceId,
+                      responseKey,
+                      value,
+                      answeredBy: user.id
+                    });
+                  }
+                }
+
+              })}
+
+
+              {editable && (
+                <div className="mt-2">
+                  <Button onClick={handleSubmit} disabled={isSubmitting}>
+                    {isSubmitting ? (
+                      <>
+                        <Spinner animation="border" size="sm" className="me-2" />
+                        Loading...
+                      </>
+                    ) : (
+                      "Submit and Continue"
+                    )}
+                  </Button>
+                </div>
+              )}
+
+            </div>
+          );
+        })}
+
+        {groups.length > 0 && currentQuestionGroupIndex === groups.length && (
+          <Alert variant="success">All groups complete! Review your responses above.</Alert>
+        )}
+      </Container>
+    </>
   );
 }

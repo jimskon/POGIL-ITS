@@ -1,4 +1,12 @@
 body {
   font-family: sans-serif;
-  margin: 20px;
+  margin: 0;
+  padding-top: 70px;
+  /* Matches your navbar height exactly */
+}
+
+@media (min-width: 0) {
+  .navbar-nav {
+    flex-direction: row !important;
+  }
 }

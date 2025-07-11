@@ -5,7 +5,9 @@ import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
 
 
-export default function NavBar() {
+export default function NavBar({ bgColor = "dark", fixed = false, statusText = "", roleLabel = "" }) {
+
+
   const { user, setUser, loading } = useUser();
 
   const navigate = useNavigate();
@@ -28,31 +30,33 @@ export default function NavBar() {
 
 
   return (
-    <Navbar bg="dark" variant="dark" expand="lg" className="mb-4">
+    <Navbar bg={bgColor || "dark"} variant="dark" expand="lg" className="mb-4 fixed-top flex-nowrap">
+
+
       <Container>
         <Navbar.Brand as={Link} to="/dashboard">
           POGIL ITS
         </Navbar.Brand>
         <Navbar.Toggle aria-controls="pogil-navbar" />
         <Navbar.Collapse id="pogil-navbar">
-          <Nav className="me-auto">
+          <Nav className="me-auto flex-row gap-3">
             {user && (
               <>
-                <Nav.Link as={Link} to="/dashboard">
+                <Nav.Link as={Link} to="/dashboard" className="px-2">
                   Dashboard
                 </Nav.Link>
                 {["root", "creator", "instructor"].includes(user.role) && (
-                  <Nav.Link as={Link} to="/manage-courses">
+                  <Nav.Link as={Link} to="/manage-courses" className="px-2">
                     Manage Courses
                   </Nav.Link>
                 )}
                 {(user.role === "root" || user.role === "creator") && (
-                  <Nav.Link as={Link} to="/manage-classes">
+                  <Nav.Link as={Link} to="/manage-classes" className="px-2">
                     Manage Classes
                   </Nav.Link>
                 )}
                 {user.role === "root" && (
-                  <Nav.Link as={Link} to="/admin/users">
+                  <Nav.Link as={Link} to="/admin/users" className="px-2">
                     Manage Users
                   </Nav.Link>
                 )}
@@ -61,31 +65,47 @@ export default function NavBar() {
           </Nav>
 
 
-          <Nav className="ms-auto align-items-center">
-            {!user ? (
+
+          <Nav className="ms-auto d-flex align-items-center flex-row gap-3">
+
+            {user && (
               <>
+                {statusText && (
+                  <Navbar.Text className="text-white me-5">
+                    {statusText}
+                  </Navbar.Text>
+                )}
+
+                <div className="d-flex align-items-center">
+                  <Navbar.Text className="text-white me-3">
+                    {roleLabel
+                      ? `${roleLabel}, ${user.name} (${user.role})`
+                      : `Welcome, ${user.name} (${user.role})`}
+                  </Navbar.Text>
+
+                  <Button
+                    variant="outline-light"
+                    size="sm"
+                    onClick={handleLogout}
+                  >
+                    Logout
+                  </Button>
+                </div>
+              </>
+            )}
+
+            {!user && (
+              <div className="d-flex align-items-center">
                 <Nav.Link as={Link} to="/register">
                   Register
                 </Nav.Link>
                 <Nav.Link as={Link} to="/">
                   Login
                 </Nav.Link>
-              </>
-            ) : (
-              <>
-                <Navbar.Text className="text-white me-3">
-                  Welcome, {user.name} ({user.role})
-                </Navbar.Text>
-                <Button
-                  variant="outline-light"
-                  size="sm"
-                  onClick={handleLogout}
-                >
-                  Logout
-                </Button>
-              </>
+              </div>
             )}
           </Nav>
+
         </Navbar.Collapse>
       </Container>
     </Navbar>

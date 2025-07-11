@@ -21,13 +21,29 @@ import ForgotPasswordPage from '../pages/ForgotPasswordPage';
 import ResetPasswordPage from '../pages/ResetPasswordPage';
 import ManageCourseStudentsPage from '../pages/ManageCourseStudentsPage';
 import ManageCourseProgressPage from '../pages/ManageCourseProgressPage';
+import { useLocation } from 'react-router-dom';
+
+
 
 function AppRoutes() {
   const { user } = useUser();
+  const location = useLocation();
+  const isRunActivityPage = location.pathname.startsWith("/run/");
+
+  const [roleLabel, setRoleLabel] = React.useState("");
+  const [statusText, setStatusText] = React.useState("");
+
 
   return (
     <>
-      <NavBar user={user} />
+      <NavBar
+        user={user}
+        bgColor="dark"
+        fixed={true}
+        roleLabel={isRunActivityPage ? roleLabel : ""}
+        statusText={isRunActivityPage ? statusText : ""}
+      />
+
       <Routes>
         <Route path="/" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
@@ -38,7 +54,7 @@ function AppRoutes() {
         <Route path="/preview/:activityId" element={<ActivityPreview />} />
         <Route path="/admin/users" element={<AdminUsersPage />} />
         <Route path="/courses/:courseId/activities" element={<CourseActivitiesPage />} />
-        <Route path="/run/:instanceId" element={<RunActivityPage />} />
+        <Route path="/run/:instanceId" element={<RunActivityPage setRoleLabel={setRoleLabel} setStatusText={setStatusText} />} />
         <Route path="/setup-groups/:courseId/:activityId" element={<GroupSetupPage />} />
         <Route path="/view-groups/:courseId/:activityId" element={<ViewGroupsPage />} />
         <Route path="/editor/:activityId" element={<ActivityEditor />} />
