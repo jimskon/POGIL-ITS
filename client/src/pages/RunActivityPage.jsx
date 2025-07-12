@@ -57,7 +57,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
   const currentQuestionGroupIndex = useMemo(() => {
     if (!existingAnswers || Object.keys(existingAnswers).length === 0) return 0;
     let count = 0;
-    while (count < groups.length && existingAnswers[`${count + 1}state`]?.response === 'complete') {
+    while (count < groups.length && existingAnswers[`${count + 1}state`]?.response === 'completed') {
       count++;
     }
     return count;
@@ -579,7 +579,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
       if (baseAnswer && followupPrompt && followupAnswer) {
         answers[qid] = baseAnswer;
-        answers[`${qid}S`] = 'complete';
+        answers[`${qid}S`] = 'completed';
         answers[`${qid}F1`] = followupPrompt;
         answers[followupKey] = followupAnswer;
         continue;
@@ -595,7 +595,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
       }
 
 
-      answers[`${qid}S`] = unanswered.includes(qid) ? 'inprogress' : 'complete';
+      answers[`${qid}S`] = unanswered.includes(qid) ? 'inprogress' : 'completed';
 
       // ✅ NEW: collect table responses
       if (block.tableBlocks?.length > 0) {
@@ -619,7 +619,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
 
     // If there are unanswered questions, we treat this as "inprogress"
-    const groupState = unanswered.length === 0 ? 'complete' : 'inprogress';
+    const groupState = unanswered.length === 0 ? 'completed' : 'inprogress';
 
     if (groupState === 'inprogress') {
       alert(`Partial draft saved. Still missing: ${unanswered.join(', ')}`);
@@ -644,6 +644,15 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         setFollowupsShown({});
         setFollowupAnswers({});
         await loadActivity(); // ✅ Reload server state
+
+        if (currentQuestionGroupIndex + 1 === groups.length) {
+          console.log("Mark complete triggered for instance:", instanceId);
+          await fetch(`${API_BASE_URL}/api/responses/mark-complete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ instanceId }),
+          });
+        }
       }
 
     } catch (err) {
@@ -776,7 +785,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
         {groups.map((group, index) => {
           const stateKey = `${index + 1}state`;
-          const isComplete = existingAnswers[stateKey]?.response === 'complete';
+          const isComplete = existingAnswers[stateKey]?.response === 'completed';
           const isCurrent = index === currentQuestionGroupIndex;
           const isFuture = index > currentQuestionGroupIndex;
 

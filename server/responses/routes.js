@@ -16,6 +16,7 @@ router.post('/bulk-save', controller.bulkSaveResponses);
 
 router.post('/save-feedback', controller.saveFeedback); // ✅ Add this line
 
+router.post('/mark-complete', controller.markActivityInstanceComplete);
 
 
 module.exports = router;

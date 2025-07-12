@@ -6,7 +6,7 @@ import { useUser } from '../context/UserContext';
 import { CheckCircleFill } from 'react-bootstrap-icons';
 
 const statusColor = {
-  complete: "green",
+  completed: "green",
   in_progress: "orange",
   not_started: "lightgray"
 };

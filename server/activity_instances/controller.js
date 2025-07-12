@@ -376,7 +376,7 @@ async function submitGroupResponses(req, res) {
       const isComplete = hasMain && allFollowupsAnswered;
 
       // Per-question status (e.g., 2aS)
-      responseMap.set(`${base}S`, isComplete ? 'complete' : 'inprogress');
+      responseMap.set(`${base}S`, isComplete ? 'completed' : 'inprogress');
 
       // Per-group status (e.g., 2state)
       const groupNum = base.match(/^(\d+)/)?.[1];
@@ -384,9 +384,9 @@ async function submitGroupResponses(req, res) {
         const groupStateKey = `${groupNum}state`;
         // If no prior state, or if previously inprogress, upgrade if now complete
         if (!responseMap.has(groupStateKey)) {
-          responseMap.set(groupStateKey, isComplete ? 'complete' : 'inprogress');
-        } else if (responseMap.get(groupStateKey) !== 'complete' && isComplete) {
-          responseMap.set(groupStateKey, 'complete');
+          responseMap.set(groupStateKey, isComplete ? 'completed' : 'inprogress');
+        } else if (responseMap.get(groupStateKey) !== 'completed' && isComplete) {
+          responseMap.set(groupStateKey, 'completed');
         }
       }
     }
@@ -497,7 +497,7 @@ async function getInstancesForActivityInCourse(req, res) {
       let completedGroups = 0;
       for (let i = 1; i <= totalGroups; i++) {
         const state = responses.find(r => r.question_id === `${i}state`);
-        if (state?.response === 'complete') {
+        if (state?.response === 'completed') {
           completedGroups++;
         } else {
           break;

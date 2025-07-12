@@ -252,4 +252,19 @@ exports.saveFeedback = async (req, res) => {
   }
 };
 
+exports.markActivityInstanceComplete = async (req, res) => {
+  const { instanceId } = req.body;
+
+  try {
+    await db.query(
+      `UPDATE activity_instances SET status = 'completed' WHERE id = ?`,
+      [instanceId]
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("❌ Error marking instance complete:", err);
+    res.status(500).json({ error: "Failed to mark instance as complete" });
+  }
+};
 
