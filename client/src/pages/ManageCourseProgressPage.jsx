@@ -35,6 +35,8 @@ export default function ManageCourseProgressPage() {
         <thead>
           <tr>
             <th>Name</th>
+            <th>Complete</th>
+            <th>Partial</th>
             {activities.map(a => (
               <th key={a.id}>{a.name}</th>
             ))}
@@ -44,6 +46,8 @@ export default function ManageCourseProgressPage() {
           {students.map(s => (
             <tr key={s.id}>
               <td>{s.name}</td>
+              <td>{s.completeCount}</td>
+              <td>{s.partialCount}</td>
               {activities.map(a => {
                 const status = s.progress[a.id];
                 return (
@@ -57,6 +61,7 @@ export default function ManageCourseProgressPage() {
             </tr>
           ))}
         </tbody>
+
       </Table>
       <Button onClick={() => navigate(-1)}>Back</Button>
     </Container>

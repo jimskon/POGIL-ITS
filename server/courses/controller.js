@@ -78,6 +78,7 @@ async function createCourse(req, res) {
 
 async function getCourseEnrollments(req, res) {
   const { courseId } = req.params;
+  const userId = req.user?.id; // Add this line
   try {
     const [rows] = await db.query(
       `SELECT 
@@ -275,7 +276,7 @@ async function getStudentsForCourse(req, res) {
 
   try {
     const [students] = await db.query(
-  `SELECT u.id, u.name, u.email, u.role
+      `SELECT u.id, u.name, u.email, u.role
    FROM course_enrollments ce
    JOIN users u ON ce.student_id = u.id
    WHERE ce.course_id = ?`,
@@ -381,15 +382,25 @@ async function getCourseProgress(req, res) {
     }
 
     // Final structure
-    const studentProgress = students.map((s) => ({
-      id: s.id,
-      name: s.name,
-      email: s.email,
-      progress: activities.reduce((acc, a) => {
-        acc[a.id] = progressMap[s.id]?.[a.id] || "not_started";
-        return acc;
-      }, {}),
-    }));
+    const studentProgress = students.map((s) => {
+      const progressEntries = activities.map((a) => progressMap[s.id]?.[a.id] || "not_started");
+
+      const completeCount = progressEntries.filter(status => status === "completed").length;
+      const partialCount = progressEntries.filter(status => status === "in_progress").length;
+
+      return {
+        id: s.id,
+        name: s.name,
+        email: s.email,
+        progress: activities.reduce((acc, a) => {
+          acc[a.id] = progressMap[s.id]?.[a.id] || "not_started";
+          return acc;
+        }, {}),
+        completeCount,
+        partialCount,
+      };
+    });
+
 
     res.json({ activities, students: studentProgress });
   } catch (err) {
