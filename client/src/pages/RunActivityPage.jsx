@@ -755,6 +755,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
 
         <h2>{activity?.title ? `Activity: ${activity.title}` : (courseName ? `Course: ${courseName}` : "Untitled Activity")}</h2>
+        {/*
         {isActive ? (
           <Alert variant="success">
             You are the active student. Your role is <strong>{userRole}</strong>. You may submit responses.
@@ -772,8 +773,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
             )}
           </Alert>
         )}
-
-
+       */}
 
 
         {renderBlocks(preamble, {
