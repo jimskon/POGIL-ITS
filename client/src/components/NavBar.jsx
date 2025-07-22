@@ -42,9 +42,15 @@ export default function NavBar({ bgColor = "dark", fixed = false, statusText = "
 
 
         <Container>
-          <Navbar.Brand as={Link} to="/dashboard">
+          <Navbar.Brand as={Link} to="/dashboard" className="d-flex align-items-center gap-2">
+            <img
+              src="/skulpt/images/kenyon-logo.png"
+              alt="Kenyon College Logo"
+              style={{ height: '30px' }}
+            />
             POGIL ITS
           </Navbar.Brand>
+
           <Navbar.Toggle aria-controls="pogil-navbar" />
           <Navbar.Collapse id="pogil-navbar">
             <Nav className="me-auto flex-row gap-3">
