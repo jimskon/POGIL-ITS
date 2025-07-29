@@ -12,6 +12,10 @@ import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
 import { io } from 'socket.io-client';
 
 
+// Map short role keys to full names
+const roleLabels = {
+  qc: 'Quality Control'
+};
 
 export default function RunActivityPage({ setRoleLabel, setStatusText, groupMembers, setGroupMembers, activeStudentId, setActiveStudentId, }) {
   const { instanceId } = useParams();
@@ -45,13 +49,18 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
     .filter(m => String(m.student_id) === String(user.id))
     .map(m => m.role)
     .filter(Boolean); // remove undefined/null
-  const userRole = userRoles.length > 0 ? userRoles.join(', ') : 'unknown';
+  const userRole = userRoles.length > 0
+    ? userRoles.map(role => roleLabels[role] || role).join(', ')
+    : 'unknown';
+
 
   const activeStudentRoles = groupMembers
     .filter(m => String(m.student_id) === String(activeStudentId))
     .map(m => m.role)
     .filter(Boolean);
-  const activeStudentRole = activeStudentRoles.length > 0 ? activeStudentRoles.join(', ') : 'unknown';
+  const activeStudentRole = activeStudentRoles.length > 0
+    ? activeStudentRoles.map(role => roleLabels[role] || role).join(', ')
+    : 'unknown';
 
 
   const currentQuestionGroupIndex = useMemo(() => {

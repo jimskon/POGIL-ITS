@@ -440,6 +440,8 @@ async function getInstanceGroups(req, res) {
       [instanceId]
     );
 
+    const roleLabels = { qc: 'Quality Control' };
+
     res.json({
       groups: [{
         group_id: instanceId,
@@ -448,7 +450,7 @@ async function getInstanceGroups(req, res) {
           student_id: r.student_id,
           name: r.student_name,
           email: r.student_email,
-          role: r.role
+          role: roleLabels[r.role] || r.role 
         }))
       }]
     });
@@ -506,6 +508,7 @@ async function getInstancesForActivityInCourse(req, res) {
 
       progress = completedGroups === totalGroups ? 'Complete' : `${completedGroups + 1}`;
 
+      const roleLabels = { qc: 'Quality Control' };
       groups.push({
         instance_id: inst.instance_id,
         group_number: inst.group_number,
@@ -515,9 +518,10 @@ async function getInstancesForActivityInCourse(req, res) {
           student_id: m.student_id,
           name: m.student_name,
           email: m.student_email,
-          role: m.role,
+          role: roleLabels[m.role] || m.role, 
           connected: !!m.connected
         }))
+
       });
     }
 

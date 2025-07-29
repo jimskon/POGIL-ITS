@@ -6,6 +6,13 @@ import { API_BASE_URL } from '../config';
 import { Modal } from 'react-bootstrap';
 import { FaUserFriends } from 'react-icons/fa';
 
+// ✅ Map short roles to full names
+const roleLabels = {
+  qc: 'Quality Control',
+  analyst: 'Analyst',
+  spokesperson: 'Spokesperson',
+  facilitator: 'Facilitator'
+};
 
 
 export default function NavBar({ bgColor = "dark", fixed = false, statusText = "", roleLabel = "", groupMembers = [], activeStudentId = null }) {
@@ -144,7 +151,7 @@ export default function NavBar({ bgColor = "dark", fixed = false, statusText = "
           <Modal.Body>
             {groupMembers.map(member => (
               <div key={member.student_id} className="mb-2">
-                <strong>{member.name}</strong> — {member.role}
+                <strong>{member.name}</strong> — {roleLabels[member.role] || member.role}
                 {member.student_id === activeStudentId && (
                   <span className="ms-2 text-success">(active)</span>
                 )}
