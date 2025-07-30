@@ -394,6 +394,25 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(docUrl)}`);
         const { lines } = await docRes.json();
         const blocks = parseSheetToBlocks(lines);
+        // Extract metadata fields from headers
+        const activityContextBlock = blocks.find(
+          (b) => b.type === "header" && b.tag === "activitycontext"
+        );
+        const studentLevelBlock = blocks.find(
+          (b) => b.type === "header" && b.tag === "studentlevel"
+        );
+
+        // Attach these values to the activity object so we can use them later
+        instanceData.activitycontext = activityContextBlock?.content || "";
+        instanceData.studentlevel = studentLevelBlock?.content || "";
+
+
+        // ✅ Add console.log here
+        console.log("🆕 Extracted metadata from sheet:", {
+          activitycontext: instanceData.activitycontext,
+          studentlevel: instanceData.studentlevel
+        });
+
         const files = {};
         for (const block of blocks) {
           if (block.type === 'file' && block.filename) {
@@ -444,10 +463,17 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
       feedbackPrompt: questionBlock.feedback?.[0] || '',
       followupPrompt: questionBlock.followups?.[0] || '',
       context: {
-        activityTitle: activity?.title || activity?.name || 'Untitled Activity',
-        studentLevel: 'intro'
+        activitycontext:
+          activity?.activitycontext ||
+          activity?.title ||
+          activity?.name ||
+          "Untitled Activity",
+        studentLevel: activity?.studentlevel || "intro",
       }
+
     };
+    // ✅ Add console.log here
+    console.log("📡 Context being sent to AI:", body.context);
 
     console.log('📡 Sending to AI:', body);
 

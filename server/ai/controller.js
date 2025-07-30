@@ -20,7 +20,8 @@ async function evaluateStudentResponse(req, res) {
   try {
     const prompt = `
 You are an AI tutor evaluating a student's short answer to a programming question.
-Context: ${context.activityTitle || 'Unnamed Activity'} (${context.studentLevel || 'intro level'})
+Context: ${context.activitycontext || context.activityTitle || 'Unnamed Activity'} (${context.studentLevel || 'intro level'})
+
 
 Question: ${questionText}
 
@@ -40,6 +41,9 @@ Follow-up prompt to guide your question: ${followupPrompt}
 
 Return only the follow-up question or "NO_FOLLOWUP".
     `.trim();
+
+    // ✅ Add console.log here
+    console.log("🤖 Final AI prompt being sent:\n", prompt);
 
     const chat = await openai.chat.completions.create({
       model: 'gpt-4-turbo',

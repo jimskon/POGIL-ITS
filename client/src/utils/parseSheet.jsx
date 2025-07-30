@@ -161,7 +161,7 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    const headerMatch = trimmed.match(/^\\(title|name)\{(.+?)\}$/);
+    const headerMatch = trimmed.match(/^\\(title|name|activitycontext|studentlevel)\{(.+?)\}$/);
     if (headerMatch) {
       flushCurrentBlock();
       blocks.push({ type: 'header', tag: headerMatch[1], content: format(headerMatch[2]) });
