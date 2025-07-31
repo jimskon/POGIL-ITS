@@ -463,14 +463,9 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
       feedbackPrompt: questionBlock.feedback?.[0] || '',
       followupPrompt: questionBlock.followups?.[0] || '',
       context: {
-        activitycontext:
-          activity?.activitycontext ||
-          activity?.title ||
-          activity?.name ||
-          "Untitled Activity",
+        activitycontext: activity?.activitycontext || "Unnamed Activity",
         studentLevel: activity?.studentlevel || "intro",
       }
-
     };
     // ✅ Add console.log here
     console.log("📡 Context being sent to AI:", body.context);

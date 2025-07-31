@@ -20,7 +20,8 @@ async function evaluateStudentResponse(req, res) {
   try {
     const prompt = `
 You are an AI tutor evaluating a student's short answer to a programming question.
-Context: ${context.activitycontext || context.activityTitle || 'Unnamed Activity'} (${context.studentLevel || 'intro level'})
+Context: ${context.activitycontext || 'Unnamed Activity'} (${context.studentLevel || 'intro level'})
+
 
 
 Question: ${questionText}
