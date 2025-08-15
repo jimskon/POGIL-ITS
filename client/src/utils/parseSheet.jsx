@@ -360,6 +360,24 @@ export function renderBlocks(blocks, options = {}) {
     if (hiddenTypes.includes(block.type) && mode !== 'preview') return null;
     if (block.type === 'endGroup') return null;
 
+    // 🔹 Render headers (title/name/activitycontext/studentlevel) inline where they appear
+    if (block.type === 'header') {
+      const labelMap = {
+        title: 'Title',
+        name: 'Name',
+        activitycontext: 'Context',
+        studentlevel: 'Student level',
+      };
+      const label = labelMap[block.tag] || block.tag;
+      // Keep it subtle so it doesn’t overpower the page title in ActivityPreview
+      return (
+        <p key={`hdr-${index}`} className="my-1 text-muted">
+          <strong>{label}:</strong>{' '}
+          <span dangerouslySetInnerHTML={{ __html: block.content }} />
+        </p>
+      );
+    }
+    
     if (block.type === 'section') {
       return (
         <h2 key={`section-${index}`} className="my-3">
