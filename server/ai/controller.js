@@ -52,13 +52,24 @@ Return only the follow-up question or "NO_FOLLOWUP".
       temperature: 0.3,
       max_tokens: 100,
     });
-    console.log('✅ OpenAI response:', chat.choices[0].message.content.trim());
-    const result = chat.choices[0].message.content.trim();
-    if (result === 'NO_FOLLOWUP') {
+    const raw = (chat.choices?.[0]?.message?.content ?? '').trim();
+    console.log('✅ OpenAI raw response:', raw);
+    // Normalize: strip quotes/backticks, remove a leading "Follow-up:" label, trim.
+    const normalized = raw
+      .replace(/^["'`]+|["'`]+$/g, '')           // surrounding quotes
+      .replace(/^follow[-\s]?up\s*:\s*/i, '')    // leading "Follow-up:" label
+      .trim();
+    // Canonical tag for comparison: uppercase, collapse spaces/dashes to underscores, drop trailing punctuation.
+    const tag = normalized
+      .toUpperCase()
+      .replace(/[.\s!?]+$/g, '')                 // trailing punctuation
+      .replace(/[-\s]/g, '_');                   // spaces/dashes => underscores
+
+    if (tag === 'NO_FOLLOWUP') {
       return res.json({ followupQuestion: null });
-    } else {
-      return res.json({ followupQuestion: result });
     }
+    // Return the cleaned follow-up question (without quotes/label)
+    return res.json({ followupQuestion: normalized });
   } catch (err) {
     console.error('❌ Error evaluating student response:', err);
     return res.status(500).json({ error: 'OpenAI evaluation failed' });
@@ -107,9 +118,13 @@ Only respond with "NO_FEEDBACK" or a single suggestion.
       max_tokens: 150,
     });
 
-    const result = chat.choices[0].message.content.trim();
-    console.log('✅ Code feedback:', result);
-    res.json({ feedback: result === 'NO_FEEDBACK' ? null : result });
+    const raw = (chat.choices?.[0]?.message?.content ?? '').trim();
+    // Normalize quotes/label and tag for NO_FEEDBACK
+    const normalized = raw.replace(/^["'`]+|["'`]+$/g, '').trim();
+    const tag = normalized.toUpperCase().replace(/[.\s!?]+$/g, '').replace(/[-\s]/g, '_');
+    const feedback = (tag === 'NO_FEEDBACK') ? null : normalized;
+    console.log('✅ Code feedback:', feedback ?? 'NO_FEEDBACK');
+    res.json({ feedback });
   } catch (err) {
     console.error('❌ Error evaluating Python code:', err);
     res.status(500).json({ error: 'AI code evaluation failed' });
@@ -149,8 +164,10 @@ Only respond with "NO_FEEDBACK" or a single suggestion.
     max_tokens: 150,
   });
 
-  const result = chat.choices[0].message.content.trim();
-  return { feedback: result === 'NO_FEEDBACK' ? null : result };
+  const raw = (chat.choices?.[0]?.message?.content ?? '').trim();
+  const normalized = raw.replace(/^["'`]+|["'`]+$/g, '').trim();
+  const tag = normalized.toUpperCase().replace(/[.\s!?]+$/g, '').replace(/[-\s]/g, '_');
+  return { feedback: (tag === 'NO_FEEDBACK') ? null : normalized };
 }
 
 module.exports = {
