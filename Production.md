@@ -1,4 +1,4 @@
-Perfect—here’s a tight, production-ready setup for your Express + Vite React app on Ubuntu 24.04, **behind a firewall**, with **nginx** in front and a **proper TLS cert**.
+Here’s a tight, production-ready setup for your Express + Vite React app on Ubuntu 24.04, **behind a firewall**, with **nginx** in front and a **proper TLS cert**.
 
 ---
 
