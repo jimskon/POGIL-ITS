@@ -1,7 +1,9 @@
-const { OpenAI } = require('openai');
+// server/ai/controller.js
+const OpenAI = require('openai');
 require('dotenv').config();
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini'; // keep model configurable
 
 async function evaluateStudentResponse(req, res) {
   const {
@@ -14,13 +16,20 @@ async function evaluateStudentResponse(req, res) {
   } = req.body;
 
   if (!questionText || !studentAnswer || !followupPrompt) {
-    return res.status(400).json({ error: 'Missing required fields' });
+    return res.status(400).json({
+      error: 'Missing required fields',
+      missing: {
+        questionText: !questionText,
+        studentAnswer: !studentAnswer,
+        followupPrompt: !followupPrompt
+      }
+    });
   }
 
   try {
     const prompt = `
 You are an AI tutor evaluating a student's short answer to a programming question.
-Context: ${context.activitycontext || 'Unnamed Activity'} (${context.studentLevel || 'intro level'})
+Context: ${context.activityContext || context.activitycontext || 'Unnamed Activity'} (${context.studentLevel || 'intro level'})
 
 
 
@@ -47,7 +56,7 @@ Return only the follow-up question or "NO_FOLLOWUP".
     console.log("🤖 Final AI prompt being sent:\n", prompt);
 
     const chat = await openai.chat.completions.create({
-      model: 'gpt-4-turbo',
+      model: MODEL,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
       max_tokens: 100,
@@ -112,7 +121,7 @@ Only respond with "NO_FEEDBACK" or a single suggestion.
     `.trim();
 
     const chat = await openai.chat.completions.create({
-      model: 'gpt-4-turbo',
+      model: MODEL,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
       max_tokens: 150,
@@ -126,7 +135,7 @@ Only respond with "NO_FEEDBACK" or a single suggestion.
     console.log('✅ Code feedback:', feedback ?? 'NO_FEEDBACK');
     res.json({ feedback });
   } catch (err) {
-    console.error('❌ Error evaluating Python code:', err);
+    console.error('Error evaluating Python code:', err);
     res.status(500).json({ error: 'AI code evaluation failed' });
   }
 }
@@ -158,7 +167,7 @@ Only respond with "NO_FEEDBACK" or a single suggestion.
 `.trim();
 
   const chat = await openai.chat.completions.create({
-    model: 'gpt-4-turbo',
+    model: MODEL,
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.3,
     max_tokens: 150,
