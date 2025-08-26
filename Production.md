@@ -165,13 +165,7 @@ pm2 logs pogil-its
 
 ---
 
-## What I’d pick for you
-
-* Keep **nginx**.
-* Build client → serve `/client/dist` from nginx; proxy `/api` to Node on `:4000`.
-* For certs:
-
-  * If you can add a public TXT record in `kenyon.edu`, use **Let’s Encrypt DNS-01**.
-  * Otherwise, ask Kenyon IT for an **internal CA cert** for `csits.kenyon.edu` (cleanest for a firewall-only host).
-
-If you tell me which cert route you’ll use (DNS-01 vs internal CA), I’ll give you the exact nginx server block with TLS included.
+## How to restart the system
+```
+pm2 restart pogil-its
+```
