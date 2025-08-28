@@ -18,6 +18,7 @@ const roleLabels = {
 };
 
 export default function RunActivityPage({ setRoleLabel, setStatusText, groupMembers, setGroupMembers, activeStudentId, setActiveStudentId, }) {
+  const [lastEditTs, setLastEditTs] = useState(0);
   const { instanceId } = useParams();
   const location = useLocation();
   const courseName = location.state?.courseName;
@@ -97,10 +98,14 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
   useEffect(() => {
     const interval = setInterval(() => {
-      loadActivity();
+      // If you’re the active student and you edited in the last 15s, skip refresh
+      if (!isActive || Date.now() - lastEditTs > 15000) {
+        loadActivity();
+      }
     }, 10000);
     return () => clearInterval(interval);
-  }, [instanceId]);
+  }, [instanceId, isActive, lastEditTs]);
+
 
   useEffect(() => {
     const sendHeartbeat = async () => {
@@ -309,6 +314,18 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
     );
   }
 
+  async function saveResponse(instanceId, key, value) {
+    await fetch(`${API_BASE_URL}/api/responses/bulk-save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        instanceId,
+        userId: user.id,
+        answers: { [key]: value }
+      })
+    });
+  }
+
 
   async function loadActivity() {
     try {
@@ -455,7 +472,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
     }
   }
 
-  async function evaluateResponseWithAI(questionBlock, studentAnswer) {
+  async function evaluateResponseWithAI(questionBlock, studentAnswer, { forceFollowup = false } = {}) {
     const body = {
       questionText: questionBlock.prompt,
       studentAnswer,
@@ -582,50 +599,119 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         }
       }
 
-      // 🧠 If follow-up metadata exists and none shown yet, trigger AI
-      if (
-        aiInput &&
-        block.followups?.length > 0 &&
-        !followupsShown[qid]
-      ) {
-        console.log("⚡ Will trigger AI for QID", qid);
-        const aiFollowup = await evaluateResponseWithAI(block, aiInput);
-        if (aiFollowup) {
-          setFollowupsShown(prev => ({ ...prev, [qid]: aiFollowup }));
+      //  If authored follow-up tag exists OR we need feedback follow-up, and none shown yet, trigger AI
+      // Decide which follow-up mechanism applies.
+      // Priority: authored follow-up (always) → else feedback-based AI (unless feedback=='none')
+      const authoredFU = (block.followups?.[0] || '').trim();
+      const feedbackGuide = (block.feedback?.[0] || '').trim();
+
+      if (aiInput && !followupsShown[qid]) {
+        if (authoredFU) {
+          // ✅ Always ask a *composed* follow-up when tag is present
+          const composed = await evaluateResponseWithAI(block, aiInput, { forceFollowup: true });
+          const followupQ = composed || authoredFU; // fallback: never block
+
+          const baseToSave = baseAnswer || (tableHasInput ? tableMarkdown : '');
+          if (baseToSave) {
+            await saveResponse(instanceId, qid, baseToSave);
+            if (socket && instanceId) {
+              socket.emit('response:update', {
+                instanceId, responseKey: qid, value: baseToSave, answeredBy: user.id
+              });
+            }
+            setExistingAnswers(prev => ({
+              ...prev, [qid]: { ...(prev[qid] || {}), response: baseToSave, type: 'text' }
+            }));
+          }
+          await saveResponse(instanceId, `${qid}F1`, followupQ);
+          await saveResponse(instanceId, `${qid}S`, 'inprogress');
+          setFollowupsShown(prev => ({ ...prev, [qid]: followupQ }));
+          if (socket && instanceId) {
+            socket.emit('response:update', {
+              instanceId, responseKey: `${qid}F1`, value: followupQ, followupPrompt: followupQ
+            });
+          }
           alert(`A follow-up question has been added for ${qid}. Please answer it.`);
           setIsSubmitting(false);
           return;
+
+        } else if (feedbackGuide.toLowerCase() !== 'none') {
+          // ✅ No authored follow-up; use AI to check against sample and (maybe) ask a feedback follow-up
+          const aiFollowup = await evaluateResponseWithAI({ ...block, feedback: [feedbackGuide] }, aiInput);
+
+          if (aiFollowup) {
+            const baseToSave = baseAnswer || (tableHasInput ? tableMarkdown : '');
+            if (baseToSave) {
+              await saveResponse(instanceId, qid, baseToSave);
+              if (socket && instanceId) {
+                socket.emit('response:update', {
+                  instanceId,
+                  responseKey: qid,
+                  value: baseToSave,
+                  answeredBy: user.id
+                });
+              }
+              setExistingAnswers(prev => ({
+                ...prev,
+                [qid]: { ...(prev[qid] || {}), response: baseToSave, type: 'text' }
+              }));
+            }
+
+            await saveResponse(instanceId, `${qid}F1`, aiFollowup);
+            await saveResponse(instanceId, `${qid}S`, 'inprogress'); // awaiting FA1
+            setFollowupsShown(prev => ({ ...prev, [qid]: aiFollowup }));
+
+            if (socket && instanceId) {
+              socket.emit('response:update', {
+                instanceId,
+                responseKey: `${qid}F1`,
+                value: aiFollowup,
+                followupPrompt: aiFollowup
+              });
+            }
+
+            alert(`A follow-up question has been added for ${qid}. Please answer it.`);
+            setIsSubmitting(false);
+            return; // stop progression until FA1 is answered
+          }
+          // If AI said NO_FOLLOWUP, we just continue; final state is computed below
         }
+        // else feedback==none → no feedback follow-up, continue to final state calc below
       }
+
+
 
       const followupPrompt = followupsShown[qid];
       const followupKey = `${qid}FA1`;
-      const followupAnswer = followupAnswers[followupKey]?.trim();
+      const followupAnswer = (followupAnswers[followupKey] || '').trim();
 
-      if (followupPrompt && !followupAnswer) {
-        unanswered.push(qid);
-        continue;
-      }
+      // Track missing pieces separately for accurate status + messaging
+      let missingBase = false;
+      let missingFU = false;
 
-      if (baseAnswer && followupPrompt && followupAnswer) {
-        answers[qid] = baseAnswer;
-        answers[`${qid}S`] = 'completed';
-        answers[`${qid}F1`] = followupPrompt;
-        answers[followupKey] = followupAnswer;
-        continue;
-      }
-
-
+      // Base content
       if (baseAnswer) {
         answers[qid] = baseAnswer;
       } else if (tableHasInput) {
-        answers[qid] = tableMarkdown; // optional: store markdown version
+        answers[qid] = tableMarkdown;
       } else {
-        unanswered.push(qid);
+        missingBase = true;
+        unanswered.push(`${qid} (base)`);
       }
 
+      // Follow-up content (only if a follow-up was issued)
+      if (followupPrompt) {
+        answers[`${qid}F1`] = followupPrompt; // keep the prompt with the submission
+        if (followupAnswer) {
+          answers[followupKey] = followupAnswer;
+        } else {
+          missingFU = true;
+          unanswered.push(`${qid} (follow-up)`);
+        }
+      }
 
-      answers[`${qid}S`] = unanswered.includes(qid) ? 'inprogress' : 'completed';
+      // Final per-question state
+      answers[`${qid}S`] = (missingBase || missingFU) ? 'inprogress' : 'completed';
 
       // ✅ NEW: collect table responses
       if (block.tableBlocks?.length > 0) {
@@ -652,7 +738,9 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
     const groupState = unanswered.length === 0 ? 'completed' : 'inprogress';
 
     if (groupState === 'inprogress') {
-      alert(`Partial draft saved. Still missing: ${unanswered.join(', ')}`);
+      alert(`Please answer the remaining questions: ${unanswered.join(', ')}`);
+      setIsSubmitting(false);
+      return; // ⛔️ Do NOT POST /submit-group; stay on this group
     }
 
     try {
@@ -671,8 +759,8 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         const errorData = await response.json();
         alert(`Submission failed: ${errorData.error || 'Unknown error'}`);
       } else {
-        setFollowupsShown({});
-        setFollowupAnswers({});
+        //setFollowupsShown({});
+        //setFollowupAnswers({});
         await loadActivity(); // ✅ Reload server state
 
         if (currentQuestionGroupIndex + 1 === groups.length) {
@@ -769,6 +857,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
           });
         }
       }
+      setLastEditTs(Date.now());
 
     } catch (err) {
       console.error("❌ Failed in handleCodeChange:", responseKey, err);
@@ -871,6 +960,9 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
                       answeredBy: user.id
                     });
                   }
+
+                  setLastEditTs(Date.now());
+
                 }
 
               })}

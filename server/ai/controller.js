@@ -12,52 +12,60 @@ async function evaluateStudentResponse(req, res) {
     sampleResponse,
     feedbackPrompt,
     followupPrompt,
+    forceFollowup = false,
     context = {}
   } = req.body;
 
-  if (!questionText || !studentAnswer || !followupPrompt) {
+  if (!questionText || !studentAnswer) {
     return res.status(400).json({
       error: 'Missing required fields',
       missing: {
         questionText: !questionText,
         studentAnswer: !studentAnswer,
-        followupPrompt: !followupPrompt
       }
     });
   }
 
   try {
-    const prompt = `
-You are an AI tutor evaluating a student's short answer to a programming question.
-Context: ${context.activityContext || context.activitycontext || 'Unnamed Activity'} (${context.studentLevel || 'intro level'})
+    const ctx = `${context.activityContext || context.activitycontext || 'Unnamed Activity'} (${context.studentLevel || 'intro level'})`;
+    const guide = (feedbackPrompt && feedbackPrompt.toLowerCase() !== 'none') ? feedbackPrompt : '';
+    const authoredGuide = (followupPrompt || '').trim();
 
+    const modeInstruction = forceFollowup
+      ? `ALWAYS write exactly ONE short, concrete follow-up question tailored to THIS question and the student's answer.
+         Use the authored guide if present, but DO NOT repeat it verbatim; rewrite it as a specific question.`
+      : `First compare the student's answer to the sample response.
+         If the answer sufficiently meets the idea (not verbatim, but clearly correct), reply exactly "NO_FOLLOWUP".
+         Otherwise, write exactly ONE short, concrete follow-up question tailored to THIS question and the student's answer.`;
 
+    const guidance = [
+      guide ? `Feedback guidance you MAY use: "${guide}".` : '',
+      authoredGuide ? `Author's follow-up guide (do NOT echo verbatim; convert into a specific question): "${authoredGuide}".` : ''
+    ].filter(Boolean).join('\n');
+
+    const aiPrompt = `
+You are an AI tutor.
+Context: ${ctx}
+
+${modeInstruction}
+${guidance}
+
+Constraints for your output:
+- One sentence, 5–20 words.
+- No hints that give away the answer.
+- Refer to the student's answer if helpful.
+- Output only the question OR "NO_FOLLOWUP".
 
 Question: ${questionText}
-
-Student's answer:
-"${studentAnswer}"
-
-Sample response (ideal): 
-"${sampleResponse}"
-
-Guidance for evaluation: ${feedbackPrompt || 'N/A'}
-
-If the student’s answer is complete and clearly meets the learning objective, respond with:
-"NO_FOLLOWUP"
-
-If the answer is unclear, missing key details, or would benefit from elaboration, respond with a follow-up question the tutor could ask.
-Follow-up prompt to guide your question: ${followupPrompt}
-
-Return only the follow-up question or "NO_FOLLOWUP".
-    `.trim();
-
+Student's answer: "${studentAnswer}"
+Sample (ideal) answer: "${sampleResponse}"
+`.trim();
     // ✅ Add console.log here
-    console.log("🤖 Final AI prompt being sent:\n", prompt);
+    console.log("Final AI prompt being sent:\n", aiPrompt);
 
     const chat = await openai.chat.completions.create({
       model: MODEL,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ role: 'user', content: aiPrompt }],
       temperature: 0.3,
       max_tokens: 100,
     });

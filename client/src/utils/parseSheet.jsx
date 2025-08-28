@@ -377,7 +377,7 @@ export function renderBlocks(blocks, options = {}) {
         </p>
       );
     }
-    
+
     if (block.type === 'section') {
       return (
         <h2 key={`section-${index}`} className="my-3">
@@ -628,75 +628,51 @@ export function renderBlocks(blocks, options = {}) {
           {/* Show saved followup Q&A in read-only format */}
 
 
-          {/* Follow-up input or locked view */}
-          {/* Follow-up input or locked view */}
+          {/* Follow-up input (editable for the active student until answered) */}
           {followupsShown?.[responseKey] && (() => {
             const followupKey = `${responseKey}FA1`;
+            const hasSavedFU = !!prefill?.[followupKey]?.response;
+            const canEditFU = editable && isActive && !hasSavedFU;
             return (
               <>
                 <div className="mt-3 text-muted">
                   <strong>Follow-up:</strong> {followupsShown[responseKey]}
-                  {(prefill?.[followupKey] || !editable) && (
-                    <span
-                      className="ms-2"
-                      title="Follow-up response is locked"
-                      style={{ color: '#888', cursor: 'not-allowed' }}
-                    >
+                  {!canEditFU && (
+                    <span className="ms-2" title={hasSavedFU ? "Follow-up answered" : "Read-only"}
+                      style={{ color: '#888' }}>
                       🔒
                     </span>
                   )}
                 </div>
 
-                {!editable ||
-                  prefill?.[followupKey] ||
-                  Object.keys(followupsShown)
-                    .filter((k) => k !== responseKey)
-                    .some((k) => {
-                      const [kGroup, kLetter] = k.match(/^(\d+)([a-z])/).slice(1);
-                      const [rGroup, rLetter] = responseKey.match(/^(\d+)([a-z])/).slice(1);
-                      return parseInt(kGroup) > parseInt(rGroup) ||
-                        (parseInt(kGroup) === parseInt(rGroup) && kLetter > rLetter);
-                    })
-                  ? (
-                    <div className="bg-light p-2 rounded mt-1">
-                      {prefill?.[followupKey]?.response || followupAnswers?.[followupKey] || ''}
+                {canEditFU ? (
+                  <Form.Control
+                    as="textarea"
+                    rows={2}
+                    value={followupAnswers?.[followupKey] || ''}
+                    placeholder="Respond to the follow-up question here..."
+                    onChange={(e) => {
+                      const val = e.target.value;
 
-                    </div>
-                  ) : (
-                    <Form.Control
-                      as="textarea"
-                      rows={2}
-                      value={followupAnswers?.[followupKey] || ''}
-                      placeholder="Respond to the follow-up question here..."
-                      onChange={(e) => {
-                        const val = e.target.value;
-
-                        setFollowupAnswers(prev => ({
-                          ...prev,
-                          [followupKey]: val
-                        }));
-
-                        if (options.isActive && options.socket) {
-                          console.log("📡 EMITTING FOLLOW-UP RESPONSE", {
-                            instanceId: options.instanceId,
-                            responseKey: followupKey,
-                            value: val,
-                            answeredBy: options.answeredBy
-                          });
-
-                          options.socket.emit('response:update', {
-                            instanceId: options.instanceId,
-                            responseKey: followupKey,
-                            value: val,
-                            answeredBy: options.answeredBy,
-                            followupPrompt: options.followupsShown?.[responseKey]
-                          });
-                        }
-                      }}
-                      className="mt-1"
-                      style={{ resize: 'vertical' }}
-                    />
-                  )}
+                      setFollowupAnswers(prev => ({ ...prev, [followupKey]: val }));
+                      if (options.isActive && options.socket) {
+                        options.socket.emit('response:update', {
+                          instanceId: options.instanceId,
+                          responseKey: followupKey,
+                          value: val,
+                          answeredBy: options.answeredBy,
+                          followupPrompt: options.followupsShown?.[responseKey]
+                        });
+                      }
+                    }}
+                    className="mt-1"
+                    style={{ resize: 'vertical' }}
+                  />
+                ) : (
+                  <div className="bg-light p-2 rounded mt-1">
+                    {prefill?.[followupKey]?.response || followupAnswers?.[followupKey] || ''}
+                  </div>
+                )}
               </>
             );
           })()}
