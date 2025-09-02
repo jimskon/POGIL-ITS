@@ -144,7 +144,7 @@ exports.setupGroups = async (req, res) => {
 // GET /api/activity-instances/:id/setup-groups
 exports.getSetupGroups = async (req, res) => {
   const activityInstanceId = req.params.id;
-console.log("🔍 getSetupGroups called for activityInstanceId:", req.params.id);
+  console.log("🔍 getSetupGroups called for activityInstanceId:", req.params.id);
 
   try {
     // Get course_id from activity_instances
@@ -165,8 +165,8 @@ console.log("🔍 getSetupGroups called for activityInstanceId:", req.params.id)
        WHERE course_enrollments.course_id = ?`,
       [instance.course_id]
     );
-console.log("📦 course_id from activity_instances:", instance.course_id);
-console.log("👥 students fetched:", students);
+    console.log("📦 course_id from activity_instances:", instance.course_id);
+    console.log("👥 students fetched:", students);
 
     res.json({ students });
   } catch (err) {
@@ -220,3 +220,203 @@ exports.getGroupsByInstance = async (req, res) => {
 };
 
 
+// ============================================================
+// Live Add/Remove helpers (appended; do not change your code above)
+// ============================================================
+const ROLES = ['facilitator', 'spokesperson', 'analyst', 'qc'];
+
+async function pickGroupWithSpace(activityId, courseId) {
+  const [rows] = await db.query(
+    `
+    SELECT ai.id AS activity_instance_id, ai.group_number, COUNT(gm.id) AS size
+      FROM activity_instances ai
+      LEFT JOIN group_members gm ON gm.activity_instance_id = ai.id
+     WHERE ai.activity_id = ? AND ai.course_id = ? AND ai.status = 'in_progress'
+     GROUP BY ai.id
+     ORDER BY size ASC, ai.group_number ASC
+    `,
+    [activityId, courseId]
+  );
+  const spot = rows.find(r => Number(r.size) < 4);
+  return spot ? { id: spot.activity_instance_id, groupNumber: spot.group_number } : null;
+}
+
+async function createNewGroup(activityId, courseId) {
+  const [[{ next_num }]] = await db.query(
+    `SELECT COALESCE(MAX(group_number), 0) + 1 AS next_num
+       FROM activity_instances
+      WHERE activity_id = ? AND course_id = ?`,
+    [activityId, courseId]
+  );
+
+  const [res] = await db.query(
+    `INSERT INTO activity_instances (activity_id, course_id, status, group_number)
+     VALUES (?, ?, 'in_progress', ?)`,
+    [activityId, courseId, next_num]
+  );
+  return { id: res.insertId, groupNumber: next_num };
+}
+
+async function nextOpenRole(activityInstanceId) {
+  const [rows] = await db.query(
+    `SELECT role FROM group_members WHERE activity_instance_id = ?`,
+    [activityInstanceId]
+  );
+  const used = new Set(rows.map(r => r.role));
+  return ROLES.find(r => !used.has(r)) || ROLES[0];
+}
+
+// ============================================================
+// New endpoints for live add/remove (appended)
+// ============================================================
+
+// GET /api/groups/:activityId/:courseId/available-students
+exports.getAvailableStudents = async (req, res) => {
+  const { activityId, courseId } = req.params;
+  try {
+    const [rows] = await db.query(
+      `
+      SELECT u.id, u.name, u.email
+        FROM course_enrollments ce
+        JOIN users u ON u.id = ce.student_id
+       WHERE ce.course_id = ?
+         AND u.id NOT IN (
+           SELECT gm.student_id
+             FROM group_members gm
+             JOIN activity_instances ai ON ai.id = gm.activity_instance_id
+            WHERE ai.activity_id = ? AND ai.course_id = ? AND ai.status = 'in_progress'
+         )
+       ORDER BY u.name
+      `,
+      [courseId, activityId, courseId]
+    );
+    res.json({ students: rows });
+  } catch (err) {
+    console.error('getAvailableStudents error:', err);
+    res.status(500).json({ error: 'Failed to fetch available students' });
+  }
+};
+
+// GET /api/groups/:activityId/:courseId/active-students
+exports.getActiveStudentsInActivity = async (req, res) => {
+  const { activityId, courseId } = req.params;
+  try {
+    const [rows] = await db.query(
+      `
+      SELECT gm.student_id AS id, u.name, u.email, gm.role,
+             ai.id AS activity_instance_id, ai.group_number
+        FROM group_members gm
+        JOIN users u ON u.id = gm.student_id
+        JOIN activity_instances ai ON ai.id = gm.activity_instance_id
+       WHERE ai.activity_id = ? AND ai.course_id = ? AND ai.status = 'in_progress'
+       ORDER BY ai.group_number, u.name
+      `,
+      [activityId, courseId]
+    );
+    res.json({ students: rows });
+  } catch (err) {
+    console.error('getActiveStudentsInActivity error:', err);
+    res.status(500).json({ error: 'Failed to fetch active students' });
+  }
+};
+
+// POST /api/groups/:activityId/:courseId/smart-add  { studentId }
+exports.smartAddStudent = async (req, res) => {
+  const { activityId, courseId } = req.params;
+  const { studentId } = req.body;
+
+  if (!studentId) return res.status(400).json({ error: 'studentId is required' });
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    // must be enrolled in the course
+    const [[enrolled]] = await conn.query(
+      `SELECT 1 AS ok FROM course_enrollments WHERE course_id = ? AND student_id = ? LIMIT 1`,
+      [courseId, studentId]
+    );
+    if (!enrolled) {
+      await conn.rollback();
+      return res.status(400).json({ error: 'Student is not enrolled in this course' });
+    }
+
+    // must not already be in this activity
+    const [[present]] = await conn.query(
+      `
+      SELECT 1 AS ok
+        FROM group_members gm
+        JOIN activity_instances ai ON ai.id = gm.activity_instance_id
+       WHERE gm.student_id = ?
+         AND ai.activity_id = ?
+         AND ai.course_id = ?
+         AND ai.status = 'in_progress'
+       LIMIT 1
+      `,
+      [studentId, activityId, courseId]
+    );
+    if (present) {
+      await conn.rollback();
+      return res.status(409).json({ error: 'Student already in a group for this activity' });
+    }
+
+    // choose existing group with space or create a new one
+    let group = await pickGroupWithSpace(activityId, courseId);
+    if (!group) group = await createNewGroup(activityId, courseId);
+
+    const role = await nextOpenRole(group.id);
+
+    await conn.query(
+      `INSERT INTO group_members (activity_instance_id, student_id, role)
+       VALUES (?, ?, ?)`,
+      [group.id, studentId, role]
+    );
+
+    await conn.commit();
+    res.status(201).json({ ok: true, activityInstanceId: group.id, groupNumber: group.groupNumber, role });
+  } catch (err) {
+    await conn.rollback();
+    console.error('smartAddStudent error:', err);
+    res.status(500).json({ error: 'Failed to add student' });
+  } finally {
+    conn.release();
+  }
+};
+
+// DELETE /api/groups/:activityInstanceId/remove/:studentId
+exports.removeStudentFromGroup = async (req, res) => {
+  const { activityInstanceId, studentId } = req.params;
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [delRes] = await conn.query(
+      `DELETE FROM group_members WHERE activity_instance_id = ? AND student_id = ?`,
+      [activityInstanceId, studentId]
+    );
+
+    if (delRes.affectedRows === 0) {
+      await conn.rollback();
+      return res.status(404).json({ error: 'Student not found in that group' });
+    }
+
+    // If that group is now empty, delete the activity_instance to keep things tidy
+    const [[{ remaining }]] = await conn.query(
+      `SELECT COUNT(*) AS remaining FROM group_members WHERE activity_instance_id = ?`,
+      [activityInstanceId]
+    );
+    if (Number(remaining) === 0) {
+      await conn.query(`DELETE FROM activity_instances WHERE id = ?`, [activityInstanceId]);
+    }
+
+    await conn.commit();
+    res.json({ ok: true });
+  } catch (err) {
+    await conn.rollback();
+    console.error('removeStudentFromGroup error:', err);
+    res.status(500).json({ error: 'Failed to remove student' });
+  } finally {
+    conn.release();
+  }
+};
