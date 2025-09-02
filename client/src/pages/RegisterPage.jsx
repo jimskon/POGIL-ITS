@@ -42,10 +42,10 @@ export default function RegisterPage() {
               {error && <Alert variant="danger">{error}</Alert>}
               <Form onSubmit={handleRegister}>
                 <Form.Group className="mb-3" controlId="formUsername">
-                  <Form.Label>Username</Form.Label>
+                  <Form.Label>Firstname Lastname</Form.Label>
                   <Form.Control
                     type="text"
-                    placeholder="Enter username"
+                    placeholder="Enter Firstname Lastname"
                     value={name}
                     onChange={(e) => setUsername(e.target.value)}
                     required

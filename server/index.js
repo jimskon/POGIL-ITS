@@ -1,7 +1,9 @@
 // In server/index.js
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const express = require('express');
-const path = require('path');
+//const path = require('path');
 const fs = require('fs');
 const session = require('express-session');
 const app = express();
@@ -9,7 +11,7 @@ const PORT = process.env.PORT || 4000;
 const aiRoutes = require('./ai/routes');
 
 
-require('dotenv').config();
+//require('dotenv').config();
 require('./heartbeatCleaner');
 
 
