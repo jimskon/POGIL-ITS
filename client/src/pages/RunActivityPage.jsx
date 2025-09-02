@@ -29,6 +29,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
   const [socket, setSocket] = useState(null);
   const [fileContents, setFileContents] = useState({});
   const fileContentsRef = useRef(fileContents);
+  const loadingRef = useRef(false);
 
 
   const [activity, setActivity] = useState(null);
@@ -328,6 +329,8 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
 
   async function loadActivity() {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     try {
       const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
       let instanceData = await instanceRes.json(); // ✅ make it mutable
@@ -461,6 +464,12 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
             preamble.push(block);
           }
         }
+        // After the for...of blocks loop in loadActivity()
+        if (currentGroup) {
+          grouped.push(currentGroup); // ensure final group is captured even if \endgroup is missing
+          currentGroup = null;
+        }
+
 
         setGroups(grouped);
         setPreamble(preamble);
@@ -469,6 +478,8 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
     } catch (err) {
       console.error('Failed to load activity data', err);
+    } finally {
+      loadingRef.current = false;
     }
   }
 
