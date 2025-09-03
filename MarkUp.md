@@ -41,7 +41,7 @@
 | `\endquestion`              | End the current question                                     | `\endquestion`                                |
 | `\textresponse{n}`          | Response box (n lines)                                       | `\textresponse{3}`                            |
 | `\sampleresponses{...}`     | Inline sample response                                       | `\sampleresponses{The keyword is \`def\`.}`   |
-| `\feedbackprompt{...}`      | Instructor feedback guidance                                 | `\feedbackprompt{Check if they mention def}`  |
+| `\feedbackprompt{...}`      | Instructor feedback guidance.  Use "none" if you never want feedback | `\feedbackprompt{Check if they mention def}`  |
 | `\followupprompt{...}`      | Follow-up prompt to ask student a deeper question            | `\followupprompt{Ask about use of def}`       |
 
 ## Hyperlinks
