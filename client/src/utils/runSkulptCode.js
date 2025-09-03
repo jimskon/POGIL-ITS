@@ -58,6 +58,8 @@ def open(filename, mode='r'):
 `;
 
   const finalCode = injectedPython + '\n' + code;
+  // how many lines were injected before the user's code?
+  const injectedLineCount = (injectedPython.match(/\n/g) || []).length + 1; // +1 for the extra '\n' we added
   //console.log("📜 Final code to run:", finalCode);
 
   Sk.python3 = true;
@@ -83,6 +85,14 @@ def open(filename, mode='r'):
         setOutput((prev) => prev + txt);
       }
     },
+    // Put the input prompt in the dialog box
+    inputfun: (promptText) => {
+      // Use the browser prompt; coerce null (Cancel) to empty string
+      const val = window.prompt(promptText ?? '') ?? '';
+      // Skulpt is fine with either a string or a Promise<string>; Promise is safest
+      return Promise.resolve(val);
+    },
+    inputfunTakesPrompt: true,
 
     __future__: {
       nested_scopes: true,
@@ -115,15 +125,56 @@ def open(filename, mode='r'):
     }
   });
 
-  try {
-    Sk.execLimit = execLimit;
-    Sk.python3 = true;
-    //console.log("🚀 Running with fileContents:", fileContents); 
-    await Sk.misceval.asyncToPromise(() => {
-      return Sk.importMainWithBody('<stdin>', false, finalCode, true);
-    });
-  } catch (e) {
-    const errText = Sk.misceval.printError ? Sk.misceval.printError(e) : e.toString();
-    setOutput((prev) => prev + "\n❌ Error: " + errText);
+  function formatSkErrorOffset(e, offset) {
+    try {
+      // Prefer structured traceback when available
+      if (e && Array.isArray(e.traceback) && e.traceback.length) {
+        const tb = e.traceback;
+        const lines = ["Traceback (most recent call last):"];
+        for (let i = tb.length - 1; i >= 0; i--) {
+          const f = tb[i];
+          const file = f.filename || '<stdin>';
+          const func = f.func || '<module>';
+          const isUser = /<stdin>(?:\.py)?$/i.test(file);
+          const lineno = Math.max(1, (f.lineno || 1) - (isUser ? offset : 0));
+          lines.push(`  File "${file}", line ${lineno}, in ${func}`);
+        }
+
+        // Adjust a trailing “… on line N” inside the exception text too
+        const msgRaw = e.toString ? e.toString() : (e.message || String(e));
+        const msg = msgRaw.replace(/(on line\s+)(\d+)/gi, (_, p, n) =>
+          p + Math.max(1, parseInt(n, 10) - offset)
+        );
+
+        return lines.join('\n') + '\n' + msg;
+      }
+
+      // Fallback: rewrite Skulpt’s pretty-printed string
+      const raw = (Sk.misceval.printError ? Sk.misceval.printError(e) : String(e));
+      return raw
+        // File "<stdin>" or "<stdin>.py", line N
+        .replace(/(File\s+"<stdin>(?:\.py)?",\s+line\s+)(\d+)/gi, (_, p, n) =>
+          p + Math.max(1, parseInt(n, 10) - offset)
+        )
+        // “… on line N”
+        .replace(/(on line\s+)(\d+)/gi, (_, p, n) =>
+          p + Math.max(1, parseInt(n, 10) - offset)
+        );
+    } catch {
+      return (Sk.misceval.printError ? Sk.misceval.printError(e) : String(e));
+    }
   }
+
+try {
+  Sk.execLimit = execLimit;
+  Sk.python3 = true;
+  //console.log("🚀 Running with fileContents:", fileContents); 
+  await Sk.misceval.asyncToPromise(() => {
+    return Sk.importMainWithBody('<stdin>', false, finalCode, true);
+  });
+} catch (e) {
+  const errText = formatSkErrorOffset(e, injectedLineCount);
+  setOutput(prev => prev + "\n❌ Error:\n" + errText);
+}
+
 }
