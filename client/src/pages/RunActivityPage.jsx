@@ -172,6 +172,9 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
     const handleUpdate = ({ responseKey, value, followupPrompt }) => {
       if (responseKey.endsWith('FA1')) {
         const qid = responseKey.replace('FA1', '');
+        const attemptsKey = `${qid}attempts`;
+        const prevAttempts = Number(existingAnswers[attemptsKey]?.response || 0);
+
 
         // 1. Update follow-up answer
         setFollowupAnswers(prev => ({
@@ -422,9 +425,15 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
           (b) => b.type === "header" && b.tag === "studentlevel"
         );
 
+        const aiCodeGuideBlock = blocks.find(
+          (b) => b.type === "header" && b.tag === "aicodeguidance"
+        );
+
         // Attach these values to the activity object so we can use them later
         instanceData.activitycontext = activityContextBlock?.content || "";
         instanceData.studentlevel = studentLevelBlock?.content || "";
+        instanceData.aicodeguidance = aiCodeGuideBlock?.content || "";
+
 
 
         // ✅ Add console.log here
@@ -668,6 +677,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
               questionText: block.prompt.replace(/<br>/g, '\n'),
               studentCode,
               codeVersion: qid, // any identifier is fine
+              guidance: activity?.aicodeguidance || "" // ✅ NEW
             }),
           });
           const aiData = await aiRes.json();
@@ -676,31 +686,61 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
           codeBlocks.forEach((code, i) => answers[`${qid}code${i + 1}`] = code);
 
           if (!aiData.feedback) {
-            // ✅ Pass: complete (no text/follow-up required)
+            // ✅ Pass: complete
             answers[`${qid}S`] = 'completed';
+
             // Clear any old banner
             setFollowupsShown(prev => {
               const copy = { ...prev };
               delete copy[qid];
               return copy;
             });
-            // Optionally clear feedback everywhere
+
+            // Optional: clear feedback everywhere
             setCodeFeedbackShown(prev => ({ ...prev, [`${qid}code1`]: null }));
+
           } else {
-            // ❌ Needs improvement: show banner; remain in-progress
-            setFollowupsShown(prev => ({ ...prev, [qid]: aiData.feedback }));
-            answers[`${qid}S`] = 'inprogress';
-            // (No FA1 expected for python-only; students fix code instead)
-            // Optionally persist feedback for observers:
-            if (socket && instanceId) {
-              socket.emit('feedback:update', {
-                instanceId,
-                responseKey: `${qid}code1`,
-                feedback: aiData.feedback,
-              });
+            // ❌ Not yet: either encourage (<= 3 tries) or let them move on after the 3rd
+            const nextAttempts = prevAttempts + 1;
+
+            // Always store the attempt count
+            answers[attemptsKey] = String(nextAttempts);
+
+            if (nextAttempts >= 3) {
+              // 🎓 Let them proceed; record that refinement wasn't finished
+              answers[`${qid}refinement`] = 'incomplete_after_3_attempts';
+              answers[`${qid}S`] = 'completed'; // allow group to continue
+
+              // Show a gentle banner but do NOT block
+              setFollowupsShown(prev => ({
+                ...prev,
+                [qid]: "You can move on. We'll note your code needs more refinement."
+              }));
+
+              // Persist the last feedback so observers/instructor can see it
+              if (socket && instanceId) {
+                socket.emit('feedback:update', {
+                  instanceId,
+                  responseKey: `${qid}code1`,
+                  feedback: aiData.feedback,
+                });
+              }
+            } else {
+              // Encourage and block for now
+              setFollowupsShown(prev => ({ ...prev, [qid]: aiData.feedback }));
+              answers[`${qid}S`] = 'inprogress';
+              unanswered.push(`${qid} (improve code)`);
+              // Persist feedback for observers:
+              if (socket && instanceId) {
+                socket.emit('feedback:update', {
+                  instanceId,
+                  responseKey: `${qid}code1`,
+                  feedback: aiData.feedback,
+                });
+              }
             }
-            unanswered.push(`${qid} (improve code)`);
           }
+
         } catch (err) {
           console.error('❌ AI code evaluation failed:', err);
           const msg = "Couldn’t check your program. Try again.";
@@ -767,6 +807,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
           return;
         }
       }
+
 
       const followupPrompt = followupsShown[qid];
       const followupKey = `${qid}FA1`;
@@ -870,6 +911,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
           questionText: "Review the student's code and offer helpful feedback if needed.",
           studentCode: updatedCode,
           codeVersion: responseKey,
+          guidance: activity?.aicodeguidance || "" // ✅ NEW
         }),
       });
 

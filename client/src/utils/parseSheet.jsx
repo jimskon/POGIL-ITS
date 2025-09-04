@@ -161,7 +161,7 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    const headerMatch = trimmed.match(/^\\(title|name|activitycontext|studentlevel)\{(.+?)\}$/);
+    const headerMatch = trimmed.match(/^\\(title|name|activitycontext|studentlevel|aicodeguidance)\{(.+?)\}$/);
     if (headerMatch) {
       flushCurrentBlock();
       blocks.push({ type: 'header', tag: headerMatch[1], content: format(headerMatch[2]) });
@@ -371,16 +371,24 @@ export function renderBlocks(blocks, options = {}) {
 
     // 🔹 Render headers (title/name/activitycontext/studentlevel) inline where they appear
     if (block.type === 'header') {
+      // Show AI code guidance ONLY in preview; hide it during runs
+      if (block.tag === 'aicodeguidance' && mode !== 'preview') return null;
+
       const labelMap = {
         title: 'Title',
         name: 'Name',
         activitycontext: 'Context',
         studentlevel: 'Student level',
+        aicodeguidance: 'AI code guidance', // ✅ label
       };
       const label = labelMap[block.tag] || block.tag;
-      // Keep it subtle so it doesn’t overpower the page title in ActivityPreview
+
+      // Optional: make guidance a little more visible in preview
+      const isGuidance = block.tag === 'aicodeguidance' && mode === 'preview';
+      const className = isGuidance ? 'alert alert-info my-2' : 'my-1 text-muted';
+
       return (
-        <p key={`hdr-${index}`} className="my-1 text-muted">
+        <p key={`hdr-${index}`} className={className}>
           <strong>{label}:</strong>{' '}
           <span dangerouslySetInnerHTML={{ __html: block.content }} />
         </p>
