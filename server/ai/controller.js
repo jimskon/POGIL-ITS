@@ -31,17 +31,24 @@ async function evaluateStudentResponse(req, res) {
     const guide = (feedbackPrompt && feedbackPrompt.toLowerCase() !== 'none') ? feedbackPrompt : '';
     const authoredGuide = (followupPrompt || '').trim();
 
-    const modeInstruction = forceFollowup
-      ? `ALWAYS write exactly ONE short, concrete follow-up question tailored to THIS question and the student's answer.
-         Use the authored guide if present, but DO NOT repeat it verbatim; rewrite it as a specific question.`
-      : `First compare the student's answer to the sample response.
-         If the answer addresses the question (not verbatim, but mostly correct), reply exactly "NO_FOLLOWUP".
-         Otherwise, write exactly ONE short, concrete follow-up question tailored to THIS question and the student's answer.
-         The followup question should stimulate the student's critical thinking and understanding of the topic.`;
+    // Gating rule: ask follow-ups only when truly warranted
+    const modeInstruction = `
+Decide whether to ask a follow-up using this gate:
+ASK A FOLLOW-UP ONLY IF one of these is true:
+  1) OFF-BASE: The answer is unrelated to the question or contradicts fundamental ideas.
+  2) GIBBERISH / NO-ATTEMPT: nonsense, empty, copy of the prompt, "idk", or irrelevant chit-chat.
+  3) LOW-EFFORT: fewer than 5 meaningful words AND no evidence of reasoning, calculation, code, or testing.
 
+If NONE of the above apply — even if the answer is partially wrong or incomplete — respond exactly "NO_FOLLOWUP".
+POGIL emphasizes exploration; do not push for perfection. Avoid probing when there is any evidence of thought.
+
+Special case: if a short numeric/string answer is plausible for this question, treat it as sufficient (NO_FOLLOWUP).
+`.trim();
     const guidance = [
-      guide ? `Feedback guidance you MAY use: "${guide}".` : '',
-      authoredGuide ? `Author's follow-up guide (do NOT echo verbatim; convert into a specific question): "${authoredGuide}".` : ''
+      guide ? `Optional guidance: "${guide}".` : '',
+      authoredGuide
+        ? `If (and only if) a follow-up is warranted, bias the question toward this author hint (rewrite, don't quote): "${authoredGuide}".`
+        : ''
     ].filter(Boolean).join('\n');
 
     const aiPrompt = `
@@ -51,18 +58,14 @@ Context: ${ctx}
 ${modeInstruction}
 ${guidance}
 
-Constraints for your output:
-- One sentence, 5–40 words.
-- In the voice of a tutor talking to a small grouop of students.
-- Refer back to the student's answer if helpful. Ask the student to elaborate on their answe if it was incomplete.
-- Ask the student to consider their answer with a hint if it was completely wrong.
-- Output only the question OR "NO_FOLLOWUP".
+OUTPUT RULES:
+- If you decide to ask a question: output ONE short question, 5–25 words, tutor voice.
+- Otherwise output exactly "NO_FOLLOWUP".
 
 Question: ${questionText}
 Student's answer: "${studentAnswer}"
-Sample (ideal) answer: "${sampleResponse}"
-`.trim();
-    // ✅ Add console.log here
+Sample (ideal) answer (for your reference): "${sampleResponse}"
+`.trim();    // ✅ Add console.log here
     console.log("Final AI prompt being sent:\n", aiPrompt);
 
     const chat = await openai.chat.completions.create({

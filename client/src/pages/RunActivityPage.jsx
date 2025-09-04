@@ -450,29 +450,74 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
         fileContentsRef.current = files;
 
-        const grouped = [], preamble = [];
+        // --- NEW: group/preamble logic that supports sections between groups ---
+        const grouped = [];
+        const preamble = [];
+
+        let seenAnyGroup = false;
         let currentGroup = null;
-        for (let block of blocks) {
+
+        // Collect blocks that appear after a group has ended and before the next one starts.
+        // These will be attached to the NEXT group as a "prelude" shown before the group intro.
+        let betweenGroups = [];
+
+        for (const block of blocks) {
           if (block.type === 'groupIntro') {
+            // close previous group if any
             if (currentGroup) grouped.push(currentGroup);
-            currentGroup = { intro: block, content: [] };
-          } else if (block.type === 'endGroup') {
-            if (currentGroup) { grouped.push(currentGroup); currentGroup = null; }
-          } else if (currentGroup) {
+
+            // create new group
+            currentGroup = { intro: block, prelude: [], content: [] };
+
+            // attach everything we collected since the last group ended
+            if (seenAnyGroup && betweenGroups.length) {
+              currentGroup.prelude.push(...betweenGroups);
+              betweenGroups = [];
+            }
+
+            seenAnyGroup = true;
+            continue;
+          }
+
+          if (block.type === 'endGroup') {
+            if (currentGroup) {
+              grouped.push(currentGroup);
+              currentGroup = null;
+            }
+            continue;
+          }
+
+          if (currentGroup) {
+            // while inside a group, keep order as-is
             currentGroup.content.push(block);
           } else {
-            preamble.push(block);
+            // not inside a group
+            if (!seenAnyGroup) {
+              // before first group → preamble
+              preamble.push(block);
+            } else {
+              // after a group, before the next one → buffer for the next group's prelude
+              betweenGroups.push(block);
+            }
           }
         }
-        // After the for...of blocks loop in loadActivity()
-        if (currentGroup) {
-          grouped.push(currentGroup); // ensure final group is captured even if \endgroup is missing
-          currentGroup = null;
-        }
 
+        // flush leftovers
+        if (currentGroup) grouped.push(currentGroup);
+
+        // if the doc ended with some buffered blocks (after the last group),
+        // append them to the last group's content (or preamble if no groups at all)
+        if (betweenGroups.length) {
+          if (grouped.length) {
+            grouped[grouped.length - 1].content.push(...betweenGroups);
+          } else {
+            preamble.push(...betweenGroups);
+          }
+        }
 
         setGroups(grouped);
         setPreamble(preamble);
+
       }
 
 
@@ -490,11 +535,13 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
       sampleResponse: questionBlock.samples?.[0] || '',
       feedbackPrompt: questionBlock.feedback?.[0] || '',
       followupPrompt: questionBlock.followups?.[0] || '',
+      forceFollowup, // ← send it (server will mostly ignore unless you later choose to use it)
       context: {
         activitycontext: activity?.activitycontext || "Unnamed Activity",
         studentLevel: activity?.studentlevel || "intro",
       }
     };
+
     // ✅ Add console.log here
     console.log("📡 Context being sent to AI:", body.context);
 
@@ -583,12 +630,92 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
       if (block.type !== 'question') continue;
 
       const qid = `${block.groupId}${block.id}`;
+      const isPythonOnly = !!block.hasPythonOnly;
 
+      // ---------- PYTHON-ONLY PATH ----------
+      if (isPythonOnly) {
+        // 0) Get current code for all code blocks of this question
+        const codeBlocks = (block.pythonBlocks || []).map((py, i) => {
+          const key = `${qid}code${i + 1}`;
+          const ta = container.querySelector(`textarea[data-response-key="${key}"]`);
+          // Prefer DOM value (most up to date), then existing answers, then starter content
+          return (ta?.value ?? existingAnswers[key]?.response ?? py.content ?? '').trim();
+        });
+
+        // 1) Require that at least one block changed vs the starter template
+        const changed = codeBlocks.some((code, i) =>
+          code !== (block._initialCode?.[i] || '').trim()
+        );
+        if (!changed) {
+          // Show a banner-style follow-up (no FA1 expected)
+          const msg = "Modify the starter program to solve the task, then run again.";
+          setFollowupsShown(prev => ({ ...prev, [qid]: msg }));
+          // Keep it in-progress
+          answers[`${qid}S`] = 'inprogress';
+          unanswered.push(`${qid} (code not changed)`);
+          // Save code snapshots so observers see them (optional)
+          codeBlocks.forEach((code, i) => answers[`${qid}code${i + 1}`] = code);
+          continue;
+        }
+
+        // 2) Ask AI to evaluate the code
+        const studentCode = codeBlocks.join('\n\n');
+        try {
+          const aiRes = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              questionText: block.prompt.replace(/<br>/g, '\n'),
+              studentCode,
+              codeVersion: qid, // any identifier is fine
+            }),
+          });
+          const aiData = await aiRes.json();
+
+          // Save code snapshots (so DB has the latest code on submit)
+          codeBlocks.forEach((code, i) => answers[`${qid}code${i + 1}`] = code);
+
+          if (!aiData.feedback) {
+            // ✅ Pass: complete (no text/follow-up required)
+            answers[`${qid}S`] = 'completed';
+            // Clear any old banner
+            setFollowupsShown(prev => {
+              const copy = { ...prev };
+              delete copy[qid];
+              return copy;
+            });
+            // Optionally clear feedback everywhere
+            setCodeFeedbackShown(prev => ({ ...prev, [`${qid}code1`]: null }));
+          } else {
+            // ❌ Needs improvement: show banner; remain in-progress
+            setFollowupsShown(prev => ({ ...prev, [qid]: aiData.feedback }));
+            answers[`${qid}S`] = 'inprogress';
+            // (No FA1 expected for python-only; students fix code instead)
+            // Optionally persist feedback for observers:
+            if (socket && instanceId) {
+              socket.emit('feedback:update', {
+                instanceId,
+                responseKey: `${qid}code1`,
+                feedback: aiData.feedback,
+              });
+            }
+            unanswered.push(`${qid} (improve code)`);
+          }
+        } catch (err) {
+          console.error('❌ AI code evaluation failed:', err);
+          const msg = "Couldn’t check your program. Try again.";
+          setFollowupsShown(prev => ({ ...prev, [qid]: msg }));
+          answers[`${qid}S`] = 'inprogress';
+          unanswered.push(`${qid} (evaluation error)`);
+        }
+
+        continue; // ✅ do NOT fall through to text/table logic
+      }
+
+      // ---------- TEXT/TABLE PATH (your existing logic) ----------
       const el = container.querySelector(`[data-question-id="${qid}"]`);
-      const baseAnswer = el?.value?.trim() || ''; // ✅ move this up
-
+      const baseAnswer = el?.value?.trim() || '';
       const tableMarkdown = buildMarkdownTableFromBlock(block, container);
-      const aiInput = block.hasTableResponse ? tableMarkdown : baseAnswer;
 
       let tableHasInput = false;
       if (block.tableBlocks?.length > 0) {
@@ -610,97 +737,44 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         }
       }
 
-      //  If authored follow-up tag exists OR we need feedback follow-up, and none shown yet, trigger AI
-      // Decide which follow-up mechanism applies.
-      // Priority: authored follow-up (always) → else feedback-based AI (unless feedback=='none')
       const authoredFU = (block.followups?.[0] || '').trim();
       const feedbackGuide = (block.feedback?.[0] || '').trim();
+      const aiInput = block.hasTableResponse ? tableMarkdown : baseAnswer;
 
       if (aiInput && !followupsShown[qid]) {
-        if (authoredFU) {
-          // ✅ Always ask a *composed* follow-up when tag is present
-          const composed = await evaluateResponseWithAI(block, aiInput, { forceFollowup: true });
-          const followupQ = composed || authoredFU; // fallback: never block
-
+        // Let the server's stricter gate decide. No authored fallback.
+        const aiFollowup = await evaluateResponseWithAI(block, aiInput, { forceFollowup: false });
+        if (aiFollowup) {
           const baseToSave = baseAnswer || (tableHasInput ? tableMarkdown : '');
-          if (baseToSave) {
-            await saveResponse(instanceId, qid, baseToSave);
-            if (socket && instanceId) {
-              socket.emit('response:update', {
-                instanceId, responseKey: qid, value: baseToSave, answeredBy: user.id
-              });
-            }
-            setExistingAnswers(prev => ({
-              ...prev, [qid]: { ...(prev[qid] || {}), response: baseToSave, type: 'text' }
-            }));
-          }
-          await saveResponse(instanceId, `${qid}F1`, followupQ);
+          if (baseToSave) answers[qid] = baseToSave;
+
+          await saveResponse(instanceId, `${qid}F1`, aiFollowup);
           await saveResponse(instanceId, `${qid}S`, 'inprogress');
-          setFollowupsShown(prev => ({ ...prev, [qid]: followupQ }));
+
+          setFollowupsShown(prev => ({ ...prev, [qid]: aiFollowup }));
+
           if (socket && instanceId) {
             socket.emit('response:update', {
-              instanceId, responseKey: `${qid}F1`, value: followupQ, followupPrompt: followupQ
+              instanceId,
+              responseKey: `${qid}F1`,
+              value: aiFollowup,
+              followupPrompt: aiFollowup
             });
           }
+
           alert(`A follow-up question has been added for ${qid}. Please answer it.`);
           setIsSubmitting(false);
           return;
-
-        } else if (feedbackGuide.toLowerCase() !== 'none') {
-          // ✅ No authored follow-up; use AI to check against sample and (maybe) ask a feedback follow-up
-          const aiFollowup = await evaluateResponseWithAI({ ...block, feedback: [feedbackGuide] }, aiInput);
-
-          if (aiFollowup) {
-            const baseToSave = baseAnswer || (tableHasInput ? tableMarkdown : '');
-            if (baseToSave) {
-              await saveResponse(instanceId, qid, baseToSave);
-              if (socket && instanceId) {
-                socket.emit('response:update', {
-                  instanceId,
-                  responseKey: qid,
-                  value: baseToSave,
-                  answeredBy: user.id
-                });
-              }
-              setExistingAnswers(prev => ({
-                ...prev,
-                [qid]: { ...(prev[qid] || {}), response: baseToSave, type: 'text' }
-              }));
-            }
-
-            await saveResponse(instanceId, `${qid}F1`, aiFollowup);
-            await saveResponse(instanceId, `${qid}S`, 'inprogress'); // awaiting FA1
-            setFollowupsShown(prev => ({ ...prev, [qid]: aiFollowup }));
-
-            if (socket && instanceId) {
-              socket.emit('response:update', {
-                instanceId,
-                responseKey: `${qid}F1`,
-                value: aiFollowup,
-                followupPrompt: aiFollowup
-              });
-            }
-
-            alert(`A follow-up question has been added for ${qid}. Please answer it.`);
-            setIsSubmitting(false);
-            return; // stop progression until FA1 is answered
-          }
-          // If AI said NO_FOLLOWUP, we just continue; final state is computed below
         }
-        // else feedback==none → no feedback follow-up, continue to final state calc below
       }
-
-
 
       const followupPrompt = followupsShown[qid];
       const followupKey = `${qid}FA1`;
       const followupAnswer = (followupAnswers[followupKey] || '').trim();
 
-      // Track missing pieces separately for accurate status + messaging
       let missingBase = false;
       let missingFU = false;
 
-      // Base content
       if (baseAnswer) {
         answers[qid] = baseAnswer;
       } else if (tableHasInput) {
@@ -710,9 +784,8 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         unanswered.push(`${qid} (base)`);
       }
 
-      // Follow-up content (only if a follow-up was issued)
       if (followupPrompt) {
-        answers[`${qid}F1`] = followupPrompt; // keep the prompt with the submission
+        answers[`${qid}F1`] = followupPrompt;
         if (followupAnswer) {
           answers[followupKey] = followupAnswer;
         } else {
@@ -721,27 +794,9 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         }
       }
 
-      // Final per-question state
       answers[`${qid}S`] = (missingBase || missingFU) ? 'inprogress' : 'completed';
 
-      // ✅ NEW: collect table responses
-      if (block.tableBlocks?.length > 0) {
-        for (let t = 0; t < block.tableBlocks.length; t++) {
-          const table = block.tableBlocks[t];
-          for (let row = 0; row < table.rows.length; row++) {
-            for (let col = 0; col < table.rows[row].length; col++) {
-              const cell = table.rows[row][col];
-              if (cell.type === 'input') {
-                const key = `${qid}table${t}cell${row}_${col}`;
-                const val = container.querySelector(`[data-question-id="${key}"]`)?.value?.trim() || '';
-                if (val !== '') {
-                  answers[key] = val;
-                }
-              }
-            }
-          }
-        }
-      }
+      // Collect table cell answers (already above)...
     }
 
 
@@ -929,6 +984,17 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
               className="mb-4"
               data-current-group={editable ? "true" : undefined}
             >
+              {/* NEW: anything authored between the previous group and this one */}
+              {group.prelude?.length > 0 &&
+                renderBlocks(group.prelude, {
+                  editable: false,
+                  isActive: false,
+                  mode: 'run',
+                  prefill: existingAnswers,
+                  currentGroupIndex: index,
+                  codeFeedbackShown,
+                })
+              }
               <p><strong>{index + 1}.</strong> {group.intro.content}</p>
               {renderBlocks(group.content, {
                 editable,

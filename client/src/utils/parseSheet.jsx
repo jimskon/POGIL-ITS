@@ -208,7 +208,16 @@ export function parseSheetToBlocks(lines) {
     }
 
     if (trimmed === '\\endquestion') {
-      if (currentQuestion !== null) blocks.push(currentQuestion);
+      if (currentQuestion !== null) {
+        const hasPython = !!(currentQuestion.pythonBlocks && currentQuestion.pythonBlocks.length);
+        const hasTable = !!currentQuestion.hasTableResponse;
+        currentQuestion.hasPython = hasPython;
+        // python-only means: no textresponse AND has python (tables are fine)
+        currentQuestion.hasPythonOnly = hasPython && !currentQuestion.hasTextResponse;
+        // keep for convenience
+        currentQuestion._initialCode = (currentQuestion.pythonBlocks ?? []).map(b => b.content || '');
+        blocks.push(currentQuestion);
+      }
       currentQuestion = null;
       continue;
     }
@@ -518,13 +527,18 @@ export function renderBlocks(blocks, options = {}) {
       const groupComplete = prefill?.[`${responseKey}S`] === 'complete';
 
 
+      const hasPython = (block.pythonBlocks?.length || 0) > 0;
+      // Show a free-text box only if explicitly requested OR (no python & no table)
+      const showTextArea = block.hasTextResponse || (!hasPython && !block.hasTableResponse);
+      const lockMainResponse = !!followupsShown?.[responseKey] && !!block.hasTextResponse;
+
       return (
         <div key={`q-${block.groupId}-${block.id}`}  // ✅ unique per question
           className="mb-4">
           <p>
             <strong>{block.label}</strong>{' '}
             <span dangerouslySetInnerHTML={{ __html: block.prompt }} />
-            {followupAppeared && (
+            {lockMainResponse && (
               <span
                 className="ms-2"
                 title="Response locked due to follow-up"
@@ -550,6 +564,7 @@ export function renderBlocks(blocks, options = {}) {
                 codeFeedbackShown={codeFeedbackShown}
                 fileContents={fileContents}
                 setFileContents={setFileContents}
+                timeLimit={py.timeLimit ?? block.timeLimit ?? 50000}
               />
 
             );
@@ -598,13 +613,17 @@ export function renderBlocks(blocks, options = {}) {
 
 
 
-          {block.hasTextResponse || !block.hasTableResponse ? (
+          {showTextArea ? (
             <Form.Control
               as="textarea"
               rows={Math.max((block.responseLines || 1), 2)}
               value={prefill?.[responseKey]?.response || ''}
-              readOnly={!editable || (prefill?.[`${block.groupId}state`]?.response === 'complete')}
-              data-question-id={responseKey}
+              readOnly={
+                !editable ||
+                lockMainResponse ||
+                prefill?.[`${responseKey}S`] === 'complete' ||
+                prefill?.[`${responseKey}S`]?.response === 'complete'
+              } data-question-id={responseKey}
               className="mt-2"
               style={{ resize: 'vertical' }}
               onChange={(e) => {
@@ -628,54 +647,66 @@ export function renderBlocks(blocks, options = {}) {
           {/* Show saved followup Q&A in read-only format */}
 
 
-          {/* Follow-up input (editable for the active student until answered) */}
-          {followupsShown?.[responseKey] && (() => {
-            const followupKey = `${responseKey}FA1`;
-            const hasSavedFU = !!prefill?.[followupKey]?.response;
-            const canEditFU = editable && isActive && !hasSavedFU;
-            return (
-              <>
-                <div className="mt-3 text-muted">
-                  <strong>Follow-up:</strong> {followupsShown[responseKey]}
-                  {!canEditFU && (
-                    <span className="ms-2" title={hasSavedFU ? "Follow-up answered" : "Read-only"}
-                      style={{ color: '#888' }}>
-                      🔒
-                    </span>
-                  )}
+          {/* Follow-up UI */}
+          {followupsShown?.[responseKey] && (
+            !showTextArea && hasPython ? (
+              // 🔸 Python-only: banner only; students fix code (no follow-up textarea)
+              <div className="mt-3 alert alert-warning py-2">
+                <strong>Follow-up:</strong> {followupsShown[responseKey]}
+                <div className="small mt-1">
+                  Update your program and run again to complete this question.
                 </div>
+              </div>
+            ) : (
+              // 🔹 Text-answer questions: keep your existing follow-up textarea flow
+              (() => {
+                const followupKey = `${responseKey}FA1`;
+                const hasSavedFU = !!prefill?.[followupKey]?.response;
+                const canEditFU = editable && isActive && !hasSavedFU;
+                return (
+                  <>
+                    <div className="mt-3 text-muted">
+                      <strong>Follow-up:</strong> {followupsShown[responseKey]}
+                      {!canEditFU && (
+                        <span className="ms-2" title={hasSavedFU ? "Follow-up answered" : "Read-only"} style={{ color: '#888' }}>
+                          🔒
+                        </span>
+                      )}
+                    </div>
 
-                {canEditFU ? (
-                  <Form.Control
-                    as="textarea"
-                    rows={2}
-                    value={followupAnswers?.[followupKey] || ''}
-                    placeholder="Respond to the follow-up question here..."
-                    onChange={(e) => {
-                      const val = e.target.value;
+                    {canEditFU ? (
+                      <Form.Control
+                        as="textarea"
+                        rows={2}
+                        value={followupAnswers?.[followupKey] || ''}
+                        placeholder="Respond to the follow-up question here..."
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setFollowupAnswers(prev => ({ ...prev, [followupKey]: val }));
+                          if (options.isActive && options.socket) {
+                            options.socket.emit('response:update', {
+                              instanceId: options.instanceId,
+                              responseKey: followupKey,
+                              value: val,
+                              answeredBy: options.answeredBy,
+                              followupPrompt: options.followupsShown?.[responseKey]
+                            });
+                          }
+                        }}
+                        className="mt-1"
+                        style={{ resize: 'vertical' }}
+                      />
+                    ) : (
+                      <div className="bg-light p-2 rounded mt-1">
+                        {prefill?.[followupKey]?.response || followupAnswers?.[followupKey] || ''}
+                      </div>
+                    )}
+                  </>
+                );
+              })()
+            )
+          )}
 
-                      setFollowupAnswers(prev => ({ ...prev, [followupKey]: val }));
-                      if (options.isActive && options.socket) {
-                        options.socket.emit('response:update', {
-                          instanceId: options.instanceId,
-                          responseKey: followupKey,
-                          value: val,
-                          answeredBy: options.answeredBy,
-                          followupPrompt: options.followupsShown?.[responseKey]
-                        });
-                      }
-                    }}
-                    className="mt-1"
-                    style={{ resize: 'vertical' }}
-                  />
-                ) : (
-                  <div className="bg-light p-2 rounded mt-1">
-                    {prefill?.[followupKey]?.response || followupAnswers?.[followupKey] || ''}
-                  </div>
-                )}
-              </>
-            );
-          })()}
 
 
         </div>
