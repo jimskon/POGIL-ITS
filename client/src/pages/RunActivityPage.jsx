@@ -362,7 +362,26 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         userGroup = groupData.groups.find(g => g.members.some(m => m.student_id === user.id));
       }
 
-      if (userGroup) setGroupMembers(userGroup.members);
+      if (userGroup) {
+        setGroupMembers(userGroup.members);
+      } else {
+        // ✅ NEW: allow elevated roles (root/instructor/creator) to see a roster
+        const isInstructor = user?.role === 'instructor' || user?.role === 'root' || user?.role === 'creator';
+
+        if (isInstructor) {
+          // Prefer the active student’s group
+          const activeId = activeData?.activeStudentId;
+          const activeGroup = groupData.groups.find(g =>
+            g.members.some(m => String(m.student_id) === String(activeId))
+          );
+
+          // Fallback: first group if no active student yet
+          const fallbackGroup = groupData.groups?.[0];
+
+          setGroupMembers(activeGroup?.members || fallbackGroup?.members || []);
+        }
+      }
+
 
       const answersRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/responses`);
       const answersData = await answersRes.json();
