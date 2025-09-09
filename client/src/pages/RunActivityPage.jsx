@@ -713,6 +713,8 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
           // ⬇️ build a richer, cleaned guidance blob
           const guidanceBlob = [
             activity?.aicodeguidance || '',
+            activity?.activitycontext || '',
+            `Student level: ${activity?.studentlevel || 'intro'}`,
             cleanLines(block.feedback?.[0] || ''),   // per-question rubric
             cleanLines(block.samples?.[0] || ''),    // sample (trimmed per line)
             "Explicit override: Ignore spacing in prompts and around commas; do not request changes like 'remove an extra space' if the program meets the requirements."
@@ -1004,18 +1006,23 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
       }
 
 
-      // Build guidance
+      // ✅ Build a rich guidance blob (match what you used in handleSubmit)
       const guidanceBlob = [
         activity?.aicodeguidance || '',
-        meta?.feedbackPrompt || ''
-      ].filter(Boolean).join('\n');
+        activity?.activitycontext || '',
+        `Student level: ${activity?.studentlevel || 'intro'}`,
+        cleanLines(meta?.feedbackPrompt || ''), // per-question rubric (if any)
+        // Hard guardrails so the model doesn't suggest f-strings or spacing nits
+        'Environment constraint: f-strings are unavailable; do not suggest or use them.',
+        "Explicit override: Ignore spacing in prompts and around commas; do not request changes like 'remove an extra space' if the program meets the requirements."
+      ].filter(Boolean).join('\n\n---\n\n');
 
       const isCodeOnly = !meta?.hasTextResponse && !meta?.hasTableResponse;
 
-      // (2) Call your real endpoint
+      // (2) Call your evaluator with the richer guidance
       const qt = (meta?.questionText && meta.questionText.trim())
         ? meta.questionText.trim()
-        : 'Write and run Python code.';   // ✅ safe fallback
+        : 'Write and run Python code.';
 
       const evalResp = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
         method: 'POST',
@@ -1023,11 +1030,13 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         body: JSON.stringify({
           questionText: qt,
           studentCode: updatedCode,
-          codeVersion: (codeVersionsRef.current[responseKey] = (codeVersionsRef.current[responseKey] || 0) + 1),
+          codeVersion: (codeVersionsRef.current[responseKey] =
+            (codeVersionsRef.current[responseKey] || 0) + 1),
           guidance: guidanceBlob,
           isCodeOnly,
         }),
       });
+
 
 
       if (!evalResp.ok) {
