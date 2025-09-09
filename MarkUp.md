@@ -49,6 +49,18 @@
 | --------------------- | ----------------------- | ---------------------------------------------------------------------------------- |
 | \link{URL}{Link text} | Hyperlink to a web page | \link{https://pogil.org/roles}{POGIL} |
 
+## Images — Option A (Single-line)
+
+| Syntax                              | Description                      | Example                                                            |
+|-------------------------------------|----------------------------------|--------------------------------------------------------------------|
+| `\image{URL}`                       | Image with no caption            | `\image{https://example.com/diagram.png}`                          |
+| `\image{URL}{Alt or caption}`       | Image with caption               | `\image{https://example.com/diagram.png}{Program flow}`            |
+| `\image{URL}{Alt}{Size}`            | Caption + width (px or %)        | `\image{https://example.com/diagram.png}{Program flow}{50%}`       |
+
+**Notes**
+- **Size** can be a number (pixels), e.g. `300`, or a percentage, e.g. `60%`.
+- Allowed sources: `http(s)` and `data:image/...`.
+- Google Drive links like `https://drive.google.com/file/d/<ID>/view?...` are supported (converted to a viewable URL by the renderer).
 ---
 
 ## Examples
