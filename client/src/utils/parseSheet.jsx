@@ -62,6 +62,9 @@ export function parseSheetToBlocks(lines) {
   let listItems = [];
   let inFileBlock = false;
   let currentFile = null;
+  // NEW: multi-line header support (e.g., \aicodeguidance{ ... \n ... \n })
+  let openHeaderTag = null;
+  let openHeaderBuf = [];
 
   const flushCurrentBlock = () => {
     if (currentBlock.length > 0) {
@@ -73,15 +76,55 @@ export function parseSheetToBlocks(lines) {
     }
   };
 
-  const format = (text) =>
-    text.replace(/\\textbf\{(.+?)\}/g, '<strong>$1</strong>')
-      .replace(/\\textit\{(.+?)\}/g, '<em>$1</em>')
-      .replace(/\\text\{(.+?)\}/g, '$1')
-      .replace(/\\\\/g, '<br>');
+  const stripHtml = (s = '') =>
+    s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/?[^>]+>/g, '');
+
+  const format = (text) => {
+    const esc = (s) =>
+      s.replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+
+    return text
+      // monospace block (convert linebreaks inside the block, then wrap)
+      .replace(/\\mono\{([\s\S]*?)\}/g, (_, body) =>
+        `<span class="mono">${esc(body).replace(/\\\\/g, '<br>').replace(/\n/g, '<br>')}</span>`
+      )
+      .replace(/\\texttt\{([\s\S]*?)\}/g, (_, body) =>
+        `<span class="mono">${esc(body).replace(/\\\\/g, '<br>').replace(/\n/g, '<br>')}</span>`
+      )
+
+      // inline styles
+      .replace(/\\textbf\{([\s\S]+?)\}/g, '<strong>$1</strong>')
+      .replace(/\\textit\{([\s\S]+?)\}/g, '<em>$1</em>')
+      .replace(/\\text\{([\s\S]+?)\}/g, '$1')
+
+      // global line breaks (outside mono/texttt)
+      .replace(/\\\\/g, '<br>')
+      .replace(/\n/g, '<br>');
+  };
 
   for (let line of lines) {
     const trimmed = line.trim();
 
+    // If we're currently inside a multi-line header, keep collecting lines
+    if (openHeaderTag) {
+      const endIdx = trimmed.lastIndexOf('}');
+      if (endIdx !== -1) {
+        // close header
+        const piece = trimmed.slice(0, endIdx);
+        if (piece) openHeaderBuf.push(piece);
+        const content = format(openHeaderBuf.join('\n'));
+        blocks.push({ type: 'header', tag: openHeaderTag, content });
+        openHeaderTag = null;
+        openHeaderBuf = [];
+        // anything after '}' on the same line is ignored by design
+        continue;
+      } else {
+        openHeaderBuf.push(trimmed);
+        continue;
+      }
+    }
     const linkMatch = trimmed.match(/^\\link\{(.+?)\}\{(.+?)\}$/);
     if (linkMatch) {
       flushCurrentBlock();
@@ -161,10 +204,21 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    const headerMatch = trimmed.match(/^\\(title|name|activitycontext|studentlevel|aicodeguidance)\{(.+?)\}$/);
-    if (headerMatch) {
+    // Start of a (possibly multi-line) header
+    const headerStart = trimmed.match(/^\\(title|name|activitycontext|studentlevel|aicodeguidance)\{([\s\S]*)$/);
+    if (headerStart) {
       flushCurrentBlock();
-      blocks.push({ type: 'header', tag: headerMatch[1], content: format(headerMatch[2]) });
+      const tag = headerStart[1];
+      let rest = headerStart[2];
+      // single-line case: ends with }
+      if (/\}\s*$/.test(rest)) {
+        rest = rest.replace(/\}\s*$/, '');
+        blocks.push({ type: 'header', tag, content: format(rest) });
+      } else {
+        // multi-line: keep collecting until we see a closing }
+        openHeaderTag = tag;
+        if (rest) openHeaderBuf.push(rest);
+      }
       continue;
     }
 
@@ -190,7 +244,13 @@ export function parseSheetToBlocks(lines) {
     }
 
     if (trimmed.startsWith('\\question{')) {
-      const content = trimmed.match(/\\question\{(.+?)\}/)?.[1] || '';
+      // grab everything between the first '{' and the LAST '}' on this line
+      const open = trimmed.indexOf('{');
+      const close = trimmed.lastIndexOf('}');
+      const raw = (open >= 0 && close > open)
+        ? trimmed.slice(open + 1, close)
+        : trimmed.slice(open + 1);
+
       const id = String.fromCharCode(questionLetterCode++);
       currentQuestion = {
         type: 'question',
@@ -198,7 +258,7 @@ export function parseSheetToBlocks(lines) {
         groupId: groupNumber,
         label: `${id}.`,
         responseId: responseId++,
-        prompt: format(content),
+        prompt: format(raw),
         responseLines: 1,
         samples: [],
         feedback: [],
@@ -206,6 +266,7 @@ export function parseSheetToBlocks(lines) {
       };
       continue;
     }
+
 
     if (trimmed === '\\endquestion') {
       if (currentQuestion !== null) {
@@ -345,6 +406,17 @@ export function parseSheetToBlocks(lines) {
   return blocks;
 }
 
+// turn rich prompt HTML into plain text for the AI
+const stripHtml = (s = '') =>
+  s.replace(/<br\s*\/?>/gi, '\n')   // <br> -> newline
+    .replace(/<\/?[^>]+>/g, '');     // drop other tags
+
+// utils/parseSheet.jsx
+const HIDE_FROM_STUDENTS_HEADERS = new Set([
+  'aicodeguidance',
+  'activitycontext',
+  'studentlevel',
+]);
 
 export function renderBlocks(blocks, options = {}) {
   const {
@@ -371,24 +443,43 @@ export function renderBlocks(blocks, options = {}) {
 
     // 🔹 Render headers (title/name/activitycontext/studentlevel) inline where they appear
     if (block.type === 'header') {
-      // Show AI code guidance ONLY in preview; hide it during runs
-      if (block.tag === 'aicodeguidance' && mode !== 'preview') return null;
+      // Hide metadata headers from students in RUN mode.
+      // In PREVIEW mode (authoring), show to everyone.
+      const isMeta = HIDE_FROM_STUDENTS_HEADERS.has(block.tag);
+      const isPreview = mode === 'preview';
+      const isInstructor = !!options.isInstructor;
 
+      if (!isPreview && isMeta && !isInstructor) {
+        // Student in RUN mode → hide these headers
+        return null;
+      }
+
+      // Labels for display
       const labelMap = {
         title: 'Title',
         name: 'Name',
         activitycontext: 'Context',
         studentlevel: 'Student level',
-        aicodeguidance: 'AI code guidance', // ✅ label
+        aicodeguidance: 'AI code guidance',
       };
       const label = labelMap[block.tag] || block.tag;
 
-      // Optional: make guidance a little more visible in preview
-      const isGuidance = block.tag === 'aicodeguidance' && mode === 'preview';
-      const className = isGuidance ? 'alert alert-info my-2' : 'my-1 text-muted';
+      // Make guidance extra-readable for instructors (formatted block)
+      if (block.tag === 'aicodeguidance' && (isInstructor || isPreview)) {
+        const text = (block.content || '')
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<\/?[^>]+>/g, '');
+        return (
+          <div key={`guidance-${index}`} className="alert alert-info my-2">
+            <strong>{label}:</strong>
+            <pre className="mb-0 mt-2" style={{ whiteSpace: 'pre-wrap' }}>{text}</pre>
+          </div>
+        );
+      }
 
+      // Default inline header rendering
       return (
-        <p key={`hdr-${index}`} className={className}>
+        <p key={`hdr-${index}`} className="my-1 text-muted">
           <strong>{label}:</strong>{' '}
           <span dangerouslySetInnerHTML={{ __html: block.content }} />
         </p>
@@ -458,30 +549,53 @@ export function renderBlocks(blocks, options = {}) {
 
 
     if (block.type === 'python') {
-      const groupPrefix = (currentGroupIndex + 1).toString(); // dynamic group number
+      const groupPrefix = (currentGroupIndex + 1).toString();
       const codeKey = `${groupPrefix}code${standaloneCodeCounter++}`;
+
+      // find a nearby bit of human text to use as the "question"
+      const prevContext = [...blocks]
+        .slice(0, index)
+        .reverse()
+        .find(b =>
+          (b.type === 'section') ||
+          (b.type === 'text') ||
+          (b.type === 'header' && (b.tag === 'title' || b.tag === 'activitycontext'))
+        );
+
+      const questionText =
+        prevContext?.type === 'section' ? prevContext.title :
+          prevContext?.type === 'text' ? prevContext.content :
+            prevContext?.type === 'header' ? prevContext.content :
+              'Write and run Python code.';
+
+      const meta = {
+        // ✅ use the derived nearby text, not block.prompt (which is undefined here)
+        questionText: stripHtml(questionText),
+        // Standalone python blocks usually don't carry these:
+        sampleResponse: '',
+        feedbackPrompt: '',
+        hasTextResponse: !!block.hasTextResponse,
+        hasTableResponse: !!block.hasTableResponse,
+      };
+
 
       return (
         <ActivityPythonBlock
           key={`py-${index}-${block.content?.slice(0, 10) || ''}`}
-
-          code={
-            prefill?.[codeKey]?.response
-            || block.content
-            || ''
-          }
+          code={prefill?.[codeKey]?.response || block.content || ''}
           blockIndex={`py-${codeKey}-${index}`}
           editable={editable && isActive}
           responseKey={codeKey}
-          onCodeChange={onCodeChange}
+          // 👇 forward meta so the server sees the actual task
+          onCodeChange={(rk, code) => onCodeChange && onCodeChange(rk, code, meta)}
           codeFeedbackShown={codeFeedbackShown}
           fileContents={fileContents}
           setFileContents={setFileContents}
           timeLimit={block.timeLimit || 50000}
         />
-
       );
     }
+
     if (block.type === 'table') {
       return (
         <div key={`table-${index}`} className="my-4">
@@ -536,6 +650,7 @@ export function renderBlocks(blocks, options = {}) {
 
 
       const hasPython = (block.pythonBlocks?.length || 0) > 0;
+      const isPythonOnly = hasPython && !block.hasTextResponse && !block.hasTableResponse;
       // Show a free-text box only if explicitly requested OR (no python & no table)
       const showTextArea = block.hasTextResponse || (!hasPython && !block.hasTableResponse);
       const lockMainResponse = !!followupsShown?.[responseKey] && !!block.hasTextResponse;
@@ -560,23 +675,34 @@ export function renderBlocks(blocks, options = {}) {
           {block.pythonBlocks?.map((py, i) => {
             const responseKey = `${block.groupId}${block.id}code${i + 1}`;
             const savedResponse = prefill?.[responseKey]?.response || py.content;
+
+            const isCodeOnly = !block.hasTextResponse && !block.hasTableResponse;
+
+            const meta = {
+              questionText: stripHtml(block.prompt || ''),                 // ✅ use the question’s prompt
+              sampleResponse: stripHtml(block.samples?.[0] || ''),         // ✅ include per-question sample
+              feedbackPrompt: stripHtml(block.feedback?.[0] || ''),        // ✅ include per-question guidance
+              hasTextResponse: !!block.hasTextResponse,
+              hasTableResponse: !!block.hasTableResponse,
+            };
+
+
             return (
               <ActivityPythonBlock
-                key={`q-${block.groupId}-${block.id}-py-${i}`} // ✅ stable per question/code block
-
+                key={`q-${block.groupId}-${block.id}-py-${i}`}
                 code={savedResponse}
                 blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}
                 editable={editable && isActive}
                 responseKey={responseKey}
-                onCodeChange={onCodeChange}
+                onCodeChange={(rk, code) => onCodeChange && onCodeChange(rk, code, meta)}
                 codeFeedbackShown={codeFeedbackShown}
                 fileContents={fileContents}
                 setFileContents={setFileContents}
                 timeLimit={py.timeLimit ?? block.timeLimit ?? 50000}
               />
-
             );
           })}
+
           {block.tableBlocks?.map((table, i) => (
             <div key={`q-table-${index}-${i}`} className="my-3">
               <h5>{table.title}</h5>
@@ -658,7 +784,6 @@ export function renderBlocks(blocks, options = {}) {
           {/* Follow-up UI */}
           {followupsShown?.[responseKey] && (
             !showTextArea && hasPython ? (
-              // 🔸 Python-only: banner only; students fix code (no follow-up textarea)
               <div className="mt-3 alert alert-warning py-2">
                 <strong>Follow-up:</strong> {followupsShown[responseKey]}
                 <div className="small mt-1">
@@ -666,7 +791,6 @@ export function renderBlocks(blocks, options = {}) {
                 </div>
               </div>
             ) : (
-              // 🔹 Text-answer questions: keep your existing follow-up textarea flow
               (() => {
                 const followupKey = `${responseKey}FA1`;
                 const hasSavedFU = !!prefill?.[followupKey]?.response;
@@ -681,7 +805,6 @@ export function renderBlocks(blocks, options = {}) {
                         </span>
                       )}
                     </div>
-
                     {canEditFU ? (
                       <Form.Control
                         as="textarea"
@@ -714,6 +837,7 @@ export function renderBlocks(blocks, options = {}) {
               })()
             )
           )}
+
 
 
 
