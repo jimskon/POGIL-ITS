@@ -11,7 +11,6 @@ import { API_BASE_URL } from '../config';
 import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
 import { io } from 'socket.io-client';
 
-
 // Map short role keys to full names
 const roleLabels = {
   qc: 'Quality Control'
@@ -30,6 +29,8 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
   const [fileContents, setFileContents] = useState({});
   const fileContentsRef = useRef(fileContents);
   const loadingRef = useRef(false);
+  const codeVersionsRef = useRef({});   // track versions per responseKey
+
 
 
   const [activity, setActivity] = useState(null);
@@ -198,14 +199,33 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
     socket.on('response:update', handleUpdate);
 
-    // 🧠 Listen for AI feedback updates
-    socket.on('feedback:update', ({ responseKey, feedback }) => {
-      console.log(`📡 Received feedback for ${responseKey}:`, feedback);
+    socket.on('feedback:update', ({ responseKey, feedback, followup }) => {
+      console.log(`📡 Received feedback for ${responseKey}:`, { feedback, followup });
+
+      // Inline feedback (per code cell)
       setCodeFeedbackShown(prev => ({
         ...prev,
-        [responseKey]: feedback,
+        [responseKey]: feedback ?? null,
       }));
+
+      // Banner is per-question (use followup, not feedback)
+      const m = responseKey.match(/^(.*?)(?:code\d+)$/); // e.g. "3ccode1" -> "3c"
+      if (m) {
+        const qid = m[1];
+        setFollowupsShown(prev => {
+          const next = { ...prev };
+          if (typeof followup === 'string' && followup.trim()) {
+            next[qid] = followup;
+          } else {
+            delete next[qid];
+          }
+          return next;
+        });
+      }
     });
+
+
+    // ...in cleanup:
 
     return () => {
       socket.off('response:update', handleUpdate);
@@ -448,11 +468,25 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
           (b) => b.type === "header" && b.tag === "aicodeguidance"
         );
 
-        // Attach these values to the activity object so we can use them later
-        instanceData.activitycontext = activityContextBlock?.content || "";
-        instanceData.studentlevel = studentLevelBlock?.content || "";
-        instanceData.aicodeguidance = aiCodeGuideBlock?.content || "";
+        // 1) ADD the helper here (or at top of file)
+        const stripHtml = (s = '') =>
+          s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/?[^>]+>/g, '');
 
+        // 2) Convert the header content to plain text
+        const activitycontext = stripHtml(activityContextBlock?.content || "");
+        const studentlevel = stripHtml(studentLevelBlock?.content || "");
+        const aicodeguidance = stripHtml(aiCodeGuideBlock?.content || "");
+
+        // 3) Save them into React state so evaluate-code can read them
+        setActivity(prev => ({
+          ...prev,
+          ...instanceData,       // keep your original fields (title, etc.)
+          activitycontext,
+          studentlevel,
+          aicodeguidance,
+        }));
+
+        console.log('🧭 aicodeguidance (clean):', (activity?.aicodeguidance || '').slice(0, 200));
 
 
         // ✅ Add console.log here
@@ -567,9 +601,10 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
       context: {
         activitycontext: activity?.activitycontext || "Unnamed Activity",
         studentLevel: activity?.studentlevel || "intro",
-      }
+      },
+      guidance: activity?.aicodeguidance || ""
     };
-
+    console.log("📝 sending guidance:", (body.guidance || "").slice(0, 200));
     // ✅ Add console.log here
     console.log("📡 Context being sent to AI:", body.context);
 
@@ -662,102 +697,116 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
       // ---------- PYTHON-ONLY PATH ----------
       if (isPythonOnly) {
+        // ✅ track attempts for this question
+        const attemptsKey = `${qid}attempts`;
+        const prevAttempts = Number(existingAnswers[attemptsKey]?.response || 0);
+
         // 0) Get current code for all code blocks of this question
         const codeBlocks = (block.pythonBlocks || []).map((py, i) => {
           const key = `${qid}code${i + 1}`;
           const ta = container.querySelector(`textarea[data-response-key="${key}"]`);
-          // Prefer DOM value (most up to date), then existing answers, then starter content
           return (ta?.value ?? existingAnswers[key]?.response ?? py.content ?? '').trim();
         });
 
-        // 1) Require that at least one block changed vs the starter template
+        // 1) Require at least one change vs the starter template
         const changed = codeBlocks.some((code, i) =>
           code !== (block._initialCode?.[i] || '').trim()
         );
         if (!changed) {
-          // Show a banner-style follow-up (no FA1 expected)
           const msg = "Modify the starter program to solve the task, then run again.";
           setFollowupsShown(prev => ({ ...prev, [qid]: msg }));
-          // Keep it in-progress
           answers[`${qid}S`] = 'inprogress';
           unanswered.push(`${qid} (code not changed)`);
-          // Save code snapshots so observers see them (optional)
           codeBlocks.forEach((code, i) => answers[`${qid}code${i + 1}`] = code);
           continue;
         }
+        console.log('📝 guidance being sent:', (activity?.aicodeguidance || ''));
 
-        // 2) Ask AI to evaluate the code
         const studentCode = codeBlocks.join('\n\n');
         try {
+          const stripHtmlLocal = (s = '') =>
+            s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/?[^>]+>/g, '');
+          const cleanLines = (s = '') =>
+            stripHtmlLocal(s).replace(/^\s+/mg, '').replace(/[ \t]+$/mg, '');
+
+          // ⬇️ build a richer, cleaned guidance blob
+          const guidanceBlob = [
+            activity?.aicodeguidance || '',
+            activity?.activitycontext || '',
+            `Student level: ${activity?.studentlevel || 'intro'}`,
+            cleanLines(block.feedback?.[0] || ''),   // per-question rubric
+            cleanLines(block.samples?.[0] || ''),    // sample (trimmed per line)
+            "Explicit override: Ignore spacing in prompts and around commas; do not request changes like 'remove an extra space' if the program meets the requirements."
+          ].filter(Boolean).join('\n\n---\n\n');
+
+          console.log('📝 guidance being sent (code submit):\n', guidanceBlob.slice(0, 800));
+
           const aiRes = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              questionText: block.prompt.replace(/<br>/g, '\n'),
+              questionText: stripHtmlLocal(block.prompt || ''),
               studentCode,
-              codeVersion: qid, // any identifier is fine
-              guidance: activity?.aicodeguidance || "" // ✅ NEW
+              codeVersion: qid,
+              guidance: guidanceBlob
             }),
           });
-          const aiData = await aiRes.json();
+          // ...rest unchanged
 
-          // Save code snapshots (so DB has the latest code on submit)
+
+          // ✅ handle non-200 responses explicitly
+          if (!aiRes.ok) {
+            const errText = await aiRes.text();
+            throw new Error(`evaluate-code ${aiRes.status}: ${errText.slice(0, 200)}`);
+          }
+
+          let { feedback: fb0, followup: fu0 } = await aiRes.json();
+          let feedback = fb0;
+          let followup = fu0;
+
+          // Optional: drop spacing-only nags if your guidance says to ignore spacing
+          if (/ignore spacing/i.test(activity?.aicodeguidance || '')) {
+            if (feedback && /\bspace|spacing\b/i.test(feedback)) feedback = null;
+            if (followup && /\bspace|spacing\b/i.test(followup)) followup = null;
+          }
+
+          // Save code snapshots on submit
           codeBlocks.forEach((code, i) => answers[`${qid}code${i + 1}`] = code);
 
-          if (!aiData.feedback) {
-            // ✅ Pass: complete
+          if (!feedback && !followup) {
+            // ✅ Pass
             answers[`${qid}S`] = 'completed';
-
-            // Clear any old banner
-            setFollowupsShown(prev => {
-              const copy = { ...prev };
-              delete copy[qid];
-              return copy;
-            });
-
-            // Optional: clear feedback everywhere
+            setFollowupsShown(prev => { const copy = { ...prev }; delete copy[qid]; return copy; });
             setCodeFeedbackShown(prev => ({ ...prev, [`${qid}code1`]: null }));
-
           } else {
-            // ❌ Not yet: either encourage (<= 3 tries) or let them move on after the 3rd
+            // ❌ Not yet — encourage up to 3 tries, but never get stuck
             const nextAttempts = prevAttempts + 1;
-
-            // Always store the attempt count
             answers[attemptsKey] = String(nextAttempts);
 
+            // Show a banner (prefer real follow-up; otherwise show the feedback)
+            const banner = followup || feedback || 'Consider refining your code.';
+            setFollowupsShown(prev => ({ ...prev, [qid]: banner }));
+
             if (nextAttempts >= 3) {
-              // 🎓 Let them proceed; record that refinement wasn't finished
-              answers[`${qid}refinement`] = 'incomplete_after_3_attempts';
-              answers[`${qid}S`] = 'completed'; // allow group to continue
-
-              // Show a gentle banner but do NOT block
-              setFollowupsShown(prev => ({
-                ...prev,
-                [qid]: "You can move on. We'll note your code needs more refinement."
-              }));
-
-              // Persist the last feedback so observers/instructor can see it
-              if (socket && instanceId) {
-                socket.emit('feedback:update', {
-                  instanceId,
-                  responseKey: `${qid}code1`,
-                  feedback: aiData.feedback,
-                });
-              }
+              // ⛳ BYPASS after 3 tries: mark this item completed so the group can advance.
+              answers[`${qid}S`] = 'completed';
+              // (Optional) keep the banner visible to hint they could still improve.
             } else {
-              // Encourage and block for now
-              setFollowupsShown(prev => ({ ...prev, [qid]: aiData.feedback }));
+              // < 3 tries → keep them in this group
               answers[`${qid}S`] = 'inprogress';
               unanswered.push(`${qid} (improve code)`);
-              // Persist feedback for observers:
-              if (socket && instanceId) {
-                socket.emit('feedback:update', {
-                  instanceId,
-                  responseKey: `${qid}code1`,
-                  feedback: aiData.feedback,
-                });
-              }
             }
+
+            // Broadcast to other clients (inline feedback + banner)
+            if (socket && instanceId) {
+              socket.emit('feedback:update', {
+                instanceId,
+                responseKey: `${qid}code1`,
+                feedback,
+                followup,
+              });
+            }
+
           }
 
         } catch (err) {
@@ -768,7 +817,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
           unanswered.push(`${qid} (evaluation error)`);
         }
 
-        continue; // ✅ do NOT fall through to text/table logic
+        continue; // do NOT fall through
       }
 
       // ---------- TEXT/TABLE PATH (your existing logic) ----------
@@ -860,14 +909,57 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
     }
 
 
-    // If there are unanswered questions, we treat this as "inprogress"
-    const groupState = unanswered.length === 0 ? 'completed' : 'inprogress';
+    // ---- NEW completion logic (drop-in replacement) ----
+    const qBlocks = blocks.filter(b => b.type === 'question');
+    const isCodeOnlyMap = Object.fromEntries(
+      qBlocks.map(b => [`${b.groupId}${b.id}`, !!b.hasPythonOnly])
+    );
+
+    // any base text/table answers missing? (you already pushed these to `unanswered`)
+    const pendingBase = unanswered.length > 0;
+
+    // any *text/table* follow-ups that are shown but not answered?
+    const pendingTextFollowups = qBlocks.some(b => {
+      const qid = `${b.groupId}${b.id}`;
+      if (isCodeOnlyMap[qid]) return false; // code-only uses banner, no FA1 box
+      const fuShown = !!followupsShown[qid];
+      if (!fuShown) return false;
+      const fuAns = (followupAnswers[`${qid}FA1`]
+        || existingAnswers[`${qid}FA1`]?.response
+        || '').trim();
+      return fuShown && !fuAns;
+    });
+
+    // any *code-only* questions that are not yet completed AND have attempts < 3?
+    const pendingCodeGates = qBlocks.some(b => {
+      const qid = `${b.groupId}${b.id}`;
+      if (!isCodeOnlyMap[qid]) return false;
+      const status = (answers[`${qid}S`] || existingAnswers[`${qid}S`]?.response || 'inprogress');
+      if (status === 'completed') return false;
+      const attempts = Number(answers[`${qid}attempts`]
+        || existingAnswers[`${qid}attempts`]?.response
+        || 0);
+      return attempts < 3; // block only if fewer than 3 tries
+    });
+
+    const groupState = (pendingBase || pendingTextFollowups || pendingCodeGates)
+      ? 'inprogress'
+      : 'completed';
+
+    // persist the group state as a response key the UI reads
+    const stateKey = `${currentQuestionGroupIndex + 1}state`;
+    answers[stateKey] = groupState;
 
     if (groupState === 'inprogress') {
-      alert(`Please answer the remaining questions: ${unanswered.join(', ')}`);
+      // only list the missing base/follow-up items; code issues are shown in the banner already
+      const msg = unanswered.length
+        ? `Please complete: ${unanswered.join(', ')}`
+        : 'Please resolve the pending items in this group.';
+      alert(msg);
       setIsSubmitting(false);
-      return; // ⛔️ Do NOT POST /submit-group; stay on this group
+      return; // stay on this group
     }
+
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`, {
@@ -903,13 +995,13 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
       console.error("❌ Submission failed:", err);
       alert("An error occurred during submission.");
     } finally {
-      setIsSubmitting(false); // ✅ hide spinner after everything
+      setIsSubmitting(false); // hide spinner after everything
     }
   }
 
-  async function handleCodeChange(responseKey, updatedCode) {
+  async function handleCodeChange(responseKey, updatedCode, meta = {}) {
     try {
-      // Step 1: Save code
+      // (1) Save code (unchanged)
       await fetch(`${API_BASE_URL}/api/responses/code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -917,79 +1009,82 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
           question_id: responseKey,
           activity_instance_id: instanceId,
           user_id: user?.id,
-          response: updatedCode, // ✅ note the key here
+          response: updatedCode,
         }),
       });
-      console.log("✅ Code saved for:", responseKey);
 
-      // Step 2: Call AI for feedback
-      const aiRes = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
+      if (!updatedCode || !updatedCode.trim()) {
+        // Save was fine, but do not ask the evaluator yet.
+        socket?.emit('feedback:update', {
+          instanceId,
+          responseKey,
+          feedback: null,
+          followup: null,
+        });
+        return;
+      }
+
+
+      // ✅ Build a rich guidance blob (match what you used in handleSubmit)
+      const guidanceBlob = [
+        activity?.aicodeguidance || '',
+        activity?.activitycontext || '',
+        `Student level: ${activity?.studentlevel || 'intro'}`,
+        cleanLines(meta?.feedbackPrompt || ''), // per-question rubric (if any)
+        // Hard guardrails so the model doesn't suggest f-strings or spacing nits
+        'Environment constraint: f-strings are unavailable; do not suggest or use them.',
+        "Explicit override: Ignore spacing in prompts and around commas; do not request changes like 'remove an extra space' if the program meets the requirements."
+      ].filter(Boolean).join('\n\n---\n\n');
+
+      const isCodeOnly = !meta?.hasTextResponse && !meta?.hasTableResponse;
+
+      // (2) Call your evaluator with the richer guidance
+      const qt = (meta?.questionText && meta.questionText.trim())
+        ? meta.questionText.trim()
+        : 'Write and run Python code.';
+
+      const evalResp = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          questionText: "Review the student's code and offer helpful feedback if needed.",
+          questionText: qt,
           studentCode: updatedCode,
-          codeVersion: responseKey,
-          guidance: activity?.aicodeguidance || "" // ✅ NEW
+          codeVersion: (codeVersionsRef.current[responseKey] =
+            (codeVersionsRef.current[responseKey] || 0) + 1),
+          guidance: guidanceBlob,
+          isCodeOnly,
         }),
       });
 
-      const aiData = await aiRes.json();
-      if (aiData.feedback) {
-        console.log(`🤖 AI feedback for ${responseKey}:`, aiData.feedback);
 
-        // Save feedback to DB
-        await fetch(`${API_BASE_URL}/api/responses/save-feedback`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            question_id: responseKey,
-            activity_instance_id: instanceId,
-            user_id: user?.id,
-            response_type: 'python_feedback',
-            feedback: aiData.feedback,
-          }),
-        });
 
-        // 1. Save locally
-        setCodeFeedbackShown(prev => ({
-          ...prev,
-          [responseKey]: aiData.feedback,
-        }));
-
-        // 2. 🔁 Emit to observers
-        if (socket && instanceId) {
-          socket.emit('feedback:update', {
-            instanceId,
-            responseKey,
-            feedback: aiData.feedback,
-          });
-        }
-
-      } else {
-        console.log(`🤖 No feedback needed for ${responseKey}`);
-
-        // Clear feedback locally
-        setCodeFeedbackShown(prev => ({
-          ...prev,
-          [responseKey]: null,
-        }));
-
-        // 🔁 Emit empty feedback to clear for observers
-        if (socket && instanceId) {
-          socket.emit('feedback:update', {
-            instanceId,
-            responseKey,
-            feedback: null,
-          });
-        }
+      if (!evalResp.ok) {
+        const t = await evalResp.text();
+        console.error('evaluate-code failed', evalResp.status, t);
+        return;
       }
-      setLastEditTs(Date.now());
 
+      let { feedback, followup } = await evalResp.json();
+
+      // Optional: drop spacing-only nags if your global guidance says to ignore spacing
+      if (/ignore spacing/i.test(activity?.aicodeguidance || '')) {
+        if (feedback && /\bspace|spacing\b/i.test(feedback)) feedback = null;
+        if (followup && /\bspace|spacing\b/i.test(followup)) followup = null;
+      }
+
+      // (3) Emit both feedback (inline) and followup (banner)
+      socket?.emit('feedback:update', {
+        instanceId,
+        responseKey,
+        feedback,  // null => hide inline suggestions
+        followup,  // null => clear banner
+      });
     } catch (err) {
-      console.error("❌ Failed in handleCodeChange:", responseKey, err);
+      console.error('handleCodeChange failed:', err);
     }
   }
+
+
 
 
 
@@ -1026,7 +1121,8 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
           editable: false,
           isActive: false,
           mode: 'run',
-          codeFeedbackShown, // ✅ FIX added here                                                                     
+          codeFeedbackShown,
+          isInstructor,
         })}
 
         {groups.map((group, index) => {
@@ -1074,6 +1170,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
                 setFileContents: handleUpdateFileContents,
                 onCodeChange: handleCodeChange,
                 codeFeedbackShown,
+                isInstructor,
                 onTextChange: (responseKey, value) => {
                   if (responseKey.endsWith('FA1')) {
                     // 🔄 Follow-up response: update followupAnswers

@@ -10,3 +10,8 @@ body {
     flex-direction: row !important;
   }
 }
+
+.mono {
+  font-family: var(--bs-font-monospace); /* Bootstrap monospace stack */
+  white-space: pre;                      /* preserve multiple spaces exactly */
+}

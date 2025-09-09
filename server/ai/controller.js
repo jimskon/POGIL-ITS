@@ -10,20 +10,19 @@ async function evaluateStudentResponse(req, res) {
   const {
     questionText,
     studentAnswer,
-    sampleResponse,
-    feedbackPrompt,
-    followupPrompt,
+    sampleResponse = "",
+    feedbackPrompt = "",
+    followupPrompt = "",
     forceFollowup = false,
-    context = {}
-  } = req.body;
+    context = {},
+    guidance = ""
+  } = req.body || {};
 
+  // ✅ Fail-open guard: if inputs are missing, do NOT block progress
   if (!questionText || !studentAnswer) {
-    return res.status(400).json({
-      error: 'Missing required fields',
-      missing: {
-        questionText: !questionText,
-        studentAnswer: !studentAnswer,
-      }
+    return res.status(200).json({
+      followupQuestion: null,
+      meta: { reason: 'missing_fields' }
     });
   }
 
@@ -31,26 +30,15 @@ async function evaluateStudentResponse(req, res) {
     const ctx = `${context.activityContext || context.activitycontext || 'Unnamed Activity'} (${context.studentLevel || 'intro level'})`;
     const guide = (feedbackPrompt && feedbackPrompt.toLowerCase() !== 'none') ? feedbackPrompt : '';
     const authoredGuide = (followupPrompt || '').trim();
-
-    // ---------- helpers ----------
-    const looksLikeRubricLeak = (s = '') =>
-      /ASK A FOLLOW-?UP ONLY IF|GIBBERISH|LOW-?EFFORT|OFF-?BASE/i.test(s);
-
-    const extractFirstQuestion = (s = '') => {
-      // Prefer the first "?" sentence, else trim to 5–25 words
-      const qIdx = s.indexOf('?');
-      let candidate = qIdx >= 0 ? s.slice(0, qIdx + 1) : s;
-      candidate = candidate.replace(/\s+/g, ' ').trim();
-      const words = candidate.split(' ');
-      if (words.length > 25) candidate = words.slice(0, 25).join(' ') + '?';
-      return candidate;
-    };
+    const activityGuide = (guidance || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/?[^>]+>/g, '');
 
     const sys = [
       'You are an AI tutor for a POGIL class.',
-      'Never restate or quote rubrics or instructions.',
+      activityGuide ? `Activity-level guidance (DO NOT quote to the student):\n${activityGuide}` : '',
+      'Do not invent new requirements that are not explicitly in the question or guidance.',
+      'If the student’s answer already satisfies the task, do not ask a follow-up.',
       'Return ONLY valid JSON per the schema — no extra text.',
-    ].join(' ');
+    ].filter(Boolean).join('\n');
 
     const gate = [
       'Decide whether to ask a follow-up using this gate:',
@@ -62,7 +50,6 @@ async function evaluateStudentResponse(req, res) {
       'Short numeric/string answers can be sufficient; do not probe those.',
     ].join(' ');
 
-    // If you truly want to force a follow-up (rare), flip this switch here:
     const decisionHint = forceFollowup
       ? 'Set "decision":"ask".'
       : 'Set "decision":"no" if the gate does not apply.';
@@ -74,7 +61,7 @@ async function evaluateStudentResponse(req, res) {
       'If "decision" is "ask", question MUST be one short tutor-style question (5–25 words).',
     ].join(' ');
 
-    const guidance = [
+    const extraGuidance = [
       guide ? `Optional guidance you MAY use: "${guide}".` : '',
       authoredGuide ? `If you do ask, you may bias toward: "${authoredGuide}" (rewrite, don’t quote).` : '',
     ].filter(Boolean).join('\n');
@@ -89,7 +76,7 @@ ${jsonSchema}
 Question: ${questionText}
 Student's answer: "${studentAnswer}"
 Sample (ideal) answer (for your reference): "${sampleResponse}"
-${guidance ? `\n${guidance}` : ''}
+${extraGuidance ? `\n${extraGuidance}` : ''}
 `.trim();
 
     const chat = await openai.chat.completions.create({
@@ -105,108 +92,112 @@ ${guidance ? `\n${guidance}` : ''}
     const raw = (chat.choices?.[0]?.message?.content ?? '').trim();
 
     // Try to parse JSON robustly
-    let obj = null;
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    let obj;
     try {
-      // find first {...} block
-      const jsonMatch = raw.match(/\{[\s\S]*\}/);
       obj = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(raw);
-    } catch (_) {
-      // fallback: treat as plain text
-      const upper = raw.toUpperCase();
-      if (/NO[_\s-]?FOLLOWUP/.test(upper) || /"decision"\s*:\s*"no"/i.test(raw)) {
-        return res.json({ followupQuestion: null });
-      }
-      // try to extract a question
-      const candidate = extractFirstQuestion(raw);
-      if (!candidate || looksLikeRubricLeak(candidate)) {
-        return res.json({ followupQuestion: null });
-      }
-      return res.json({ followupQuestion: candidate });
+    } catch {
+      // If we can’t parse, just don’t ask a follow-up
+      return res.status(200).json({ followupQuestion: null, meta: { reason: 'unparsable' } });
     }
 
-    // Validate JSON fields
-    const decision = (obj.decision || '').toLowerCase();
-    let question = (obj.question ?? '');
-
-    if (decision !== 'ask') {
-      return res.json({ followupQuestion: null });
+    if ((obj.decision || '').toLowerCase() !== 'ask') {
+      return res.status(200).json({ followupQuestion: null });
     }
 
-    // sanitize question
-    if (typeof question !== 'string') question = String(question || '');
-    question = question.replace(/^["'`]+|["'`]+$/g, '').trim();
-    if (!question) {
-      return res.json({ followupQuestion: null });
-    }
-    if (looksLikeRubricLeak(question)) {
-      // model echoed the rubric — discard
-      return res.json({ followupQuestion: null });
-    }
-    // keep it short and question-y
-    question = extractFirstQuestion(question);
-    return res.json({ followupQuestion: question });
+    let question = (obj.question ?? '').toString().trim();
+    if (!question) return res.status(200).json({ followupQuestion: null });
+
+    // Keep it short and ensure it ends at the first '?'
+    const qIdx = question.indexOf('?');
+    if (qIdx >= 0) question = question.slice(0, qIdx + 1);
+    const words = question.split(/\s+/);
+    if (words.length > 25) question = words.slice(0, 25).join(' ') + '?';
+
+    return res.status(200).json({ followupQuestion: question });
 
   } catch (err) {
-    console.error('❌ Error evaluating student response:', err);
-    return res.status(500).json({ error: 'OpenAI evaluation failed' });
+    // 🔥 Log details, but DO NOT block progress
+    try {
+      console.error('❌ OpenAI evaluate-response failed:', {
+        status: err?.status,
+        message: err?.message,
+        code: err?.error?.code,
+        type: err?.error?.type,
+        details: err?.error?.message || err?.stack
+      });
+    } catch (_) {
+      console.error('❌ OpenAI evaluate-response failed (raw):', err);
+    }
+
+    // ✅ Fail-open: no follow-up so the UI can advance
+    return res.status(200).json({
+      followupQuestion: null,
+      meta: { reason: 'ai_unavailable' }
+    });
   }
 }
+
 
 
 /**
  * ✅ Updated: Python code evaluation with better feedback sensitivity
  */
+// server/ai/controller.js
 async function evaluatePythonCode(req, res) {
-  const { questionText, studentCode, codeVersion, guidance = "" } = req.body;
+  const { questionText, studentCode, codeVersion, guidance = "", isCodeOnly = false } = req.body;
 
   if (!questionText || !studentCode) {
     return res.status(400).json({ error: 'Missing question text or student code' });
   }
 
-  try {
-    const prompt = `
-You are a Python tutor evaluating a student's code submission.
+  const prompt = `
+You are a Python tutor evaluating a student's code.
 
-Activity-specific guidance for what to prioritize or ignore:
-${guidance || "(no special guidance — use the default rubric)"} 
+Guidance to prioritize:
+${guidance || "(none)"}
 
-Question or task:
+Task:
 ${questionText}
 
-Student's code (version ${codeVersion}):
+Student's code (v${codeVersion}):
 \`\`\`python
 ${studentCode}
 \`\`\`
 
-Evaluate the code using this order of priority:
-1) Functional correctness relative to the task and the activity guidance.
-2) Clear, appropriate user-facing output for this task.
-3) Code clarity (names, structure) — only if relevant per the activity guidance.
+Return STRICT JSON with exactly these keys:
+{"feedback": string|null, "followup": string|null}
 
-If the activity guidance says to ignore or defer certain concerns (e.g., input validation), do NOT require them.
-
-If the code meets the expectations, respond exactly: NO_FEEDBACK
-Otherwise, return ONE concise, actionable suggestion (single sentence).
+Rules:
+- If the code is fully correct and appropriate: feedback=null, followup=null.
+- Otherwise:
+  - "feedback" = ONE concise, actionable suggestion (single sentence).
+  - "followup" = 
+      ${isCodeOnly ? 'ONE short tutor-style question (5–20 words) that nudges the student toward the fix.' : 'null (because this is not a code-only answer).'}
+- Never include rubric text or meta-instructions in your outputs.
 `.trim();
 
-
+  try {
     const chat = await openai.chat.completions.create({
       model: MODEL,
       messages: [{ role: 'user', content: prompt }],
-      temperature: 0.3,
-      max_tokens: 150,
+      temperature: 0.2,
+      max_tokens: 180,
     });
 
     const raw = (chat.choices?.[0]?.message?.content ?? '').trim();
-    // Normalize quotes/label and tag for NO_FEEDBACK
-    const normalized = raw.replace(/^["'`]+|["'`]+$/g, '').trim();
-    const tag = normalized.toUpperCase().replace(/[.\s!?]+$/g, '').replace(/[-\s]/g, '_');
-    const feedback = (tag === 'NO_FEEDBACK') ? null : normalized;
-    console.log('✅ Code feedback:', feedback ?? 'NO_FEEDBACK');
-    res.json({ feedback });
+    // Parse JSON robustly
+    const match = raw.match(/\{[\s\S]*\}/);
+    const obj = match ? JSON.parse(match[0]) : JSON.parse(raw);
+
+    // Harden fields
+    const feedback = obj.feedback == null || String(obj.feedback).trim() === '' ? null : String(obj.feedback).trim();
+    const followup = obj.followup == null || String(obj.followup).trim() === '' ? null : String(obj.followup).trim();
+
+    return res.json({ feedback, followup });
   } catch (err) {
     console.error('Error evaluating Python code:', err);
-    res.status(500).json({ error: 'AI code evaluation failed' });
+    return res.status(500).json({ error: 'AI code evaluation failed' });
   }
 }
 
@@ -235,11 +226,11 @@ Otherwise, return **one concise improvement suggestion**, such as fixing a bug, 
 
 Only respond with "NO_FEEDBACK" or a single suggestion.
 `.trim();
-
+  console.log('🤖 Code evaluation prompt:', prompt);
   const chat = await openai.chat.completions.create({
     model: MODEL,
     messages: [{ role: 'user', content: prompt }],
-    temperature: 0.3,
+    temperature: 0,
     max_tokens: 150,
   });
 

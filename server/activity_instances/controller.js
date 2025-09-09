@@ -178,55 +178,95 @@ async function recordHeartbeat(req, res) {
 
   if (!userId) return res.status(400).json({ error: 'Missing userId' });
 
+  const ACTIVE_WINDOW_SEC = 60; // presence window
+
   try {
-    const [[instance]] = await db.query(
-      `SELECT course_id, active_student_id FROM activity_instances WHERE id = ?`,
-      [instanceId]
-    );
-    if (!instance) return res.status(404).json({ error: 'Instance not found' });
-
-    const courseId = instance.course_id;
-    const activeStudentId = instance.active_student_id;
-
-    await db.query(
-      `UPDATE group_members gm
-       JOIN activity_instances ai ON gm.activity_instance_id = ai.id
-       SET gm.last_heartbeat = NOW(), gm.connected = TRUE
-       WHERE gm.student_id = ? AND ai.course_id = ?`,
-      [userId, courseId]
-    );
-
-    let isDisconnected = false;
-    if (activeStudentId) {
-      const [[status]] = await db.query(
-        `SELECT connected FROM group_members
-         WHERE activity_instance_id = ? AND student_id = ?`,
-        [instanceId, activeStudentId]
-      );
-      isDisconnected = status?.connected === 0;
-    }
-
+    // 1) Must be a student & a member of THIS instance
     const [[userRow]] = await db.query(`SELECT role FROM users WHERE id = ?`, [userId]);
     if (!userRow || userRow.role !== 'student') {
-      console.log(`🚫 Skipping heartbeat auto-assign — user ${userId} is not a student`);
       return res.json({ success: true, becameActive: false });
     }
 
-    if (!activeStudentId || isDisconnected) {
-      await db.query(
-        `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
-        [userId, instanceId]
-      );
-      console.log(`⚡ Auto-assigned active student to student ${userId} for instance ${instanceId}`);
-      return res.json({ success: true, becameActive: true });
+    const [[isMember]] = await db.query(
+      `SELECT student_id FROM group_members
+       WHERE activity_instance_id = ? AND student_id = ?`,
+      [instanceId, userId]
+    );
+    if (!isMember) {
+      return res.json({ success: true, becameActive: false });
     }
 
-    return res.json({ success: true, becameActive: false });
+    // 2) Record heartbeat for THIS instance only
+    await db.query(
+      `UPDATE group_members
+       SET last_heartbeat = NOW(), connected = TRUE
+       WHERE activity_instance_id = ? AND student_id = ?`,
+      [instanceId, userId]
+    );
+
+    // 3) Current active
+    const [[inst]] = await db.query(
+      `SELECT active_student_id FROM activity_instances WHERE id = ?`,
+      [instanceId]
+    );
+    if (!inst) return res.status(404).json({ error: 'Instance not found' });
+
+    // 4) Is the current active present (fresh heartbeat)?
+    let activePresent = false;
+    if (inst.active_student_id) {
+      const [[row]] = await db.query(
+        `SELECT (last_heartbeat IS NOT NULL AND last_heartbeat >= DATE_SUB(NOW(), INTERVAL ? SECOND)) AS present
+         FROM group_members
+         WHERE activity_instance_id = ? AND student_id = ?`,
+        [ACTIVE_WINDOW_SEC, instanceId, inst.active_student_id]
+      );
+      activePresent = !!row?.present;
+    }
+
+    // 5) Only (re)assign when there is no active OR the active is NOT present
+    if (!inst.active_student_id || !activePresent) {
+      // Prefer the heartbeating user; otherwise pick any present member
+      const [[presentCaller]] = await db.query(
+        `SELECT student_id FROM group_members
+         WHERE activity_instance_id = ?
+           AND student_id = ?
+           AND last_heartbeat >= DATE_SUB(NOW(), INTERVAL ? SECOND)
+         LIMIT 1`,
+        [instanceId, userId, ACTIVE_WINDOW_SEC]
+      );
+
+      let newActiveId = presentCaller?.student_id;
+      if (!newActiveId) {
+        const [[anyPresent]] = await db.query(
+          `SELECT student_id FROM group_members
+           WHERE activity_instance_id = ?
+             AND last_heartbeat >= DATE_SUB(NOW(), INTERVAL ? SECOND)
+           ORDER BY last_heartbeat DESC
+           LIMIT 1`,
+          [instanceId, ACTIVE_WINDOW_SEC]
+        );
+        newActiveId = anyPresent?.student_id || null;
+      }
+
+      if (newActiveId) {
+        await db.query(
+          `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+          [newActiveId, instanceId]
+        );
+        return res.json({ success: true, becameActive: true, activeStudentId: newActiveId });
+      }
+    }
+
+    // Otherwise keep the current active as-is
+    return res.json({ success: true, becameActive: false, activeStudentId: inst.active_student_id });
   } catch (err) {
     console.error("❌ recordHeartbeat error:", err);
     return res.status(500).json({ error: 'Failed to record heartbeat' });
   }
-} // ✅ END OF FUNCTION
+}
+
+
+
 
 
 
@@ -418,8 +458,8 @@ async function submitGroupResponses(req, res) {
       );
     }
 
-    console.log("✅ Responses submitted for instance:", instanceId);
-    console.table([...responseMap.entries()]);
+    //console.log("✅ Responses submitted for instance:", instanceId);
+    //console.table([...responseMap.entries()]);
 
     res.json({ success: true });
   } catch (err) {
@@ -450,7 +490,7 @@ async function getInstanceGroups(req, res) {
           student_id: r.student_id,
           name: r.student_name,
           email: r.student_email,
-          role: roleLabels[r.role] || r.role 
+          role: roleLabels[r.role] || r.role
         }))
       }]
     });
@@ -487,6 +527,22 @@ async function getInstancesForActivityInCourse(req, res) {
          ORDER BY gm.role`,
         [inst.instance_id]
       );
+      // Ensure active belongs to this instance; if not, fix it.
+      const memberIds = new Set(members.map(m => m.student_id));
+      let activeId = inst.active_student_id;
+
+      if (!activeId || !memberIds.has(activeId)) {
+        const connectedMember = members.find(m => !!m.connected);
+        const fallback = connectedMember?.student_id ?? members[0]?.student_id ?? null;
+
+        if (fallback !== null && fallback !== activeId) {
+          await db.query(
+            `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+            [fallback, inst.instance_id]
+          );
+          activeId = fallback;
+        }
+      }
 
       const [responses] = await db.query(
         `SELECT question_id, response FROM responses WHERE activity_instance_id = ?`,
@@ -518,7 +574,7 @@ async function getInstancesForActivityInCourse(req, res) {
           student_id: m.student_id,
           name: m.student_name,
           email: m.student_email,
-          role: roleLabels[m.role] || m.role, 
+          role: roleLabels[m.role] || m.role,
           connected: !!m.connected
         }))
 
