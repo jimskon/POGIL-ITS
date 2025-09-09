@@ -8,6 +8,57 @@ import { Form } from 'react-bootstrap';
 
 import { useState, useEffect } from 'react';
 
+// --- helpers ---
+const coerceDrive = (url) => {
+  // https://drive.google.com/file/d/<ID>/view?usp=...
+  const m1 = url.match(/drive\.google\.com\/file\/d\/([^/]+)/i);
+  if (m1) return `https://drive.google.com/uc?export=view&id=${m1[1]}`;
+  // https://drive.google.com/open?id=<ID>  OR any ?id=<ID>
+  const m2 = url.match(/[?&]id=([^&]+)/i);
+  if (m2) return `https://drive.google.com/uc?export=view&id=${m2[1]}`;
+  return url;
+};
+
+function ImgWithFallback({ src, alt, widthStyle, captionHtml }) {
+  const [errored, setErrored] = useState(false);
+
+  return (
+    <figure className="my-3">
+      {!errored ? (
+        <img
+          src={src}
+          alt={alt || ''}
+          style={{ maxWidth: '100%', height: 'auto', ...(widthStyle ? { width: widthStyle } : {}) }}
+          className="img-fluid rounded border"
+          onError={() => setErrored(true)}
+        />
+      ) : (
+        <div className="border rounded p-3 bg-light">
+          <div>⚠️ <strong>Image failed to load</strong></div>
+          <code style={{ wordBreak: 'break-all' }}>{src}</code>
+          <div className="mt-2">
+            <a href={src} target="_blank" rel="noopener noreferrer">Open image in new tab</a>
+          </div>
+          {/drive\.google\.com/i.test(src) && (
+            <div className="small text-muted mt-1">
+              Tip: Make sure the file is shared publicly or use a direct-view link:
+              <br />
+              <code>https://drive.google.com/uc?export=view&id=&lt;FILE_ID&gt;</code>
+            </div>
+          )}
+        </div>
+      )}
+
+      {captionHtml && (
+        <figcaption
+          className="text-muted small mt-1"
+          dangerouslySetInnerHTML={{ __html: captionHtml }}
+        />
+      )}
+    </figure>
+  );
+}
+
 export default function FileBlock({ filename, fileContents, editable, setFileContents }) {
   // ✅ Local editing buffer
   const [localValue, setLocalValue] = useState(fileContents?.[filename] || '');
@@ -131,6 +182,41 @@ export function parseSheetToBlocks(lines) {
       const url = linkMatch[1].trim();
       const label = linkMatch[2].trim();
       blocks.push({ type: 'link', url, label });
+      continue;
+    }
+
+    // Image: \image{url}{alt?}{size?}
+    // size can be "300" (px) or "50%" (%)
+    const imageMatch = trimmed.match(/^\\image\{([^}]+)\}(?:\{([^}]*)\})?(?:\{([^}]*)\})?$/);
+    if (imageMatch) {
+      flushCurrentBlock();
+      let url = imageMatch[1].trim();
+      const alt = (imageMatch[2] ?? '').trim();
+      const size = (imageMatch[3] ?? '').trim(); // e.g., "300" or "50%"
+
+      // Normalize common Google Drive links
+      if (/drive\.google\.com/i.test(url)) {
+        url = coerceDrive(url);
+      }
+
+      // basic allowlist: http(s) and data:image URIs
+      const safe = /^(https?:\/\/|data:image\/)/i.test(url);
+      if (safe) {
+        blocks.push({
+          type: 'image',
+          src: url,
+          altHtml: format(alt),     // caption (rich)
+          alt: stripHtml(alt),      // alt attribute (plain)
+          size
+        });
+      } else {
+        // Emit an explicit error block so the UI shows something
+        blocks.push({
+          type: 'imageError',
+          src: url,
+          reason: 'unsupported-scheme'
+        });
+      }
       continue;
     }
 
@@ -520,6 +606,32 @@ export function renderBlocks(blocks, options = {}) {
             {block.label}
           </a>
         </p>
+      );
+    }
+
+    if (block.type === 'image') {
+      let widthStyle;
+      if (block.size) {
+        if (/^\d+%$/.test(block.size)) widthStyle = block.size;       // percent
+        else if (/^\d+$/.test(block.size)) widthStyle = `${block.size}px`; // pixels
+      }
+
+      return (
+        <ImgWithFallback
+          key={`img-${index}`}
+          src={block.src}
+          alt={block.alt}
+          widthStyle={widthStyle}
+          captionHtml={block.altHtml}
+        />
+      );
+    }
+    if (block.type === 'imageError') {
+      return (
+        <div key={`imgerr-${index}`} className="border rounded p-3 bg-light my-3">
+          <div>⚠️ <strong>Image error</strong> — unsupported or unsafe source</div>
+          <code style={{ wordBreak: 'break-all' }}>{block.src}</code>
+        </div>
       );
     }
 
