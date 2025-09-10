@@ -129,3 +129,43 @@ def say_hello():
 
 \textit{Tip: Use meaningful function names to improve readability.}
 ```
+# AI Guidance for This System (Authoring Cheatsheet)
+
+| Guidance line to paste in `\aicodeguidance{...}` | Parsed flag (server) | Effect on feedback | Effect on follow-ups / gating | When to use / notes |
+|---|---|---|---|---|
+| **Follow-ups: none** | `followupGate = 'none'` | Model may give a 1-line hint (feedback), but **no follow-up questions** are ever shown. | **Never blocks** on follow-ups. Fatal errors still return feedback only. | Use for practice where you don’t want banners or extra questions. |
+| **Follow-ups: gibberish-only** | `followupGate = 'gibberish-only'` | Normal hints allowed; nitpicks filtered by other flags. | Follow-ups shown **only** if the answer is empty/gibberish/off-base. | Matches “don’t ask followups unless gibberish or way off.” |
+| **Follow-ups: default** | `followupGate = 'default'` | Normal hints allowed; nitpicks depend on other flags. | Model may ask a follow-up when it thinks it’s needed. | Stricter sessions (quizzes, checks for understanding). |
+| **Do not ask a follow up.** | `followupGate = 'none'` | Same as “Follow-ups: none”. | Same as “Follow-ups: none”. | Plain-English equivalent. |
+| **Requirements-only** | `requirementsOnly = true` | Filters **nitpicks**; feedback focuses on meeting the stated task only. | Combined with follow-up gate: doesn’t by itself block or allow. | Good for early courses; prevents scope creep. |
+| **Checker errors should not block progress (fail-open).** | `failOpen = true` | Suppresses non-fatal nags; treats small issues as **OK**. | With `gibberish-only`, only truly bad answers get a follow-up. | Lets partially-right work pass with a light hint. |
+| **Ignore spacing.** | `ignoreSpacing = true` | Hides spacing/formatting/style advice. | No effect on gating; just reduces noise. | Pair with “match sample output” only if you truly don’t care about spaces. |
+| **f-strings are unavailable; do not recommend them.** | `forbidFStrings = true` | Prevents suggestions to use f-strings. | No effect on gating. | Required for your Python runtime that lacks f-strings. |
+| **Do not require extra features.** | `noExtras = true` | Blocks “add feature/refactor/optimize” suggestions. | No effect on gating. | Keeps scope tight to the prompt. |
+| **Match the sample output exactly (labels and order).** | *(soft guidance)* | Encourages exact output; if **also** using “Ignore spacing”, spacing still won’t be enforced. | No direct effect; combine with stricter follow-ups if you want blocking. | For exams, omit “Ignore spacing” and use `Follow-ups: default`. |
+| **Use concise, single-sentence feedback only.** | *(soft guidance)* | Nudges the model to keep feedback short. | No direct effect. | Style preference; already aligned with server prompts. |
+| **No follow-up unless the answer is gibberish or off-prompt.** | → Prefer **“Follow-ups: gibberish-only”** | Same as that preset. | Same as that preset. | Write the explicit preset for guaranteed behavior. |
+
+---
+
+## Preset Combos (copy/paste into `\aicodeguidance{...}`)
+
+### Practice (very light touch)
+    Follow-ups: gibberish-only
+    Requirements-only
+    Ignore spacing.
+    Do not require extra features.
+    f-strings are unavailable; do not recommend them.
+    Checker errors should not block progress (fail-open).
+
+### Quiz (moderate)
+    Follow-ups: default
+    Requirements-only
+    Do not require extra features.
+    f-strings are unavailable; do not recommend them.
+
+### Exam (strict output)
+    Follow-ups: default
+    Match the sample output exactly (labels and order).
+    Do not require extra features.
+    f-strings are unavailable; do not recommend them.
