@@ -350,6 +350,16 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
     });
   }
 
+  // ---------- TEXT UTILS (top-level) ----------
+  function stripHtml(s = '') {
+    return s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/?[^>]+>/g, '');
+  }
+
+  function cleanLines(s = '') {
+    // remove HTML, trim left indentation and trailing spaces per line
+    return stripHtml(s).replace(/^\s+/mg, '').replace(/[ \t]+$/mg, '');
+  }
+
 
   async function loadActivity() {
     if (loadingRef.current) return;
@@ -467,10 +477,6 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         const aiCodeGuideBlock = blocks.find(
           (b) => b.type === "header" && b.tag === "aicodeguidance"
         );
-
-        // 1) ADD the helper here (or at top of file)
-        const stripHtml = (s = '') =>
-          s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/?[^>]+>/g, '');
 
         // 2) Convert the header content to plain text
         const activitycontext = stripHtml(activityContextBlock?.content || "");
@@ -602,7 +608,10 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         activitycontext: activity?.activitycontext || "Unnamed Activity",
         studentLevel: activity?.studentlevel || "intro",
       },
-      guidance: activity?.aicodeguidance || ""
+      guidance: [
+        questionBlock.feedback?.[0] || "",     // ← per-question policy FIRST
+        activity?.aicodeguidance || ""         // ← activity policy SECOND
+      ].filter(Boolean).join("\n")
     };
     console.log("📝 sending guidance:", (body.guidance || "").slice(0, 200));
     // ✅ Add console.log here
@@ -730,17 +739,24 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
             stripHtmlLocal(s).replace(/^\s+/mg, '').replace(/[ \t]+$/mg, '');
 
           // ⬇️ build a richer, cleaned guidance blob
-          const guidanceBlob = [
+          const perQuestionGuide = [
+            cleanLines(block.feedback?.[0] || ''),
+            cleanLines(block.samples?.[0] || ''),
+            'Environment constraint: f-strings are unavailable; do not suggest or use them.',
+            "Explicit override: Ignore spacing in prompts and around commas; do not request changes like 'remove an extra space' if the program meets the requirements."
+          ].filter(Boolean).join('\n');
+
+          const activityGuide = [
             activity?.aicodeguidance || '',
             activity?.activitycontext || '',
-            `Student level: ${activity?.studentlevel || 'intro'}`,
-            cleanLines(block.feedback?.[0] || ''),   // per-question rubric
-            cleanLines(block.samples?.[0] || ''),    // sample (trimmed per line)
-            "Explicit override: Ignore spacing in prompts and around commas; do not request changes like 'remove an extra space' if the program meets the requirements."
-          ].filter(Boolean).join('\n\n---\n\n');
+            `Student level: ${activity?.studentlevel || 'intro'}`
+          ].filter(Boolean).join('\n');
+
+          const guidanceBlob = `${perQuestionGuide}\n---\n${activityGuide}`;
 
           console.log('📝 guidance being sent (code submit):\n', guidanceBlob.slice(0, 800));
-
+          console.log('GUIDE_Q:', perQuestionGuide.slice(0, 200));
+          console.log('GUIDE_A:', activityGuide.slice(0, 200));
           const aiRes = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -847,8 +863,11 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
       const authoredFU = (block.followups?.[0] || '').trim();
       const feedbackGuide = (block.feedback?.[0] || '').trim();
-      const aiInput = block.hasTableResponse ? tableMarkdown : baseAnswer;
-
+      let aiInput = baseAnswer;
+      if (block.hasTableResponse && tableHasInput) {
+        aiInput = tableMarkdown;
+        answers[qid] = tableMarkdown;     // ← push to text response slot deliberately
+      }
       if (aiInput && !followupsShown[qid]) {
         // Let the server's stricter gate decide. No authored fallback.
         const aiFollowup = await evaluateResponseWithAI(block, aiInput, { forceFollowup: false });
@@ -1000,6 +1019,12 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
   }
 
   async function handleCodeChange(responseKey, updatedCode, meta = {}) {
+
+    if (!window.Sk || !skulptLoaded) {
+      // Save code only; skip evaluation until Skulpt is ready
+      socket?.emit('feedback:update', { instanceId, responseKey, feedback: null, followup: null });
+      return;
+    }
     try {
       // (1) Save code (unchanged)
       await fetch(`${API_BASE_URL}/api/responses/code`, {
@@ -1026,15 +1051,20 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
 
       // ✅ Build a rich guidance blob (match what you used in handleSubmit)
-      const guidanceBlob = [
-        activity?.aicodeguidance || '',
-        activity?.activitycontext || '',
-        `Student level: ${activity?.studentlevel || 'intro'}`,
-        cleanLines(meta?.feedbackPrompt || ''), // per-question rubric (if any)
-        // Hard guardrails so the model doesn't suggest f-strings or spacing nits
+      const perQuestionGuide = [
+        cleanLines(meta?.feedbackPrompt || ''),
         'Environment constraint: f-strings are unavailable; do not suggest or use them.',
         "Explicit override: Ignore spacing in prompts and around commas; do not request changes like 'remove an extra space' if the program meets the requirements."
-      ].filter(Boolean).join('\n\n---\n\n');
+      ].filter(Boolean).join('\n');
+
+      const activityGuide = [
+        activity?.aicodeguidance || '',
+        activity?.activitycontext || '',
+        `Student level: ${activity?.studentlevel || 'intro'}`
+      ].filter(Boolean).join('\n');
+
+      const guidanceBlob = `${perQuestionGuide}\n---\n${activityGuide}`;
+
 
       const isCodeOnly = !meta?.hasTextResponse && !meta?.hasTableResponse;
 
@@ -1042,7 +1072,8 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
       const qt = (meta?.questionText && meta.questionText.trim())
         ? meta.questionText.trim()
         : 'Write and run Python code.';
-
+console.log('GUIDE_Q:', perQuestionGuide.slice(0, 200));
+console.log('GUIDE_A:', activityGuide.slice(0, 200));
       const evalResp = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
