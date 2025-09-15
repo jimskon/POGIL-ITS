@@ -59,6 +59,39 @@ function ImgWithFallback({ src, alt, widthStyle, captionHtml }) {
   );
 }
 
+// Joins multi-line \tag{...} blocks into single logical lines by balancing braces.
+// Keeps everything else as-is. Works for any \SomeTag{ ... } (including section*, link, image, etc.)
+function collapseBracedCommands(rawLines) {
+  const startsTag = (s) =>
+    /^\s*\\(?:title|name|activitycontext|studentlevel|aicodeguidance|section\*?|questiongroup|question|sampleresponses|feedbackprompt|followupprompt|table|image|link|file)\{/.test(s);
+
+  const out = [];
+  let buf = null;
+  let depth = 0;
+
+  const braceDelta = (s) =>
+    (s.match(/\{/g)?.length || 0) - (s.match(/\}/g)?.length || 0);
+
+  for (const line of rawLines) {
+    if (buf === null) {
+      if (startsTag(line)) {
+        buf = line;
+        depth = braceDelta(line);
+        if (depth <= 0) { out.push(buf); buf = null; }
+      } else {
+        out.push(line);
+      }
+    } else {
+      // keep line breaks so you can render them later
+      buf += "\n" + line;
+      depth += braceDelta(line);
+      if (depth <= 0) { out.push(buf); buf = null; }
+    }
+  }
+  if (buf !== null) out.push(buf); // unclosed—let downstream code surface gracefully
+  return out;
+}
+
 export default function FileBlock({ filename, fileContents, editable, setFileContents }) {
   // ✅ Local editing buffer
   const [localValue, setLocalValue] = useState(fileContents?.[filename] || '');
@@ -100,6 +133,7 @@ export default function FileBlock({ filename, fileContents, editable, setFileCon
 
 export function parseSheetToBlocks(lines) {
   console.log("🧑‍💻 parseSheetToBlocks invoked");
+  lines = collapseBracedCommands(lines);
   const blocks = [];
   let groupNumber = 0;
   let questionLetterCode = 97;
@@ -176,7 +210,7 @@ export function parseSheetToBlocks(lines) {
         continue;
       }
     }
-    const linkMatch = trimmed.match(/^\\link\{(.+?)\}\{(.+?)\}$/);
+    const linkMatch = trimmed.match(/^\\link\{([\s\S]+?)\}\{([\s\S]+?)\}$/);
     if (linkMatch) {
       flushCurrentBlock();
       const url = linkMatch[1].trim();
@@ -290,38 +324,32 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    // Start of a (possibly multi-line) header
-    const headerStart = trimmed.match(/^\\(title|name|activitycontext|studentlevel|aicodeguidance)\{([\s\S]*)$/);
+    // Start of a header (now always single logical line thanks to collapseBracedCommands)
+    const headerStart = trimmed.match(/^\\(title|name|activitycontext|studentlevel|aicodeguidance)\{([\s\S]*?)\}$/);
     if (headerStart) {
       flushCurrentBlock();
       const tag = headerStart[1];
-      let rest = headerStart[2];
-      // single-line case: ends with }
-      if (/\}\s*$/.test(rest)) {
-        rest = rest.replace(/\}\s*$/, '');
-        blocks.push({ type: 'header', tag, content: format(rest) });
-      } else {
-        // multi-line: keep collecting until we see a closing }
-        openHeaderTag = tag;
-        if (rest) openHeaderBuf.push(rest);
-      }
+      const content = headerStart[2];
+      blocks.push({ type: 'header', tag, content: format(content) });
       continue;
     }
 
-    const sectionMatch = trimmed.match(/^\\section\*?\{(.+?)\}$/);
+    const sectionMatch = trimmed.match(/^\\section\*?\{([\s\S]+?)\}$/);
     if (sectionMatch) {
       flushCurrentBlock();
       blocks.push({ type: 'section', title: format(sectionMatch[1]) });
       continue;
     }
 
+    // questiongroup: \questiongroup{...}
     if (trimmed.startsWith('\\questiongroup{')) {
       flushCurrentBlock();
       groupNumber++;
       questionLetterCode = 97;
-      const content = trimmed.match(/\\questiongroup\{(.+?)\}/)?.[1] || '';
-      blocks.push({ type: 'groupIntro', groupId: groupNumber, content: format(content) });
-      continue;
+      const m = trimmed.match(/\\questiongroup\{([\s\S]+?)\}/);
+      const contentRaw = m ? m[1] : '';
+      const content = format(contentRaw.trimStart());
+      blocks.push({ type: 'groupIntro', groupId: groupNumber, content }); continue;
     }
 
     if (trimmed === '\\endquestiongroup') {
@@ -338,13 +366,14 @@ export function parseSheetToBlocks(lines) {
         : trimmed.slice(open + 1);
 
       const id = String.fromCharCode(questionLetterCode++);
+      const rawClean = raw.trimStart();
       currentQuestion = {
         type: 'question',
         id,
         groupId: groupNumber,
         label: `${id}.`,
         responseId: responseId++,
-        prompt: format(raw),
+        prompt: format(rawClean),
         responseLines: 1,
         samples: [],
         feedback: [],
@@ -379,20 +408,18 @@ export function parseSheetToBlocks(lines) {
     }
 
     if (trimmed.startsWith('\\sampleresponses{')) {
-      const match = trimmed.match(/\\sampleresponses\{(.+?)\}/);
-      if (match && currentQuestion) currentQuestion.samples.push(format(match[1]));
+      const m = trimmed.match(/\\sampleresponses\{([\s\S]+?)\}/);
+      if (m && currentQuestion) currentQuestion.samples.push(format(m[1]));
       continue;
     }
-
     if (trimmed.startsWith('\\feedbackprompt{')) {
-      const match = trimmed.match(/\\feedbackprompt\{(.+?)\}/);
-      if (match && currentQuestion) currentQuestion.feedback.push(format(match[1]));
+      const m = trimmed.match(/\\feedbackprompt\{([\s\S]+?)\}/);
+      if (m && currentQuestion) currentQuestion.feedback.push(format(m[1]));
       continue;
     }
-
     if (trimmed.startsWith('\\followupprompt{')) {
-      const match = trimmed.match(/\\followupprompt\{(.+?)\}/);
-      if (match && currentQuestion) currentQuestion.followups.push(format(match[1]));
+      const m = trimmed.match(/\\followupprompt\{([\s\S]+?)\}/);
+      if (m && currentQuestion) currentQuestion.followups.push(format(m[1]));
       continue;
     }
 
@@ -406,12 +433,9 @@ export function parseSheetToBlocks(lines) {
     // --- Handle tables ---
     if (trimmed.startsWith('\\table{')) {
       flushCurrentBlock();
-      const title = trimmed.match(/\\table\{(.+?)\}/)?.[1] || '';
-      const newTable = {
-        type: 'table',
-        title: format(title),
-        rows: [],
-      };
+      const m = trimmed.match(/\\table\{([\s\S]+?)\}/);
+      const title = m ? m[1] : '';
+      const newTable = { type: 'table', title: format(title), rows: [] };
 
       if (currentQuestion?.type === 'question') {
         if (!currentQuestion.tableBlocks) currentQuestion.tableBlocks = [];
@@ -857,30 +881,41 @@ export function renderBlocks(blocks, options = {}) {
             </div>
           ))}
 
-
-
           {showTextArea ? (
-            <Form.Control
-              as="textarea"
-              rows={Math.max((block.responseLines || 1), 2)}
-              value={prefill?.[responseKey]?.response || ''}
-              readOnly={
-                !editable ||
-                lockMainResponse ||
-                prefill?.[`${responseKey}S`] === 'complete' ||
-                prefill?.[`${responseKey}S`]?.response === 'complete'
-              } data-question-id={responseKey}
-              className="mt-2"
-              style={{ resize: 'vertical' }}
-              onChange={(e) => {
-                const val = e.target.value;
-                if (options.onTextChange) {
-                  options.onTextChange(responseKey, val);
-                }
-              }}
-            />
-
+            (() => {
+              const meta = {
+                questionText: stripHtml(block.prompt || ''),
+                sampleResponse: stripHtml(block.samples?.[0] || ''),
+                feedbackPrompt: stripHtml(block.feedback?.[0] || ''),
+                hasTextResponse: !!block.hasTextResponse,
+                hasTableResponse: !!block.hasTableResponse,
+              };
+              return (
+                <Form.Control
+                  as="textarea"
+                  rows={Math.max((block.responseLines || 1), 2)}
+                  value={prefill?.[responseKey]?.response || ''}
+                  readOnly={
+                    !editable ||
+                    lockMainResponse ||
+                    prefill?.[`${responseKey}S`] === 'complete' ||
+                    prefill?.[`${responseKey}S`]?.response === 'complete'
+                  }
+                  data-question-id={responseKey}
+                  className="mt-2"
+                  style={{ resize: 'vertical' }}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (options.onTextChange) {
+                      // 👇 pass meta as the 3rd arg
+                      options.onTextChange(responseKey, val, meta);
+                    }
+                  }}
+                />
+              );
+            })()
           ) : null}
+
 
           {mode === 'preview' && (
             <>

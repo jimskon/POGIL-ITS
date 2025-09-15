@@ -3,6 +3,9 @@ const express = require('express');
 const router = express.Router();
 const controller = require('./controller');
 
+// Clear ALL answers for a group (activity instance)
+router.delete('/:instanceId/responses', controller.clearResponsesForInstance);
+
 // ✅ Create a new activity instance
 router.post('/', controller.createActivityInstance);
 

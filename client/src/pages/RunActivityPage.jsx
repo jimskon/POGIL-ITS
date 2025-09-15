@@ -597,6 +597,9 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
   }
 
   async function evaluateResponseWithAI(questionBlock, studentAnswer, { forceFollowup = false } = {}) {
+
+    const codeContext =
+      (questionBlock.pythonBlocks?.map(py => py.content).join('\n\n')) || '';
     const body = {
       questionText: questionBlock.prompt,
       studentAnswer,
@@ -611,7 +614,8 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
       guidance: [
         questionBlock.feedback?.[0] || "",     // ← per-question policy FIRST
         activity?.aicodeguidance || ""         // ← activity policy SECOND
-      ].filter(Boolean).join("\n")
+      ].filter(Boolean).join("\n"),
+      codeContext,
     };
     console.log("📝 sending guidance:", (body.guidance || "").slice(0, 200));
     // ✅ Add console.log here
@@ -1072,8 +1076,8 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
       const qt = (meta?.questionText && meta.questionText.trim())
         ? meta.questionText.trim()
         : 'Write and run Python code.';
-console.log('GUIDE_Q:', perQuestionGuide.slice(0, 200));
-console.log('GUIDE_A:', activityGuide.slice(0, 200));
+      console.log('GUIDE_Q:', perQuestionGuide.slice(0, 200));
+      console.log('GUIDE_A:', activityGuide.slice(0, 200));
       const evalResp = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -14,6 +14,8 @@ export default function ViewGroupsPage() {
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [clearing, setClearing] = useState(new Set());
+
 
   // Live-edit state
   const [available, setAvailable] = useState([]);
@@ -59,6 +61,30 @@ export default function ViewGroupsPage() {
   useEffect(() => {
     if (courseId && activityId) refreshStudents();
   }, [courseId, activityId]);
+
+  const clearGroupAnswers = async (instanceId) => {
+    if (!window.confirm('Clear all saved answers for this group? This cannot be undone.')) return;
+    const next = new Set(clearing); next.add(instanceId); setClearing(next);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/responses`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include' // keep if you use cookie auth, otherwise harmless
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Failed');
+
+      // Re-fetch groups so progress badges update
+      const r = await fetch(`${API_BASE_URL}/api/activity-instances/by-activity/${courseId}/${activityId}`);
+      const d = await r.json();
+      setGroups(Array.isArray(d.groups) ? d.groups : []);
+    } catch (e) {
+      console.error('❌ Clear answers failed', e);
+      alert('Failed to clear answers.');
+    } finally {
+      const n2 = new Set(clearing); n2.delete(instanceId); setClearing(n2);
+    }
+  };
 
   const handleAdd = async () => {
     if (!selectedAdd) return;
@@ -164,6 +190,14 @@ export default function ViewGroupsPage() {
                       {group.progress === 'Complete' ? '✅ Activity Complete' : `Question Group: ${group.progress}`}
                     </strong>
                   </div>
+                  <Button
+                    variant="outline-danger"
+                    size="sm"
+                    disabled={clearing.has(group.instance_id)}
+                    onClick={() => clearGroupAnswers(group.instance_id)}
+                  >
+                    {clearing.has(group.instance_id) ? 'Clearing…' : 'Clear Answers'}
+                  </Button>
                   <Button
                     variant="primary"
                     size="sm"

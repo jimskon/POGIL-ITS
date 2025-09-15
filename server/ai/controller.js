@@ -52,7 +52,6 @@ function looksGibberish(ans) {
 function derivePolicyFromGuidance(guidanceText = '') {
   const g = stripHtml(guidanceText).toLowerCase();
   const explicitFU = (g.match(/follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i) || [])[1];
-
   const noFollowups = /do not ask a follow up/.test(g);
   const requirementsOnly = /requirements-only/.test(g);
   const ignoreSpacing = /ignore spacing/.test(g);
@@ -61,14 +60,10 @@ function derivePolicyFromGuidance(guidanceText = '') {
   const noExtras = /do not require extra features|do not require extras/.test(g);
 
   // If not explicitly “no followups”, default to gibberish-only followups when requirements-only/fail-open vibe is present.
-  let followupGate;
-  if (explicitFU) {
-    followupGate = explicitFU.toLowerCase();          // explicit wins
-  } else if (noFollowups) {
-    followupGate = 'none';
-  } else {
-    followupGate = (requirementsOnly || failOpen) ? 'gibberish-only' : 'default';
-  }
+  // Prefer "default" unless explicitly set to "none".
+  const followupGate = explicitFU
+    ? explicitFU.toLowerCase()
+    : (noFollowups ? 'none' : 'default');
 
   return {
     followupGate,           // 'none' | 'gibberish-only' | 'default'
@@ -121,7 +116,8 @@ async function evaluateStudentResponse(req, res) {
     followupPrompt = "",
     forceFollowup = false,
     context = {},
-    guidance = ""
+    guidance = "",
+    codeContext = ""        // 👈 NEW: optional code shown with the question
   } = req.body || {};
 
   if (!questionText || studentAnswer == null) {
@@ -133,75 +129,39 @@ async function evaluateStudentResponse(req, res) {
     const questionGuide = stripHtml(feedbackPrompt || '');
     const policy = getEffectivePolicy(activityGuide, questionGuide);
 
-    // Respect activity policy for follow-ups
+    // Respect explicit "no follow-ups"
     if (policy.followupGate === 'none' && !forceFollowup) {
       return res.status(200).json({ followupQuestion: null, meta: { reason: 'policy_no_followups' } });
     }
 
-    // If per-question says "gibberish-only", only follow up on gibberish/no-attempt.
-    if (policy.followupGate === 'gibberish-only' && !forceFollowup) {
-      if (!looksGibberish(studentAnswer)) {
-        return res.status(200).json({ followupQuestion: null, meta: { reason: 'policy_gibberish_only_pass' } });
-      }
-    }
-
-
-    // Otherwise, ask model with a strict gate
-    const ctxName = context.activityContext || context.activitycontext || 'Unnamed Activity';
-    const ctxLevel = context.studentLevel || 'intro level';
-    // (Keep authored followup hint if you want; it won’t be used unless the model decides to ask)
-    // ⬇️ add this right after `const sys = [...] .join('\n');`
-    const authored = String(followupPrompt || '').trim();
-    const guide = (feedbackPrompt && feedbackPrompt.toLowerCase() !== 'none') ? feedbackPrompt : '';
-
-    const extraGuidance = [
-      guide ? `Optional guidance you MAY use: "${guide}".` : '',
-      authored ? `If you do ask, bias toward: "${authored}" (rewrite; don’t quote).` : ''
-    ].filter(Boolean).join('\n');
-
+    // 🔎 Let the model judge coherence, relevance, wrong, overly simple, missing artifact.
+    //    (No early return on "gibberish-only".)
     const sys = [
-      'You are an AI tutor for a POGIL class.',
-      questionGuide ? `Per-question guidance (authoritative; do not quote):\n${questionGuide}` : '',
-      activityGuide ? `Activity guidance (fallback; do not quote):\n${activityGuide}` : '',
-      'Do not invent requirements not in the question or guidance.',
-      'Judge the **structure/logic** of the response, not whether a Boolean evaluates to True/False.',
-      'Never ask students to change test values just to flip a result.',
-      'If the student’s answer reasonably addresses the task, do NOT ask a follow-up.',
-      'Return ONLY valid JSON per the schema — no extra text.'
+      'You are a concise, supportive grading assistant for an intro programming class.',
+      'Judge answers by whether they are coherent, on-topic, and meet the prompt’s intent.',
+      'Accept partial/approximate answers that show understanding.',
+      'Ask at most ONE follow-up only when the answer is incoherent, off-prompt, clearly wrong overall, overly simple for the task, or missing a required artifact (e.g., pasted output/tests).',
+      'No nitpicks about style/naming/spacing/performance. Ignore extra features.',
+      'This Python environment does NOT support f-strings.',
+      questionGuide ? `Per-question guidance (do not quote): ${questionGuide}` : '',
+      activityGuide ? `Activity guidance (do not quote): ${activityGuide}` : '',
+      'Return ONLY the JSON per the schema.',
     ].filter(Boolean).join('\n');
 
-    const gate = [
-      'ASK ONLY IF one of these is true:',
-      '1) GIBBERISH / NO-ATTEMPT ("idk", empty, nonsense, copy of prompt)',
-      '2) OFF-PROMPT / NOT CLOSE (does not address the asked task/logic)',
-      '3) CLEARLY WRONG OVERALL (not a nitpick; substantially incorrect)',
-      'If NONE apply — even if partially wrong — do NOT ask.',
-      'Short numeric/string/Boolean answers can be sufficient.'
-    ].join(' ');
+    const schema = `Return JSON only:
+{"decision":"accept"|"followup","reason":"incoherent"|"off_prompt"|"wrong"|"overly_simple"|"missing_artifact","followup":null|string,"confidence":number}`;
 
-    const decisionHint = forceFollowup
-      ? 'Set "decision":"ask".'
-      : 'Set "decision":"no" if the gate does not apply.';
-
-    const jsonSchema = [
-      'Return JSON only:',
-      '{"decision":"ask"|"no","question": string|null}',
-      'If "decision" is "no", question MUST be null.',
-      'If "decision" is "ask", question MUST be one short tutor-style question (5–25 words).'
-    ].join(' ');
-
-    const user = `
-Context: ${ctxName} (${ctxLevel})
-
-${gate}
-${decisionHint}
-${jsonSchema}
-
-Question: ${questionText}
-Student's answer: "${studentAnswer}"
-Sample (ideal) answer (for your reference): "${sampleResponse}"
-${extraGuidance ? `\n${extraGuidance}` : ''}
-`.trim();
+    const user = [
+      `Question: ${stripHtml(questionText)}`,
+      codeContext ? `Shown code:\n${stripHtml(codeContext)}` : '',
+      sampleResponse ? `Reference (optional): ${stripHtml(sampleResponse)}` : '',
+      `Student's submission:\n${stripHtml(studentAnswer)}`,
+      '',
+      schema,
+      forceFollowup ? 'If uncertain, prefer "followup".' : 'If reasonable, prefer "accept".',
+      'Follow-up must be ≤2 short sentences and encouraging/actionable.',
+      'For “paste outputs/tests” prompts, require actual console output from multiple runs if the prompt asks.',
+    ].join('\n');
 
     const chat = await openai.chat.completions.create({
       model: MODEL,
@@ -210,7 +170,7 @@ ${extraGuidance ? `\n${extraGuidance}` : ''}
         { role: 'user', content: user },
       ],
       temperature: 0.2,
-      max_tokens: 150,
+      max_tokens: 180,
     });
 
     const raw = (chat.choices?.[0]?.message?.content ?? '').trim();
@@ -222,45 +182,38 @@ ${extraGuidance ? `\n${extraGuidance}` : ''}
       return res.status(200).json({ followupQuestion: null, meta: { reason: 'unparsable' } });
     }
 
-    if ((obj.decision || '').toLowerCase() !== 'ask') {
-      return res.status(200).json({ followupQuestion: null });
-    }
+    const decision = String(obj.decision || '').toLowerCase();
+    let question = obj.followup ? String(obj.followup).trim() : null;
+    const reason = obj.reason || '';
 
-    let question = (obj.question ?? '').toString().trim();
-
+    // Suppress “change the input value” nags if your guides say not to
     const forbidValueNags =
-      /\bjudge\b.*\blogic\b.*\bnot\b.*\b(true|false|result)\b/i.test(
-        `${questionGuide || ''} ${activityGuide || ''}`
-      ) ||
-      /\bdo not ask\b.*\bchange\b.*\bvalues?\b/i.test(
-        `${questionGuide || ''} ${activityGuide || ''}`
-      );
-
-    // requires the helper from section A:
-    if (forbidValueNags && mentionsValueTweak(question)) {
-      return res.status(200).json({ followupQuestion: null, meta: { reason: 'value_change_suppressed' } });
+      /\bjudge\b.*\blogic\b.*\bnot\b.*\b(true|false|result)\b/i.test(`${questionGuide} ${activityGuide}`) ||
+      /\bdo not ask\b.*\bchange\b.*\bvalues?\b/i.test(`${questionGuide} ${activityGuide}`);
+    if (forbidValueNags && question && mentionsValueTweak(question)) {
+      question = null;
     }
 
-    if (!question) return res.status(200).json({ followupQuestion: null });
+    // Drop soft, nudge-y fluff
+    if (isSoft(question) && !isFatal(question)) question = null;
 
-    // Final server-side suppression if it looks like soft advice
-    if (isSoft(question) && !isFatal(question)) {
-      return res.status(200).json({ followupQuestion: null, meta: { reason: 'soft_suppressed' } });
+    if (decision !== 'followup' || !question) {
+      return res.status(200).json({ followupQuestion: null, meta: { reason: 'accepted' } });
     }
 
-    // Keep short; end at first '?'
+    // Keep it short (≤25 words) and end at the first '?'
     const qIdx = question.indexOf('?');
     if (qIdx >= 0) question = question.slice(0, qIdx + 1);
     const words = question.split(/\s+/);
     if (words.length > 25) question = words.slice(0, 25).join(' ') + '?';
 
-    return res.status(200).json({ followupQuestion: question });
-
+    return res.status(200).json({ followupQuestion: question, meta: { reason } });
   } catch (err) {
     console.error('❌ OpenAI evaluate-response failed:', err);
     return res.status(200).json({ followupQuestion: null, meta: { reason: 'ai_unavailable' } });
   }
 }
+
 
 async function evaluatePythonCode(req, res) {
   const { questionText, studentCode, codeVersion, guidance = "", isCodeOnly = false } = req.body;

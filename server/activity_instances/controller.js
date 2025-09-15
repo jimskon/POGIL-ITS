@@ -86,6 +86,29 @@ function parseGoogleDocHTML(html) {
 
 // ========== ROUTE CONTROLLERS ==========
 
+// add near other handlers
+async function clearResponsesForInstance(req, res) {
+  const instanceId = Number(req.params.instanceId);
+  if (!instanceId) return res.status(400).json({ error: 'Bad instance id' });
+
+  try {
+    // Delete all saved answers (main, followups, states) for this group (instance)
+    const [del] = await db.query(
+      `DELETE FROM responses WHERE activity_instance_id = ?`,
+      [instanceId]
+    );
+
+    // If you keep any cached progress fields, reset them here (optional)
+    // e.g. await db.query(`UPDATE activity_instances SET progress = NULL WHERE id = ?`, [instanceId]);
+
+    res.json({ ok: true, cleared: del.affectedRows || 0 });
+  } catch (e) {
+    console.error('clearResponsesForInstance error:', e);
+    res.status(500).json({ error: 'Failed to clear responses' });
+  }
+}
+
+
 async function getParsedActivityDoc(req, res) {
   const { instanceId } = req.params;
   try {
@@ -657,6 +680,7 @@ async function refreshTotalGroups(req, res) {
 
 // Export it as part of the module
 module.exports = {
+  clearResponsesForInstance,
   getParsedActivityDoc,
   createActivityInstance,
   getActivityInstanceById,
