@@ -94,18 +94,22 @@ CREATE TABLE IF NOT EXISTS group_members (
 );
 
 --- Responses
-CREATE TABLE responses (
-  id INT AUTO_INCREMENT PRIMARY KEY,
 
-  activity_instance_id INT NOT NULL,
-  question_id VARCHAR(50) NOT NULL,  -- TEXT can't be indexed for UNIQUE; use VARCHAR
-  response_type ENUM('text', 'python', 'cpp') NOT NULL DEFAULT 'text',
-  response TEXT NOT NULL,
-
-  submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-
-  answered_by_user_id INT NOT NULL,
+Create Table: CREATE TABLE `responses` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `activity_instance_id` int(11) NOT NULL,
+  `question_id` text NOT NULL,
+  `response_type` enum('text','python','cpp') NOT NULL DEFAULT 'text',
+  `response` text NOT NULL,
+  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `answered_by_user_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `activity_instance_id` (`activity_instance_id`),
+  KEY `answered_by_user_id` (`answered_by_user_id`),
+  CONSTRAINT `responses_ibfk_1` FOREIGN KEY (`activity_instance_id`) REFERENCES `activity_instances` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `responses_ibfk_2` FOREIGN KEY (`answered_by_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=3539544 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 
   -- Foreign Keys
   FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE,
@@ -121,13 +125,15 @@ CREATE TABLE responses (
 
 
 -- AI Feedback
-CREATE TABLE IF NOT EXISTS feedback (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  response_id INT,
-  feedback_text TEXT NOT NULL,
-  generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (response_id) REFERENCES responses(id)
-);
+Create Table: CREATE TABLE `feedback` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `response_id` int(11) DEFAULT NULL,
+  `feedback_text` text NOT NULL,
+  `generated_at` timestamp NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `feedback_ibfk_1` (`response_id`),
+  CONSTRAINT `feedback_ibfk_1` FOREIGN KEY (`response_id`) REFERENCES `responses` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=1435 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 
 -- AI Follow-ups
 CREATE TABLE IF NOT EXISTS followups (
