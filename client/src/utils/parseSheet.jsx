@@ -19,6 +19,14 @@ const coerceDrive = (url) => {
   return url;
 };
 
+const formatTimeLimit = (ms) => {
+  if (ms == null) return '';
+  if (ms % 60000 === 0) return `${ms / 60000} min`;
+  if (ms >= 60000) return `${(ms / 60000).toFixed(1)} min`;
+  if (ms % 1000 === 0) return `${ms / 1000} s`;
+  return `${ms} ms`;
+};
+
 function ImgWithFallback({ src, alt, widthStyle, captionHtml }) {
   const [errored, setErrored] = useState(false);
 
@@ -714,21 +722,31 @@ export function renderBlocks(blocks, options = {}) {
         hasTableResponse: !!block.hasTableResponse,
       };
 
+      const tl = block.timeLimit ?? 50000;
+      const showTL = mode === 'preview';
 
       return (
-        <ActivityPythonBlock
-          key={`py-${index}-${block.content?.slice(0, 10) || ''}`}
-          code={prefill?.[codeKey]?.response || block.content || ''}
-          blockIndex={`py-${codeKey}-${index}`}
-          editable={editable && isActive}
-          responseKey={codeKey}
-          // 👇 forward meta so the server sees the actual task
-          onCodeChange={(rk, code) => onCodeChange && onCodeChange(rk, code, meta)}
-          codeFeedbackShown={codeFeedbackShown}
-          fileContents={fileContents}
-          setFileContents={setFileContents}
-          timeLimit={block.timeLimit || 50000}
-        />
+        <div key={`py-${index}-${block.content?.slice(0, 10) || ''}`}>
+          {mode === 'preview' && (
+            <div className="text-muted small mb-1">
+              ⏱ Time limit: {formatTimeLimit(tl)}
+            </div>
+          )}
+
+          <ActivityPythonBlock
+            key={`py-${index}-${block.content?.slice(0, 10) || ''}`}
+            code={prefill?.[codeKey]?.response || block.content || ''}
+            blockIndex={`py-${codeKey}-${index}`}
+            editable={editable && isActive}
+            responseKey={codeKey}
+            // 👇 forward meta so the server sees the actual task
+            onCodeChange={(rk, code) => onCodeChange && onCodeChange(rk, code, meta)}
+            codeFeedbackShown={codeFeedbackShown}
+            fileContents={fileContents}
+            setFileContents={setFileContents}
+            timeLimit={block.timeLimit || 50000}
+          />
+        </div>
       );
     }
 
@@ -822,21 +840,30 @@ export function renderBlocks(blocks, options = {}) {
               hasTableResponse: !!block.hasTableResponse,
             };
 
+            const tl = py.timeLimit ?? block.timeLimit ?? 50000;
 
             return (
-              <ActivityPythonBlock
-                key={`q-${block.groupId}-${block.id}-py-${i}`}
-                code={savedResponse}
-                blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}
-                editable={editable && isActive}
-                responseKey={responseKey}
-                onCodeChange={(rk, code) => onCodeChange && onCodeChange(rk, code, meta)}
-                codeFeedbackShown={codeFeedbackShown}
-                fileContents={fileContents}
-                setFileContents={setFileContents}
-                timeLimit={py.timeLimit ?? block.timeLimit ?? 50000}
-              />
+              <div key={`q-${block.groupId}-${block.id}-py-${i}`}>
+                {mode === 'preview' && (
+                  <div className="text-muted small mb-1">
+                    ⏱ Time limit: {formatTimeLimit(tl)}
+                  </div>
+                )}
+                <ActivityPythonBlock
+                  key={`q-${block.groupId}-${block.id}-py-${i}`}
+                  code={savedResponse}
+                  blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}
+                  editable={editable && isActive}
+                  responseKey={responseKey}
+                  onCodeChange={(rk, code) => onCodeChange && onCodeChange(rk, code, meta)}
+                  codeFeedbackShown={codeFeedbackShown}
+                  fileContents={fileContents}
+                  setFileContents={setFileContents}
+                  timeLimit={py.timeLimit ?? block.timeLimit ?? 50000}
+                />
+              </div>
             );
+
           })}
 
           {block.tableBlocks?.map((table, i) => (

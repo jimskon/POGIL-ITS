@@ -10,6 +10,11 @@ function stripHtml(s = '') {
   return String(s).replace(/<br\s*\/?>/gi, '\n').replace(/<\/?[^>]+>/g, '');
 }
 
+const noFollowups = (s) => /^\s*(none|no\s*follow-?ups?|no\s*feedback)\s*$/i
+  .test(String(s || '').trim());
+
+const isNone = s => /^\s*none\s*$/i.test(String(s || '').trim());
+
 const FATAL_PATTERNS = [
   /Traceback/i, /SyntaxError/i, /NameError/i, /TypeError/i, /ZeroDivisionError/i,
   /\bruntimeerror\b/i, /\binfinite loop\b/i, /\bwon'?t run\b/i, /\bdoes not run\b/i
@@ -50,7 +55,21 @@ function looksGibberish(ans) {
 
 // Parse the free-text \aicodeguidance into flags
 function derivePolicyFromGuidance(guidanceText = '') {
-  const g = stripHtml(guidanceText).toLowerCase();
+  const g = stripHtml(guidanceText).toLowerCase().trim();
+
+  // Treat a bare "none" (or synonyms) as "no follow-ups"
+  if (/^(none|no\s*follow-?ups?|no\s*follow\s*ups?)$/.test(g)) {
+    return {
+      followupGate: 'none',
+      // These flags should NOT read from g here—just default them.
+      requirementsOnly: false,
+      ignoreSpacing: false,
+      forbidFStrings: false,
+      failOpen: false,
+      noExtras: false,
+    };
+  }
+  //const g = stripHtml(guidanceText).toLowerCase();
   const explicitFU = (g.match(/follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i) || [])[1];
   const noFollowups = /do not ask a follow up/.test(g);
   const requirementsOnly = /requirements-only/.test(g);
@@ -120,6 +139,13 @@ async function evaluateStudentResponse(req, res) {
     codeContext = ""        // 👈 NEW: optional code shown with the question
   } = req.body || {};
 
+  if (String(feedbackPrompt).trim().toLowerCase() === "none") {
+    return res.status(200).json({ feedback: null, followup: null, verdict: "minor" });
+  }
+  const qp = String(feedbackPrompt || '').trim().toLowerCase();
+  if (/^(none|no\s*follow-?ups?|no\s*follow\s*ups?)$/.test(qp) && !forceFollowup) {
+    return res.status(200).json({ followupQuestion: null, meta: { reason: 'policy_no_followups' } });
+  }
   if (!questionText || studentAnswer == null) {
     return res.status(200).json({ followupQuestion: null, meta: { reason: 'missing_fields' } });
   }
@@ -216,9 +242,16 @@ async function evaluateStudentResponse(req, res) {
 
 
 async function evaluatePythonCode(req, res) {
-  const { questionText, studentCode, codeVersion, guidance = "", isCodeOnly = false } = req.body;
+  const { questionText, studentCode, codeVersion, guidance = "", isCodeOnly = false, feedbackPrompt = "" } = req.body;
+
+  if (isNone(feedbackPrompt)) {
+    return res.status(200).json({ feedback: null, followup: null, verdict: 'minor' });
+  }
   if (!questionText || !studentCode) {
     return res.status(400).json({ error: 'Missing question text or student code' });
+  }
+  if (String(feedbackPrompt).trim().toLowerCase() === "none") {
+    return res.status(200).json({ feedback: null, followup: null, verdict: "minor" });
   }
 
   const combinedGuide = stripHtml(guidance || '');
@@ -344,13 +377,19 @@ function getEffectivePolicy(activityGuide, questionGuide) {
   const a = derivePolicyFromGuidance(activityGuide);
   const q = derivePolicyFromGuidance(questionGuide);
 
-  const qFU = (questionGuide.match(/follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i) || [])[1];
-  const aFU = (activityGuide.match(/follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i) || [])[1];
-  const followupGate = (qFU || aFU || a.followupGate).toLowerCase();
+  const qBareNone = /^\s*(none|no\s*follow-?ups?|no\s*follow\s*ups?)\s*$/i
+    .test(stripHtml(questionGuide || ''));
+
+  const qFU = (String(questionGuide || '').match(/follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i) || [])[1];
+  const aFU = (String(activityGuide || '').match(/follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i) || [])[1];
+
+  const followupGate = qBareNone
+    ? 'none'
+    : (qFU || aFU || q.followupGate || a.followupGate || 'default').toLowerCase();
 
   // For other flags, let per-question override when it explicitly mentions them; otherwise inherit.
   const pick = (flag, regex) => {
-    const qMentions = new RegExp(regex, 'i').test(questionGuide);
+    const qMentions = new RegExp(regex, 'i').test(String(questionGuide || ''));
     return qMentions ? q[flag] : a[flag];
   };
 
@@ -364,6 +403,7 @@ function getEffectivePolicy(activityGuide, questionGuide) {
   };
 }
 
+
 // server/ai/controller.js
 
 // Keep the helpers added earlier: stripHtml, derivePolicyFromGuidance, isFatal, isSoft
@@ -374,11 +414,14 @@ async function evaluateCode({
   codeVersion,
   guidance = "",      // pass \aicodeguidance text here
   isCodeOnly = false, // true if this is a pure code question (allows a short follow-up only if policy permits)
+  feedbackPrompt = "",
 }) {
   if (!questionText || !studentCode) {
     return { feedback: null, followup: null };
   }
-
+  if (String(feedbackPrompt).trim().toLowerCase() === "none") {
+    return { feedback: null, followup: null };
+  }
   const combined = stripHtml(guidance || '');
   const parts = combined.split(/\n-{3,}\n/);     // '---' splitter
   const qGuide = parts[0] || "";

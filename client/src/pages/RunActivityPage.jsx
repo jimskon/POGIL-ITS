@@ -16,6 +16,13 @@ const roleLabels = {
   qc: 'Quality Control'
 };
 
+function isNoAI(val) {
+  return String(val ?? '').trim().toLowerCase() === 'none';
+}
+
+
+
+
 export default function RunActivityPage({ setRoleLabel, setStatusText, groupMembers, setGroupMembers, activeStudentId, setActiveStudentId, }) {
   const [lastEditTs, setLastEditTs] = useState(0);
   const { instanceId } = useParams();
@@ -30,6 +37,8 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
   const fileContentsRef = useRef(fileContents);
   const loadingRef = useRef(false);
   const codeVersionsRef = useRef({});   // track versions per responseKey
+  const qidsNoFURef = useRef(new Set());
+
 
 
 
@@ -443,18 +452,23 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
       }));
 
 
-      const newFollowupsShown = {};
+      // Rebuild followupsShown now that qidsNoFURef is known
+      const filteredFollowupsShown = {};
       for (const [qid, entry] of Object.entries(answersData)) {
         if (qid.endsWith('F1')) {
           const baseQid = qid.replace('F1', '');
-          newFollowupsShown[baseQid] = entry.response;
+          if (!qidsNoFURef.current.has(baseQid)) {
+            filteredFollowupsShown[baseQid] = entry.response;
+          }
         }
       }
+      // Also purge any stale banners for QIDs that are in the no-FU set
+      setFollowupsShown(prev => {
+        const next = { ...prev, ...filteredFollowupsShown };
+        for (const qid of qidsNoFURef.current) delete next[qid];
+        return next;
+      });
 
-      setFollowupsShown(prev => ({
-        ...prev,
-        ...newFollowupsShown
-      }));
 
 
       // Step 6: Parse Google Doc structure
@@ -584,6 +598,18 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         }
 
         setGroups(grouped);
+        const noSet = new Set();
+        for (const g of grouped) {
+          for (const b of [g.intro, ...(g.content || [])]) {
+            if (b?.type === 'question') {
+              const qid = `${b.groupId}${b.id}`;
+              if (isNoAI(b?.followups?.[0]) || isNoAI(b?.feedback?.[0])) {
+                noSet.add(qid);
+              }
+            }
+          }
+        }
+        qidsNoFURef.current = noSet;
         setPreamble(preamble);
 
       }
@@ -597,7 +623,10 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
   }
 
   async function evaluateResponseWithAI(questionBlock, studentAnswer, { forceFollowup = false } = {}) {
-
+    const feedbackRaw = stripHtml(questionBlock.feedback?.[0] || '');
+    if (isNoAI(questionBlock?.followups?.[0]) || isNoAI(questionBlock?.feedback?.[0])) {
+      return null; // <- hard stop: do not generate a followup
+    }
     const codeContext =
       (questionBlock.pythonBlocks?.map(py => py.content).join('\n\n')) || '';
     const body = {
@@ -755,7 +784,15 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
             activity?.activitycontext || '',
             `Student level: ${activity?.studentlevel || 'intro'}`
           ].filter(Boolean).join('\n');
-
+          
+          // HARD STOP for questions with feedbackprompt/followups = none
+          if (isNoAI(block?.feedback?.[0]) || isNoAI(block?.followups?.[0])) {
+            // Save the code and mark the item complete without asking the AI
+            codeBlocks.forEach((code, i) => answers[`${qid}code${i + 1}`] = code);
+            answers[`${qid}S`] = 'completed';
+            setFollowupsShown(prev => { const copy = { ...prev }; delete copy[qid]; return copy; });
+            continue; // skip evaluator call
+          }
           const guidanceBlob = `${perQuestionGuide}\n---\n${activityGuide}`;
 
           console.log('📝 guidance being sent (code submit):\n', guidanceBlob.slice(0, 800));
@@ -897,6 +934,13 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
           setIsSubmitting(false);
           return;
         }
+      } else {
+        // ensure no stale banner if author wrote \followupprompt{none} or \feedback{none}
+        setFollowupsShown(prev => {
+          const next = { ...prev };
+          delete next[qid];
+          return next;
+        });
       }
 
 
@@ -1023,6 +1067,18 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
   }
 
   async function handleCodeChange(responseKey, updatedCode, meta = {}) {
+    // SHORT-CIRCUIT: do not evaluate code if this question is marked none
+    const baseQid = String(responseKey).replace(/code\d+$/, '');
+    if (qidsNoFURef.current?.has(baseQid)) {
+      // Save UI state: clear any inline/banners, don't call the AI
+      socket?.emit('feedback:update', {
+        instanceId,
+        responseKey,
+        feedback: null,
+        followup: null
+      });
+      return;
+    }
 
     if (!window.Sk || !skulptLoaded) {
       // Save code only; skip evaluation until Skulpt is ready
