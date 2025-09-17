@@ -13,7 +13,10 @@ export default function ActivityPythonBlock({
   codeFeedbackShown = {},
   fileContents,
   setFileContents,
-  timeLimit, // <-- new prop
+  timeLimit,               // existing
+  turtleTargetId,          // optional (only for \pythonturtle)
+  turtleWidth = 600,       // optional
+  turtleHeight = 400,      // optional
 }) {
   const [code, setCode] = useState(initialCode);
   const [savedCode, setSavedCode] = useState(initialCode);
@@ -52,7 +55,11 @@ export default function ActivityPythonBlock({
       fileContents: currentFiles,
       setOutput: setOutputText,
       setFileContents,
-      execLimit: timeLimit || 50000
+      execLimit: timeLimit || 50000,
+      // these are harmless when undefined (normal \python blocks)
+      turtleTargetId,
+      turtleWidth,
+      turtleHeight,
     });
   };
 

@@ -71,8 +71,7 @@ function ImgWithFallback({ src, alt, widthStyle, captionHtml }) {
 // Keeps everything else as-is. Works for any \SomeTag{ ... } (including section*, link, image, etc.)
 function collapseBracedCommands(rawLines) {
   const startsTag = (s) =>
-    /^\s*\\(?:title|name|activitycontext|studentlevel|aicodeguidance|section\*?|questiongroup|question|sampleresponses|feedbackprompt|followupprompt|table|image|link|file)\{/.test(s);
-
+    /^\s*\\(?:title|name|activitycontext|studentlevel|aicodeguidance|section\*?|questiongroup|question|sampleresponses|feedbackprompt|followupprompt|table|image|link|file|pythonturtle)\{/.test(s);
   const out = [];
   let buf = null;
   let depth = 0;
@@ -283,6 +282,7 @@ export function parseSheetToBlocks(lines) {
     }
 
     const pythonMatch = trimmed.match(/^\\python(?:\{(\d+)\})?$/);
+    const turtleMatch = trimmed.match(/^\\pythonturtle(?:\{(\d+)\s*(?:[x,])\s*(\d+)\})?$/i);
     if (pythonMatch) {
       flushCurrentBlock();
       currentField = 'python';
@@ -299,20 +299,35 @@ export function parseSheetToBlocks(lines) {
 
       continue;
     }
+    if (turtleMatch) {
+      flushCurrentBlock();
+      currentField = 'pythonturtle';
+      const w = turtleMatch[1] ? parseInt(turtleMatch[1]) : 600;
+      const h = turtleMatch[2] ? parseInt(turtleMatch[2]) : 400;
+      const blockObj = { type: 'pythonturtle', lines: [], width: w, height: h, timeLimit: 50000 };
+      if (currentQuestion && currentQuestion.type === 'question') {
+        if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
+        currentQuestion.pythonBlocks.push(blockObj);
+      } else {
+        blocks.push(blockObj);
+      }
+      continue;
+    }
 
-
-    if (trimmed === '\\endpython') {
-      if (currentField === 'python') {
+    if (trimmed === '\\endpython' || trimmed === '\\endpythonturtle') {
+      if (currentField === 'python' || currentField === 'pythonturtle') {
         const lastBlock = blocks.at(-1);
-        if (lastBlock?.type === 'python' && lastBlock.lines) {
+        if ((lastBlock?.type === 'python' || lastBlock?.type === 'pythonturtle') && lastBlock.lines) {
           lastBlock.content = lastBlock.lines.join('\n');
           delete lastBlock.lines;
         } else if (currentQuestion?.pythonBlocks?.length > 0) {
           const block = currentQuestion.pythonBlocks.pop();
           currentQuestion.pythonBlocks.push({
-            type: 'python',
+            type: currentField,
             content: block.lines.join('\n'),
-            timeLimit: block.timeLimit || 50000
+            timeLimit: block.timeLimit || 50000,
+            width: block.width,
+            height: block.height,
           });
 
         }
@@ -321,9 +336,9 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    if (currentField === 'python') {
+    if (currentField === 'python' || currentField === 'pythonturtle') {
       const lastBlock = blocks.at(-1);
-      if (lastBlock?.type === 'python' && lastBlock.lines) {
+      if ((lastBlock?.type === 'python' || lastBlock?.type === 'pythonturtle') && lastBlock.lines) {
         lastBlock.lines.push(line);
       } else if (currentQuestion?.pythonBlocks?.length > 0) {
         const lastQuestionBlock = currentQuestion.pythonBlocks.at(-1);
@@ -690,7 +705,64 @@ export function renderBlocks(blocks, options = {}) {
       );
     }
 
+    if (block.type === 'pythonturtle') {
+      const groupPrefix = (currentGroupIndex + 1).toString();
+      const codeKey = `${groupPrefix}code${standaloneCodeCounter++}`;
+      const turtleId = `sk-turtle-${groupPrefix}-${index}`;
 
+      // Context text like you do for python
+      const prevContext = [...blocks].slice(0, index).reverse().find(b =>
+        (b.type === 'section') ||
+        (b.type === 'text') ||
+        (b.type === 'header' && (b.tag === 'title' || b.tag === 'activitycontext'))
+      );
+      const questionText =
+        prevContext?.type === 'section' ? prevContext.title :
+          prevContext?.type === 'text' ? prevContext.content :
+            prevContext?.type === 'header' ? prevContext.content :
+              'Write and run Python code.';
+
+      const meta = {
+        questionText: stripHtml(questionText),
+        sampleResponse: '',
+        feedbackPrompt: '',
+        hasTextResponse: !!block.hasTextResponse,
+        hasTableResponse: !!block.hasTableResponse,
+      };
+
+      const tl = block.timeLimit ?? 50000;
+      const w = block.width ?? 600;
+      const h = block.height ?? 400;
+
+      return (
+        <div key={`pyt-${index}`}>
+          {mode === 'preview' && (
+            <div className="text-muted small mb-1">
+              ⏱ Time limit: {formatTimeLimit(tl)} · 🐢 {w}×{h}
+            </div>
+          )}
+          {/* Turtle canvas mount */}
+          <div id={turtleId} style={{ width: w, height: h, border: '1px solid #ddd', borderRadius: 6, marginBottom: 8 }} />
+
+          <ActivityPythonBlock
+            key={`pyt-${index}-${block.content?.slice(0, 10) || ''}`}
+            code={prefill?.[codeKey]?.response || block.content || ''}
+            blockIndex={`pyt-${codeKey}-${index}`}
+            editable={editable && isActive}
+            responseKey={codeKey}
+            onCodeChange={(rk, code) => onCodeChange && onCodeChange(rk, code, meta)}
+            codeFeedbackShown={codeFeedbackShown}
+            fileContents={fileContents}
+            setFileContents={setFileContents}
+            timeLimit={tl}
+            // 👇 pass through for the runner
+            turtleTargetId={turtleId}
+            turtleWidth={w}
+            turtleHeight={h}
+          />
+        </div>
+      );
+    }
 
     if (block.type === 'python') {
       const groupPrefix = (currentGroupIndex + 1).toString();
@@ -829,7 +901,10 @@ export function renderBlocks(blocks, options = {}) {
           {block.pythonBlocks?.map((py, i) => {
             const responseKey = `${block.groupId}${block.id}code${i + 1}`;
             const savedResponse = prefill?.[responseKey]?.response || py.content;
-
+            const isTurtle = py.type === 'pythonturtle';
+            const turtleId = isTurtle ? `sk-turtle-${block.groupId}${block.id}-${i}` : null;
+            const w = py.width ?? 600;
+            const h = py.height ?? 400;
             const isCodeOnly = !block.hasTextResponse && !block.hasTableResponse;
 
             const meta = {
@@ -849,6 +924,10 @@ export function renderBlocks(blocks, options = {}) {
                     ⏱ Time limit: {formatTimeLimit(tl)}
                   </div>
                 )}
+                {/* For turtle blocks, render a canvas mount just above */}
+                {isTurtle && (
+                  <div id={turtleId} style={{ width: w, height: h, border: '1px solid #ddd', borderRadius: 6, marginBottom: 8 }} />
+                )}
                 <ActivityPythonBlock
                   key={`q-${block.groupId}-${block.id}-py-${i}`}
                   code={savedResponse}
@@ -860,6 +939,9 @@ export function renderBlocks(blocks, options = {}) {
                   fileContents={fileContents}
                   setFileContents={setFileContents}
                   timeLimit={py.timeLimit ?? block.timeLimit ?? 50000}
+                  turtleTargetId={isTurtle ? turtleId : undefined}
+                  turtleWidth={w}
+                  turtleHeight={h}
                 />
               </div>
             );

@@ -1,4 +1,14 @@
-export async function runSkulptCode({ code, fileContents, setOutput, setFileContents, execLimit = 50000 }) {
+export async function runSkulptCode({
+  code,
+  fileContents,
+  setOutput,
+  setFileContents,
+  execLimit = 50000,
+  // NEW (all optional): when present, enables turtle drawing
+  turtleTargetId = null,
+  turtleWidth = 600,
+  turtleHeight = 400,
+}) {
   setOutput('');
 
   if (!window.Sk || !Sk.configure) {
@@ -165,16 +175,33 @@ def open(filename, mode='r'):
     }
   }
 
-try {
-  Sk.execLimit = execLimit;
-  Sk.python3 = true;
-  //console.log("🚀 Running with fileContents:", fileContents); 
-  await Sk.misceval.asyncToPromise(() => {
-    return Sk.importMainWithBody('<stdin>', false, finalCode, true);
-  });
-} catch (e) {
-  const errText = formatSkErrorOffset(e, injectedLineCount);
-  setOutput(prev => prev + "\n❌ Error:\n" + errText);
-}
+  // --- NEW: configure Turtle target if requested ---
+  if (turtleTargetId) {
+    const mount = document.getElementById(turtleTargetId);
+    if (mount) mount.innerHTML = ''; // clear prior canvases
+    // Point Skulpt turtle at our mount
+    window.Sk.TurtleGraphics = {
+      target: turtleTargetId,
+      width: turtleWidth,
+      height: turtleHeight,
+    };
+  } else {
+    // Ensure a normal run doesn't inherit a prior turtle target
+    if (window.Sk && window.Sk.TurtleGraphics) {
+      try { delete window.Sk.TurtleGraphics; } catch { }
+    }
+  }
+
+  try {
+    Sk.execLimit = execLimit;
+    Sk.python3 = true;
+    //console.log("🚀 Running with fileContents:", fileContents); 
+    await Sk.misceval.asyncToPromise(() => {
+      return Sk.importMainWithBody('<stdin>', false, finalCode, true);
+    });
+  } catch (e) {
+    const errText = formatSkErrorOffset(e, injectedLineCount);
+    setOutput(prev => prev + "\n❌ Error:\n" + errText);
+  }
 
 }
