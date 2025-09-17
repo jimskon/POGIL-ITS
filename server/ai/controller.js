@@ -7,8 +7,11 @@ const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini'; // keep model configura
 
 // ---------- Policy helpers driven by activity guidance ----------
 function stripHtml(s = '') {
-  return String(s).replace(/<br\s*\/?>/gi, '\n').replace(/<\/?[^>]+>/g, '');
+  return String(s)
+    .replace(/<br\s*\/?>/gi, '\n')       // keep <br> → newline
+    .replace(/<\/?[A-Za-z!][^>]*>/g, ''); // strip only real tags, not "< 1" or "> 10"
 }
+
 
 const noFollowups = (s) => /^\s*(none|no\s*follow-?ups?|no\s*feedback)\s*$/i
   .test(String(s || '').trim());

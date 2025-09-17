@@ -361,7 +361,10 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
   // ---------- TEXT UTILS (top-level) ----------
   function stripHtml(s = '') {
-    return s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/?[^>]+>/g, '');
+    return String(s)
+      .replace(/<br\s*\/?>/gi, '\n')                           // keep <br> as newline
+      .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')  // drop script/style blocks
+      .replace(/<\/?[A-Za-z][A-Za-z0-9-]*(\s[^<>]*?)?>/g, ''); // strip real tags only
   }
 
   function cleanLines(s = '') {
@@ -767,7 +770,11 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         const studentCode = codeBlocks.join('\n\n');
         try {
           const stripHtmlLocal = (s = '') =>
-            s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/?[^>]+>/g, '');
+            String(s)
+              .replace(/<br\s*\/?>/gi, '\n')
+              .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+              .replace(/<\/?[A-Za-z][A-Za-z0-9-]*(\s[^<>]*?)?>/g, '');
+
           const cleanLines = (s = '') =>
             stripHtmlLocal(s).replace(/^\s+/mg, '').replace(/[ \t]+$/mg, '');
 
@@ -784,7 +791,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
             activity?.activitycontext || '',
             `Student level: ${activity?.studentlevel || 'intro'}`
           ].filter(Boolean).join('\n');
-          
+
           // HARD STOP for questions with feedbackprompt/followups = none
           if (isNoAI(block?.feedback?.[0]) || isNoAI(block?.followups?.[0])) {
             // Save the code and mark the item complete without asking the AI
