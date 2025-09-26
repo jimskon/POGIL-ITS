@@ -38,6 +38,18 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
   const loadingRef = useRef(false);
   const codeVersionsRef = useRef({});   // track versions per responseKey
   const qidsNoFURef = useRef(new Set());
+  const [codeViewMode, setCodeViewMode] = useState({});   // { responseKey: 'active'|'local' }
+  const [localCode, setLocalCode] = useState({});         // { responseKey: string }
+
+  // compute isActive first…
+  const isActive = user && user.id === activeStudentId;
+  const isObserver = !isActive;
+
+  const toggleCodeViewMode = (rk, next) =>
+    setCodeViewMode(prev => ({ ...prev, [rk]: next }));
+
+  const updateLocalCode = (rk, code) =>
+    setLocalCode(prev => ({ ...prev, [rk]: code }));
 
 
 
@@ -52,8 +64,6 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
   const [skulptLoaded, setSkulptLoaded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-
-  const isActive = user && user.id === activeStudentId;
   const isInstructor = user?.role === 'instructor' || user?.role === 'root' || user?.role === 'creator';
 
 
@@ -1074,6 +1084,20 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
   }
 
   async function handleCodeChange(responseKey, updatedCode, meta = {}) {
+    if (!isActive) return;   // observers in "local" mode won’t call this, but guard anyway
+    // broadcast code immediately so observers see it without polling
+    setExistingAnswers(prev => ({
+      ...prev,
+      [responseKey]: { ...(prev[responseKey] || {}), response: updatedCode, type: 'text' }
+    }));
+    socket?.emit('response:update', {
+      instanceId,
+      responseKey,
+      value: updatedCode,
+      answeredBy: user.id
+    });
+    // typing-only broadcast: observers update live, skip save/eval spam
+    if (meta?.__broadcastOnly) return;
     // SHORT-CIRCUIT: do not evaluate code if this question is marked none
     const baseQid = String(responseKey).replace(/code\d+$/, '');
     if (qidsNoFURef.current?.has(baseQid)) {
@@ -1090,7 +1114,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
     if (!window.Sk || !skulptLoaded) {
       // Save code only; skip evaluation until Skulpt is ready
       socket?.emit('feedback:update', { instanceId, responseKey, feedback: null, followup: null });
-      return;
+      // we already emitted response:update above, so observers still see code
     }
     try {
       // (1) Save code (unchanged)
@@ -1221,6 +1245,13 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
           mode: 'run',
           codeFeedbackShown,
           isInstructor,
+          allowLocalToggle: true,
+          isObserver: !isActive,
+          codeViewMode,
+          onToggleViewMode: toggleCodeViewMode,
+          localCode,
+          onLocalCodeChange: updateLocalCode,
+          prefill: existingAnswers,
         })}
 
         {groups.map((group, index) => {
@@ -1269,6 +1300,12 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
                 onCodeChange: handleCodeChange,
                 codeFeedbackShown,
                 isInstructor,
+                allowLocalToggle: true,
+                isObserver,
+                codeViewMode,
+                onToggleViewMode: toggleCodeViewMode,
+                localCode,
+                onLocalCodeChange: updateLocalCode,
                 onTextChange: (responseKey, value) => {
                   if (responseKey.endsWith('FA1')) {
                     // 🔄 Follow-up response: update followupAnswers

@@ -105,6 +105,7 @@ def open(filename, mode='r'):
     inputfunTakesPrompt: true,
 
     __future__: {
+      python3: true,
       nested_scopes: true,
       generators: true,
       division: true,

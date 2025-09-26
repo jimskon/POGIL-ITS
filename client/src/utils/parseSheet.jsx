@@ -157,6 +157,7 @@ export function parseSheetToBlocks(lines) {
   // NEW: multi-line header support (e.g., \aicodeguidance{ ... \n ... \n })
   let openHeaderTag = null;
   let openHeaderBuf = [];
+  let inGroup = false;
 
   const flushCurrentBlock = () => {
     if (currentBlock.length > 0) {
@@ -294,8 +295,10 @@ export function parseSheetToBlocks(lines) {
         if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
         currentQuestion.pythonBlocks.push(blockObj);
       } else {
-        blocks.push(blockObj);
+        blocks.push({ ...blockObj, localOnly: !inGroup });
       }
+
+
 
       continue;
     }
@@ -309,7 +312,7 @@ export function parseSheetToBlocks(lines) {
         if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
         currentQuestion.pythonBlocks.push(blockObj);
       } else {
-        blocks.push(blockObj);
+         blocks.push({ ...blockObj, localOnly: !inGroup });
       }
       continue;
     }
@@ -368,6 +371,7 @@ export function parseSheetToBlocks(lines) {
     if (trimmed.startsWith('\\questiongroup{')) {
       flushCurrentBlock();
       groupNumber++;
+      inGroup = true; 
       questionLetterCode = 97;
       const m = trimmed.match(/\\questiongroup\{([\s\S]+?)\}/);
       const contentRaw = m ? m[1] : '';
@@ -377,6 +381,7 @@ export function parseSheetToBlocks(lines) {
 
     if (trimmed === '\\endquestiongroup') {
       blocks.push({ type: 'endGroup' });
+      inGroup = false;
       continue;
     }
 
@@ -555,8 +560,11 @@ export function renderBlocks(blocks, options = {}) {
   const {
     editable = false,
     isActive = false,
+    isObserver = false,
+    isInstructor = false,
+    allowLocalToggle = true,
     prefill = {},
-    mode = 'preview',
+    mode: runMode = 'preview',
     currentGroupIndex = null,
     followupsShown = {},
     followupAnswers = {},
@@ -571,7 +579,7 @@ export function renderBlocks(blocks, options = {}) {
   const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
 
   return blocks.map((block, index) => {
-    if (hiddenTypes.includes(block.type) && mode !== 'preview') return null;
+    if (hiddenTypes.includes(block.type) && runMode !== 'preview') return null;
     if (block.type === 'endGroup') return null;
 
     // 🔹 Render headers (title/name/activitycontext/studentlevel) inline where they appear
@@ -579,8 +587,7 @@ export function renderBlocks(blocks, options = {}) {
       // Hide metadata headers from students in RUN mode.
       // In PREVIEW mode (authoring), show to everyone.
       const isMeta = HIDE_FROM_STUDENTS_HEADERS.has(block.tag);
-      const isPreview = mode === 'preview';
-      const isInstructor = !!options.isInstructor;
+      const isPreview = runMode === 'preview';
 
       if (!isPreview && isMeta && !isInstructor) {
         // Student in RUN mode → hide these headers
@@ -706,7 +713,39 @@ export function renderBlocks(blocks, options = {}) {
     }
 
     if (block.type === 'pythonturtle') {
-      const groupPrefix = (currentGroupIndex + 1).toString();
+      // Local-only top-level turtle: no DB keys, no prefill, always reflect sheet
+      if (block.localOnly) {
+        const tl = block.timeLimit ?? 50000;
+        const w = block.width ?? 600;
+        const h = block.height ?? 400;
+        const localKey = `localpyt-${index}-${(block.content || '').length}`; // re-mount on content change
+        const turtleId = `sk-turtle-${localKey}`;
+        const canEdit = true; // always editable locally
+
+        return (
+          <div key={localKey}>
+            {runMode === 'preview' && (
+              <div className="text-muted small mb-1">
+                ⏱ Time limit: {formatTimeLimit(tl)} · 🐢 {w}×{h} · <span className="badge bg-secondary">Local (not saved)</span>
+              </div>
+            )}
+            <div id={turtleId} style={{ width: w, height: h, border: '1px solid #ddd', borderRadius: 6, marginBottom: 8 }} />
+            <ActivityPythonBlock
+              code={block.content || ''}           // ← always the sheet content
+              blockIndex={localKey}
+              editable={canEdit}
+              localOnly={true}                     // ← tell the component it's ephemeral
+              fileContents={fileContents}
+              setFileContents={setFileContents}
+              timeLimit={tl}
+              turtleTargetId={turtleId}
+              turtleWidth={w}
+              turtleHeight={h}
+            />
+          </div>
+        );
+      }
+      const groupPrefix = String((currentGroupIndex ?? 0) + 1);
       const codeKey = `${groupPrefix}code${standaloneCodeCounter++}`;
       const turtleId = `sk-turtle-${groupPrefix}-${index}`;
 
@@ -733,25 +772,52 @@ export function renderBlocks(blocks, options = {}) {
       const tl = block.timeLimit ?? 50000;
       const w = block.width ?? 600;
       const h = block.height ?? 400;
+      // --- toggle plumbing (same as python) ---
+      const isObserver = !!options.isObserver;
+      const allowToggle = !!allowLocalToggle && (options.isObserver || isInstructor);
+      const viewMode = options.codeViewMode?.[codeKey] || 'active'; // 'active' | 'local'
+      const activeCode = (prefill?.[codeKey]?.response ?? block.content ?? '');
+      const displayedCode = (allowToggle && viewMode === 'local')
+        ? (options.localCode?.[codeKey] ?? activeCode)
+        : activeCode;
+      const canEdit = (editable && isActive) || (allowToggle && viewMode === 'local');
 
       return (
         <div key={`pyt-${index}`}>
-          {mode === 'preview' && (
+          {runMode === 'preview' && (
             <div className="text-muted small mb-1">
               ⏱ Time limit: {formatTimeLimit(tl)} · 🐢 {w}×{h}
             </div>
           )}
           {/* Turtle canvas mount */}
           <div id={turtleId} style={{ width: w, height: h, border: '1px solid #ddd', borderRadius: 6, marginBottom: 8 }} />
-
+          {allowToggle && (
+            <div className="d-flex justify-content-end mb-1">
+              <button
+                type="button"
+                className="btn btn-sm btn-outline-secondary"
+                onClick={() => options.onToggleViewMode?.(codeKey, viewMode === 'active' ? 'local' : 'active')}
+                title="Switch between following the active student and a private sandbox"
+              >
+                {viewMode === 'active' ? 'Follow Active' : 'Local Sandbox'}
+              </button>
+            </div>
+          )}
           <ActivityPythonBlock
-            key={`pyt-${index}-${block.content?.slice(0, 10) || ''}`}
-            code={prefill?.[codeKey]?.response || block.content || ''}
+            key={`pyt-${index}-${activeCode.slice(0, 10)}`}
+            code={displayedCode}
             blockIndex={`pyt-${codeKey}-${index}`}
-            editable={editable && isActive}
+            editable={canEdit}
             responseKey={codeKey}
-            onCodeChange={(rk, code) => onCodeChange && onCodeChange(rk, code, meta)}
-            codeFeedbackShown={codeFeedbackShown}
+            onCodeChange={(rk, code, extra) => {
+
+              // observers in Local mode: keep it client-side only
+              if (allowToggle && viewMode === 'local' && !isActive) {
+                options.onLocalCodeChange?.(rk, code);
+                return;
+              }
+              onCodeChange && onCodeChange(rk, code, { ...meta, ...extra });
+            }} codeFeedbackShown={codeFeedbackShown}
             fileContents={fileContents}
             setFileContents={setFileContents}
             timeLimit={tl}
@@ -765,7 +831,31 @@ export function renderBlocks(blocks, options = {}) {
     }
 
     if (block.type === 'python') {
-      const groupPrefix = (currentGroupIndex + 1).toString();
+      // Local-only top-level python: no DB keys, no prefill, always reflect sheet
+      if (block.localOnly) {
+        const tl = block.timeLimit ?? 50000;
+        const localKey = `localpy-${index}-${(block.content || '').length}`; // re-mount on content change
+        const canEdit = true; // always editable locally
+        return (
+          <div key={localKey}>
+            {runMode === 'preview' && (
+              <div className="text-muted small mb-1">
+                ⏱ Time limit: {formatTimeLimit(tl)} · <span className="badge bg-secondary">Local (not saved)</span>
+              </div>
+            )}
+            <ActivityPythonBlock
+              code={block.content || ''}   // ← always the sheet content
+              blockIndex={localKey}
+              editable={canEdit}
+              localOnly={true}             // ← no persistence
+              fileContents={fileContents}
+              setFileContents={setFileContents}
+              timeLimit={tl}
+            />
+          </div>
+        );
+      }
+      const groupPrefix = String((currentGroupIndex ?? 0) + 1);
       const codeKey = `${groupPrefix}code${standaloneCodeCounter++}`;
 
       // find a nearby bit of human text to use as the "question"
@@ -795,24 +885,52 @@ export function renderBlocks(blocks, options = {}) {
       };
 
       const tl = block.timeLimit ?? 50000;
-      const showTL = mode === 'preview';
+
+      const codeMode = options.codeViewMode?.[codeKey] || 'active';
+      const showToggle = !!allowLocalToggle && (options.isObserver || isInstructor);
+      // what code to show
+      const activeCode = prefill?.[codeKey]?.response || block.content || '';
+      const displayedCode = (showToggle && codeMode === 'local')
+        ? (options.localCode?.[codeKey] ?? activeCode)
+        : activeCode;
+      // who can edit?
+      const canEdit = (editable && isActive) || (showToggle && codeMode === 'local');
+      const showTL = runMode === 'preview';
 
       return (
         <div key={`py-${index}-${block.content?.slice(0, 10) || ''}`}>
-          {mode === 'preview' && (
+          {runMode === 'preview' && (
             <div className="text-muted small mb-1">
               ⏱ Time limit: {formatTimeLimit(tl)}
             </div>
           )}
-
+          {showToggle && (
+            <div className="d-flex justify-content-end mb-1">
+              <button
+                type="button"
+                className="btn btn-sm btn-outline-secondary"
+                onClick={() => options.onToggleViewMode?.(codeKey, codeMode === 'active' ? 'local' : 'active')}
+                title="Switch between following the active student and a private sandbox"
+              >
+                {codeMode === 'active' ? 'Follow Active' : 'Local Sandbox'}
+              </button>
+            </div>
+          )}
           <ActivityPythonBlock
             key={`py-${index}-${block.content?.slice(0, 10) || ''}`}
-            code={prefill?.[codeKey]?.response || block.content || ''}
+            code={displayedCode}
             blockIndex={`py-${codeKey}-${index}`}
-            editable={editable && isActive}
+            editable={canEdit}
             responseKey={codeKey}
             // 👇 forward meta so the server sees the actual task
-            onCodeChange={(rk, code) => onCodeChange && onCodeChange(rk, code, meta)}
+            onCodeChange={(rk, code, extra) => {
+              // local sandbox -> store locally, no network
+              if (showToggle && codeMode === 'local' && !isActive) {
+                options.onLocalCodeChange?.(rk, code);
+                return;
+              }
+              onCodeChange && onCodeChange(rk, code, { ...meta, ...extra });
+            }}
             codeFeedbackShown={codeFeedbackShown}
             fileContents={fileContents}
             setFileContents={setFileContents}
@@ -906,7 +1024,13 @@ export function renderBlocks(blocks, options = {}) {
             const w = py.width ?? 600;
             const h = py.height ?? 400;
             const isCodeOnly = !block.hasTextResponse && !block.hasTableResponse;
+            const codeMode = options.codeViewMode?.[responseKey] || 'active';
+            const showToggle = !!allowLocalToggle && (options.isObserver || isInstructor);
 
+            const displayedCode = (showToggle && codeMode === 'local')
+              ? (options.localCode?.[responseKey] ?? savedResponse)
+              : savedResponse;
+            const canEdit = (editable && isActive) || (showToggle && codeMode === 'local');
             const meta = {
               questionText: stripHtml(block.prompt || ''),                 // ✅ use the question’s prompt
               sampleResponse: stripHtml(block.samples?.[0] || ''),         // ✅ include per-question sample
@@ -919,7 +1043,7 @@ export function renderBlocks(blocks, options = {}) {
 
             return (
               <div key={`q-${block.groupId}-${block.id}-py-${i}`}>
-                {mode === 'preview' && (
+                {runMode === 'preview' && (
                   <div className="text-muted small mb-1">
                     ⏱ Time limit: {formatTimeLimit(tl)}
                   </div>
@@ -928,13 +1052,30 @@ export function renderBlocks(blocks, options = {}) {
                 {isTurtle && (
                   <div id={turtleId} style={{ width: w, height: h, border: '1px solid #ddd', borderRadius: 6, marginBottom: 8 }} />
                 )}
+                {showToggle && (
+                  <div className="d-flex justify-content-end mb-1">
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-secondary"
+                      onClick={() => options.onToggleViewMode?.(responseKey, codeMode === 'active' ? 'local' : 'active')}
+                    >
+                      {codeMode === 'active' ? 'Follow Active' : 'Local Sandbox'}
+                    </button>
+                  </div>
+                )}
                 <ActivityPythonBlock
                   key={`q-${block.groupId}-${block.id}-py-${i}`}
-                  code={savedResponse}
+                  code={displayedCode}
                   blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}
-                  editable={editable && isActive}
+                  editable={canEdit}
                   responseKey={responseKey}
-                  onCodeChange={(rk, code) => onCodeChange && onCodeChange(rk, code, meta)}
+                  onCodeChange={(rk, code, extra) => {
+                    if (showToggle && codeMode === 'local' && !isActive) {
+                      options.onLocalCodeChange?.(rk, code);
+                      return;
+                    }
+                    onCodeChange && onCodeChange(rk, code, { ...meta, ...extra });
+                  }}
                   codeFeedbackShown={codeFeedbackShown}
                   fileContents={fileContents}
                   setFileContents={setFileContents}
@@ -1026,7 +1167,7 @@ export function renderBlocks(blocks, options = {}) {
           ) : null}
 
 
-          {mode === 'preview' && (
+          {runMode === 'preview' && (
             <>
               {block.samples?.length > 0 && <p className="text-muted"><em>Sample: {block.samples.join('; ')}</em></p>}
               {block.feedback?.length > 0 && <p className="text-muted"><em>Feedback: {block.feedback.join('; ')}</em></p>}
