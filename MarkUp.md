@@ -28,6 +28,40 @@
 | `\begin{enumerate}`  | Start numbered list      |                                        |
 | `\end{enumerate}`    | End numbered list        |                                        |
 
+# Table Blocks in POGIL Markup
+
+POGIL-ITS supports tables using a custom LaTeX-style syntax.  
+Tables are useful for presenting structured data, student responses, or fill-in exercises.
+
+---
+
+## Table Structure
+
+A table is defined between `\table{}` and `\endtable`.
+
+- The **argument to `\table{}`** is an optional caption (shown above the table).
+- Each **row** of the table begins with `\row`.
+- Inside a row, **cells are separated with `&`**.
+- All rows should contain the **same number of cells** for proper rendering.
+
+---
+
+## The `\row` Command
+
+- A `\row` starts a new row in the table.
+- Cell contents are separated by `&`.
+- You can use **plain text** for static cells, or **special commands** like `\tresponse` for input fields.
+- The **first row** is usually used for **headers**.
+
+### Basic Example
+
+```text
+\table{Example Table}
+\row Name & Age & Major
+\row Alice & 20 & \tresponse
+\row Bob   & 21 & Computer Science
+\endtable
+
 ## Python Code
 | Syntax        | Description                  | Example                                |
 |---------------|------------------------------|----------------------------------------|
