@@ -61,6 +61,7 @@ A table is defined between `\table{}` and `\endtable`.
 \row Alice & 20 & \tresponse
 \row Bob   & 21 & Computer Science
 \endtable
+```
 
 ## Python Code
 | Syntax        | Description                  | Example                                |
