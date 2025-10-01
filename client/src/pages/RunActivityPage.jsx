@@ -11,6 +11,11 @@ import { API_BASE_URL } from '../config';
 import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
 import { io } from 'socket.io-client';
 
+// --- DEBUG ---
+const DEBUG_FILES = false;   // flip to false to silence
+const PAGE_TAG = 'RUN';
+
+
 // Map short role keys to full names
 const roleLabels = {
   qc: 'Quality Control'
@@ -96,13 +101,29 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
 
   const handleUpdateFileContents = (updaterFn) => {
     setFileContents((prev) => {
+      const before = Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, (v ?? '').length]));
       const updated = updaterFn(prev);
+      const after = Object.fromEntries(Object.entries(updated).map(([k, v]) => [k, (v ?? '').length]));
+      if (DEBUG_FILES) {
+        // show only changed files
+        const changed = Object.keys(after).filter(k => before[k] !== after[k]);
+        console.debug(`[${PAGE_TAG}] handleUpdateFileContents → changed:`,
+          changed.map(k => `${k}: ${before[k] ?? 0}→${after[k]}`));
+      }
       fileContentsRef.current = updated;
       return updated;
     });
   };
 
   useEffect(() => { fileContentsRef.current = fileContents; }, [fileContents]);
+
+  useEffect(() => {
+    if (!DEBUG_FILES) return;
+    const sizes = Object.fromEntries(
+      Object.entries(fileContents).map(([k, v]) => [k, (v ?? '').length])
+    );
+    console.debug(`[${PAGE_TAG}] fileContents changed:`, sizes);
+  }, [fileContents]);
 
   useEffect(() => {
     const interval = setInterval(async () => {
@@ -189,7 +210,9 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
   useEffect(() => {
     if (!socket) return;
 
-    const handleUpdate = ({ responseKey, value, followupPrompt }) => {
+    const handleUpdate = ({ responseKey, value, followupPrompt, answeredBy }) => {
+      // Ignore our own echo
+      if (answeredBy && String(answeredBy) === String(user?.id)) return;
       if (responseKey.endsWith('FA1')) {
         const qid = responseKey.replace('FA1', '');
         const attemptsKey = `${qid}attempts`;
@@ -534,16 +557,26 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
             files[block.filename] = block.content || "";  // Preserve even empty files
           }
         }
+        if (DEBUG_FILES) {
+          console.debug(`[${PAGE_TAG}] authored files discovered:`, Object.keys(files));
+        }
         setFileContents(prev => {
-          const updated = { ...files };
-          for (const [name, content] of Object.entries(prev)) {
-            updated[name] = content; // Keep existing edits
+          // start from previous (which includes Skulpt writes)
+          const updated = { ...prev };
+          // add any new files discovered in the doc (don’t overwrite existing)
+          for (const [name, content] of Object.entries(files)) {
+            if (!(name in updated)) updated[name] = content ?? "";
+          }
+          if (DEBUG_FILES) {
+            const before = Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, (v ?? '').length]));
+            const after = Object.fromEntries(Object.entries(updated).map(([k, v]) => [k, (v ?? '').length]));
+            console.debug(`[${PAGE_TAG}] merge authored → state (sizes)`, { before, after });
           }
           fileContentsRef.current = updated;
           return updated;
         });
 
-        fileContentsRef.current = files;
+        // fileContentsRef.current = files;  Don't reset files on reload
 
         // --- NEW: group/preamble logic that supports sections between groups ---
         const grouped = [];
@@ -1084,6 +1117,7 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
   }
 
   async function handleCodeChange(responseKey, updatedCode, meta = {}) {
+    setLastEditTs(Date.now());
     if (!isActive) return;   // observers in "local" mode won’t call this, but guard anyway
     // broadcast code immediately so observers see it without polling
     setExistingAnswers(prev => ({
@@ -1282,6 +1316,10 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
                 })
               }
               <p><strong>{index + 1}.</strong> {group.intro.content}</p>
+              {DEBUG_FILES && console.debug(
+                `[${PAGE_TAG}] renderBlocks(group ${index + 1}) file sizes:`,
+                Object.fromEntries(Object.entries(fileContents).map(([k, v]) => [k, (v ?? '').length]))
+              )}
               {renderBlocks(group.content, {
                 editable,
                 isActive,
@@ -1358,9 +1396,17 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
         })}
 
         {groups.length > 0 && currentQuestionGroupIndex === groups.length && (
-          <Alert variant="success">All groups complete! Review your responses above.</Alert>
+          <Alert variant="success">All questions complete! Review your responses above.</Alert>
         )}
       </Container>
+      {DEBUG_FILES && (
+        <div className="small text-muted" style={{ whiteSpace: 'pre-wrap' }}>
+          <strong>🧪 Files:</strong>{' '}
+          {Object.keys(fileContents).length === 0 ? '(none)' :
+            Object.entries(fileContents).map(([k, v]) => `${k}(${(v ?? '').length})`).join(', ')
+          }
+        </div>
+      )}
     </>
   );
 }
