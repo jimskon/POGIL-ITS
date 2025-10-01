@@ -7,7 +7,7 @@ const rl = readline.createInterface({ input: process.stdin, output: process.stdo
 
 const BASE_URL = 'http://localhost:4000/api';
 // Make sure this matches what you really want:
-const PASSWORD = 'pinhead';
+const PASSWORD = 'KenyonTest777';
 
 function prompt(q) { return new Promise(resolve => rl.question(q, resolve)); }
 
