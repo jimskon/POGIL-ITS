@@ -301,6 +301,12 @@ cd ../server
 npm start
 ```
 
+## To build for production
+```
+cd client
+npx vite build --base=/its/
+```
+
 # When moving to a new host:
 ## You must create a `server/.env` and `client/.env1`
 server/.env
