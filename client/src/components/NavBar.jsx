@@ -50,11 +50,8 @@ export default function NavBar({ bgColor = "dark", fixed = false, statusText = "
 
         <Container>
           <Navbar.Brand as={Link} to="/dashboard" className="d-flex align-items-center gap-2">
-            <img
-              src="/skulpt/images/kenyon-logo.png"
-              alt="Kenyon College Logo"
-              style={{ height: '30px' }}
-            />
+            <img src={`${import.meta.env.BASE_URL}images/kenyon-logo.png`} alt="Kenyon College Logo" style={{ height: 30 }} />
+
             POGIL ITS
           </Navbar.Brand>
 
