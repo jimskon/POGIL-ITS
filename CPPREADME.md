@@ -1,3 +1,12 @@
+
+# install micromamba into /usr/local/bin
+sudo mkdir -p /usr/local/bin
+curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest \
+  | sudo tar -xvj -C /usr/local/bin --strip-components=1 bin/micromamba
+
+# verify
+micromamba --version
+
 1) Build JupyterLite for a subpath
 
 When you build, set the base URL to /xcpp/ so all asset URLs and the service worker scope are correct:
