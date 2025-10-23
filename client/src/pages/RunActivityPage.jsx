@@ -771,6 +771,25 @@ export default function RunActivityPage({ setRoleLabel, setStatusText, groupMemb
       }
     }
 
+    // --- Save code / responses from code blocks ---
+    const handleCodeChange = async (responseKey, value, meta = {}) => {
+      try {
+        // optional: optimistic local state / socket emit can go here
+
+        await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/responses`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            responseKey,
+            value,            // the code text
+            answeredBy: user.id,
+            ...meta           // questionText, lang, etc. if the block supplies them
+          })
+        });
+      } catch (err) {
+        console.error('Failed to save code', err);
+      }
+    };
 
     const currentGroup = groups[currentQuestionGroupIndex];
     const blocks = [currentGroup.intro, ...currentGroup.content];

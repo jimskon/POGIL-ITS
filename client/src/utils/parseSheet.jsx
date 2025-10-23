@@ -8,6 +8,9 @@ import { Form } from 'react-bootstrap';
 
 import { useState, useEffect } from 'react';
 
+import ActivityCppBlock from '../components/activity/ActivityCppBlock';
+
+
 // --- helpers ---
 const coerceDrive = (url) => {
   // https://drive.google.com/file/d/<ID>/view?usp=...
@@ -71,7 +74,7 @@ function ImgWithFallback({ src, alt, widthStyle, captionHtml }) {
 // Keeps everything else as-is. Works for any \SomeTag{ ... } (including section*, link, image, etc.)
 function collapseBracedCommands(rawLines) {
   const startsTag = (s) =>
-    /^\s*\\(?:title|name|activitycontext|studentlevel|aicodeguidance|section\*?|questiongroup|question|sampleresponses|feedbackprompt|followupprompt|table|image|link|file|pythonturtle)\{/.test(s);
+    /^\s*\\(?:title|name|activitycontext|studentlevel|aicodeguidance|section\*?|questiongroup|question|sampleresponses|feedbackprompt|followupprompt|table|image|link|file|pythonturtle|cpp)\{/.test(s);
   const out = [];
   let buf = null;
   let depth = 0;
@@ -282,6 +285,50 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
+    // --- C++ blocks ---
+    const cppMatch = trimmed.match(/^\\cpp(?:\{(\d+)\})?$/);
+    if (cppMatch) {
+      flushCurrentBlock();
+      currentField = 'cpp';
+      const timeLimit = cppMatch[1] ? parseInt(cppMatch[1]) : 5000;
+      const blockObj = { type: 'cpp', lines: [], timeLimit };
+
+      if (currentQuestion && currentQuestion.type === 'question') {
+        if (!currentQuestion.cppBlocks) currentQuestion.cppBlocks = [];
+        currentQuestion.cppBlocks.push(blockObj);
+      } else {
+        blocks.push({ ...blockObj, localOnly: !inGroup });
+      }
+      continue;
+    }
+
+    if (trimmed === '\\endcpp') {
+      if (currentField === 'cpp') {
+        const lastBlock = blocks.at(-1);
+        if (lastBlock?.type === 'cpp' && lastBlock.lines) {
+          lastBlock.content = lastBlock.lines.join('\n');
+          delete lastBlock.lines;
+        } else if (currentQuestion?.cppBlocks?.length > 0) {
+          const block = currentQuestion.cppBlocks.pop();
+          currentQuestion.cppBlocks.push({
+            type: 'cpp',
+            content: block.lines.join('\n'),
+            timeLimit: block.timeLimit || 5000,
+          });
+        }
+        currentField = 'prompt';
+      }
+      continue;
+    }
+
+    if (currentField === 'cpp') {
+      const lastBlock = blocks.at(-1);
+      if (lastBlock?.type === 'cpp' && lastBlock.lines) lastBlock.lines.push(line);
+      else if (currentQuestion?.cppBlocks?.length > 0)
+        currentQuestion.cppBlocks.at(-1).lines.push(line);
+      continue;
+    }
+
     const pythonMatch = trimmed.match(/^\\python(?:\{(\d+)\})?$/);
     const turtleMatch = trimmed.match(/^\\pythonturtle(?:\{(\d+)\s*(?:[x,])\s*(\d+)\})?$/i);
     if (pythonMatch) {
@@ -312,7 +359,7 @@ export function parseSheetToBlocks(lines) {
         if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
         currentQuestion.pythonBlocks.push(blockObj);
       } else {
-         blocks.push({ ...blockObj, localOnly: !inGroup });
+        blocks.push({ ...blockObj, localOnly: !inGroup });
       }
       continue;
     }
@@ -371,7 +418,7 @@ export function parseSheetToBlocks(lines) {
     if (trimmed.startsWith('\\questiongroup{')) {
       flushCurrentBlock();
       groupNumber++;
-      inGroup = true; 
+      inGroup = true;
       questionLetterCode = 97;
       const m = trimmed.match(/\\questiongroup\{([\s\S]+?)\}/);
       const contentRaw = m ? m[1] : '';
@@ -414,17 +461,23 @@ export function parseSheetToBlocks(lines) {
     if (trimmed === '\\endquestion') {
       if (currentQuestion !== null) {
         const hasPython = !!(currentQuestion.pythonBlocks && currentQuestion.pythonBlocks.length);
+        const hasCpp = !!(currentQuestion.cppBlocks && currentQuestion.cppBlocks.length);
         const hasTable = !!currentQuestion.hasTableResponse;
+
         currentQuestion.hasPython = hasPython;
-        // python-only means: no textresponse AND has python (tables are fine)
+        currentQuestion.hasCpp = hasCpp;
         currentQuestion.hasPythonOnly = hasPython && !currentQuestion.hasTextResponse;
-        // keep for convenience
+        currentQuestion.hasCodeOnly = (hasPython || hasCpp) && !currentQuestion.hasTextResponse && !hasTable;
+
+        // keep for convenience (python only)
         currentQuestion._initialCode = (currentQuestion.pythonBlocks ?? []).map(b => b.content || '');
+
         blocks.push(currentQuestion);
       }
       currentQuestion = null;
       continue;
     }
+
 
     if (trimmed.startsWith('\\textresponse')) {
       const match = trimmed.match(/\\textresponse\{(\d+)\}/);
@@ -939,6 +992,30 @@ export function renderBlocks(blocks, options = {}) {
         </div>
       );
     }
+    if (block.type === 'cpp') {
+      const tl = block.timeLimit ?? 5000;
+      const localKey = `localcpp-${index}-${(block.content || '').length}`;
+      const canEdit = true;
+      return (
+        <div key={localKey}>
+          {runMode === 'preview' && (
+            <div className="text-muted small mb-1">
+              ⏱ Time limit: {tl} ms · <span className="badge bg-secondary">C++</span>
+            </div>
+          )}
+          <ActivityCppBlock
+            code={block.content || ''}
+            blockIndex={localKey}
+            editable={canEdit}
+            responseKey={localKey}
+            onCodeChange={onCodeChange}
+            fileContents={fileContents}
+            setFileContents={setFileContents}
+            timeLimit={tl}
+          />
+        </div>
+      );
+    }
 
     if (block.type === 'table') {
       return (
@@ -994,9 +1071,12 @@ export function renderBlocks(blocks, options = {}) {
 
 
       const hasPython = (block.pythonBlocks?.length || 0) > 0;
-      const isPythonOnly = hasPython && !block.hasTextResponse && !block.hasTableResponse;
-      // Show a free-text box only if explicitly requested OR (no python & no table)
-      const showTextArea = block.hasTextResponse || (!hasPython && !block.hasTableResponse);
+      const hasCpp = (block.cppBlocks?.length || 0) > 0;
+      const isCodeOnly = (hasPython || hasCpp) && !block.hasTextResponse && !block.hasTableResponse;
+
+      // Show a free-text box only if explicitly requested OR (no code & no table)
+      const showTextArea = block.hasTextResponse || (!hasPython && !hasCpp && !block.hasTableResponse);
+
       const lockMainResponse = !!followupsShown?.[responseKey] && !!block.hasTextResponse;
 
       return (
@@ -1087,6 +1167,58 @@ export function renderBlocks(blocks, options = {}) {
               </div>
             );
 
+          })}
+
+          {block.cppBlocks?.map((cpp, i) => {
+            const responseKey = `${block.groupId}${block.id}cpp${i + 1}`;
+            const saved = prefill?.[responseKey]?.response || cpp.content;
+
+            const codeMode = options.codeViewMode?.[responseKey] || 'active';
+            const showToggle = !!allowLocalToggle && (options.isObserver || isInstructor);
+            const displayedCode = (showToggle && codeMode === 'local')
+              ? (options.localCode?.[responseKey] ?? saved)
+              : saved;
+
+            const canEdit = (editable && isActive) || (showToggle && codeMode === 'local');
+
+            return (
+              <div key={`q-${block.groupId}-${block.id}-cpp-${i}`}>
+                {runMode === 'preview' && (
+                  <div className="text-muted small mb-1">
+                    ⏱ Time limit: {cpp.timeLimit ?? 5000} · <span className="badge bg-secondary">C++</span>
+                  </div>
+                )}
+                {showToggle && (
+                  <div className="d-flex justify-content-end mb-1">
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-secondary"
+                      onClick={() => options.onToggleViewMode?.(responseKey, codeMode === 'active' ? 'local' : 'active')}
+                    >
+                      {codeMode === 'active' ? 'Follow Active' : 'Local Sandbox'}
+                    </button>
+                  </div>
+                )}
+                <ActivityCppBlock
+                  code={displayedCode}
+                  blockIndex={`cpp-${block.groupId}-${block.id}-${i}`}
+                  editable={canEdit}
+                  responseKey={responseKey}
+                  onCodeChange={(rk, code, extra) => {
+                    if (showToggle && codeMode === 'local' && !isActive) {
+                      options.onLocalCodeChange?.(rk, code);
+                      return;
+                    }
+                    onCodeChange && onCodeChange(rk, code, {
+                      ...extra,
+                      questionText: stripHtml(block.prompt || ''),
+                      lang: 'cpp'
+                    });
+                  }}
+                  timeLimit={cpp.timeLimit ?? 5000}
+                />
+              </div>
+            );
           })}
 
           {block.tableBlocks?.map((table, i) => (
