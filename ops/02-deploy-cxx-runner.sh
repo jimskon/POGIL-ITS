@@ -1,25 +1,30 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# paths relative to repo root
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-STACK_DIR="$REPO_ROOT/ops/cxx-runner"
+SRC="$REPO_ROOT/ops/cxx-runner"
+DST="/opt/cxx-runner"
 
-echo "==> Building image and deploying compose stack from: $STACK_DIR"
-cd "$STACK_DIR"
+echo "==> Sync runner to $DST"
+sudo mkdir -p "$DST"
+sudo rsync -a --delete "$SRC/" "$DST/"
 
-# Optional: prune old images/volumes (safe-ish)
-docker system prune -f || true
+echo "==> Build & deploy"
+cd "$DST"
 
-# Build with a stable tag; compose will use it
-docker build --pull --no-cache -t cxx-runner:stable .
+# If user is not in docker group, fall back to sudo
+DOCKER="${DOCKER:-docker}"
+if ! $DOCKER ps >/dev/null 2>&1; then
+  DOCKER="sudo docker"
+fi
 
-# Up it goes
-docker compose down
-docker compose up -d
+$DOCKER system prune -f || true
+$DOCKER build --pull -t cxx-runner:stable .
+$DOCKER compose down || true
+$DOCKER compose up -d
 
-echo "==> Waiting for health..."
-for i in {1..20}; do
+echo "==> Health checks"
+for i in {1..30}; do
   if curl -fsS http://127.0.0.1:5055/health >/dev/null; then
     echo "Health OK"
     break
@@ -27,16 +32,8 @@ for i in {1..20}; do
   sleep 0.5
 done
 
-echo "==> Routes:"
 curl -fsS http://127.0.0.1:5055/openapi.json | jq '.paths' || true
-
-echo "==> Try via Nginx (if configured):"
-set +e
-curl -fsS https://$(hostname -f)/cxx-run/health || true
+curl -fsS https://"$(hostname -f)"/cxx-run/health || true
 echo
-set -e
-
-echo "==> cxx-runner logs (tail):"
-docker logs --tail=40 cxx-runner || true
-
-echo "==> Done."
+$DOCKER ps --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+echo "==> Runner deploy complete."
