@@ -18,3 +18,22 @@ build/
 
 # OS junk
 Thumbs.db
+
+# Python/Node
+.venv/
+node_modules/
+*.log
+
+# Build & artifacts
+_output/
+client/.jupyterlite.doit.db
+.jupyterlite.doit.db
+
+# Env & secrets
+server/.env*
+server/utils/service-account.json
+
+# Lock/Editor junk
+*~
+\#*\#
+.DS_Store
