@@ -286,19 +286,7 @@ export default function ActivityPythonBlock({
           <pre className="mb-0">{codeFeedbackShown[responseKey]}</pre>
         </div>
       )}
-
-      {turtleTargetId && (
-        <div
-          id={turtleTargetId}
-          style={{
-            width: turtleWidth ?? 600,
-            height: turtleHeight ?? 400,
-            border: '1px solid #ddd',
-            borderRadius: 6,
-            marginTop: 8,
-          }}
-        />
-      )}
+      
     </div>
   );
 }
