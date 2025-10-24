@@ -259,6 +259,21 @@ sudo systemctl reload apache2
 - MariaDB stores user, class, and activity data
 
 ---
+##  8. Install c++
+### 1) Provision host (Docker, Nginx snippet, PM2 logrotate)
+```
+cd ops
+sudo ./01-provision-host.sh
+```
+### Make sure your TLS server block contains:
+###   include /etc/nginx/snippets/cxx-run.conf;
+```
+sudo nginx -t && sudo systemctl reload nginx
+```
+### 2) Deploy the C++ runner stack
+```
+./02-deploy-cxx-runner.sh
+```
 
 ## Optional: Add HTTPS (Let’s Encrypt)
 
@@ -394,11 +409,5 @@ rm -rf node_modules package-lock.json
 npm install
 ```
 
-# Added a new field to activity_instances table 
-```
-mysql -u pogil_user -p
-USE pogil_db;
-ALTER TABLE activity_instances
-ADD COLUMN total_groups INT DEFAULT NULL;
 
 ```
