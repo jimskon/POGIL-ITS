@@ -14,6 +14,9 @@ sudo ./01-provision-host.sh
 ```
 sudo ./03-deploy-frontend.sh
 
+sudo nginx -t
+sudo systemctl reload nginx
+
 curl -sS http://127.0.0.1:5055/health
 curl -sS https://$(hostname -f)/cxx-run/health
 ```
