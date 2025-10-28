@@ -54,4 +54,10 @@ pm2 start "bash -lc 'cd ~/POGIL-ITS/ops && source .venv/bin/activate && uvicorn 
 pm2 save
 pm2 status
 ```
-
+# Test
+```
+# through nginx (what the browser does)
+curl -i -X POST https://csits.kenyon.edu/cxx-run/session/new \
+  -H 'Content-Type: application/json' \
+  --data '{"code":"#include <iostream>\nint main(){std::cout<<\"hi\";}\n"}'
+```
