@@ -17,6 +17,14 @@ sudo ./03-deploy-frontend.sh
 sudo nginx -t
 sudo systemctl reload nginx
 
+## Test
+```
+# through nginx (what the browser does)
+```
+curl -i -X POST https://csits.kenyon.edu/cxx-run/session/new \
+  -H 'Content-Type: application/json' \
+  --data '{"code":"#include <iostream>\nint main(){std::cout<<\"hi\";}\n"}'
+```
 curl -sS http://127.0.0.1:5055/health
 curl -sS https://$(hostname -f)/cxx-run/health
 ```
