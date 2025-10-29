@@ -1006,7 +1006,7 @@ export function renderBlocks(blocks, options = {}) {
           <ActivityCppBlock
             code={block.content || ''}
             blockIndex={localKey}
-            editable={canEdit}
+            editable={true}
             responseKey={localKey}
             onCodeChange={onCodeChange}
             fileContents={fileContents}
@@ -1202,7 +1202,7 @@ export function renderBlocks(blocks, options = {}) {
                 <ActivityCppBlock
                   code={displayedCode}
                   blockIndex={`cpp-${block.groupId}-${block.id}-${i}`}
-                  editable={canEdit}
+                  editable={true}
                   responseKey={responseKey}
                   onCodeChange={(rk, code, extra) => {
                     if (showToggle && codeMode === 'local' && !isActive) {
