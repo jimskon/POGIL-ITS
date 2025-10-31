@@ -296,6 +296,16 @@ export function parseSheetToBlocks(lines) {
       if (currentQuestion && currentQuestion.type === 'question') {
         if (!currentQuestion.cppBlocks) currentQuestion.cppBlocks = [];
         currentQuestion.cppBlocks.push(blockObj);
+        // ALSO append to canonical codeBlocks with a provisional entry (content set on \endcpp)
+        const nextIndex =
+          (currentQuestion.codeBlocks?.length || 0) + 1;
+        currentQuestion.codeBlocks.push({
+          lang: 'cpp',
+          index: nextIndex,
+          editable: true,
+          content: '',          // fill on \endcpp
+          timeLimit
+        });
       } else {
         blocks.push({ ...blockObj, localOnly: !inGroup });
       }
@@ -310,11 +320,20 @@ export function parseSheetToBlocks(lines) {
           delete lastBlock.lines;
         } else if (currentQuestion?.cppBlocks?.length > 0) {
           const block = currentQuestion.cppBlocks.pop();
+          const content = block.lines.join('\n');
           currentQuestion.cppBlocks.push({
             type: 'cpp',
-            content: block.lines.join('\n'),
+            content,
             timeLimit: block.timeLimit || 5000,
           });
+          // mirror the content into the most-recent cpp entry in codeBlocks
+          const idx = [...currentQuestion.codeBlocks]
+            .reverse()
+            .findIndex(cb => cb.lang === 'cpp' && !cb.content);
+          if (idx !== -1) {
+            const real = currentQuestion.codeBlocks.length - 1 - idx;
+            currentQuestion.codeBlocks[real].content = content;
+          }
         }
         currentField = 'prompt';
       }
@@ -341,6 +360,15 @@ export function parseSheetToBlocks(lines) {
       if (currentQuestion && currentQuestion.type === 'question') {
         if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
         currentQuestion.pythonBlocks.push(blockObj);
+        const nextIndex =
+          (currentQuestion.codeBlocks?.length || 0) + 1;
+        currentQuestion.codeBlocks.push({
+          lang: 'python',
+          index: nextIndex,
+          editable: true,
+          content: '',        // fill on \endpython
+          timeLimit
+        });
       } else {
         blocks.push({ ...blockObj, localOnly: !inGroup });
       }
@@ -358,6 +386,17 @@ export function parseSheetToBlocks(lines) {
       if (currentQuestion && currentQuestion.type === 'question') {
         if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
         currentQuestion.pythonBlocks.push(blockObj);
+        const nextIndex =
+          (currentQuestion.codeBlocks?.length || 0) + 1;
+        currentQuestion.codeBlocks.push({
+          lang: 'python',          // turtle is still python
+          index: nextIndex,
+          editable: true,
+          content: '',             // fill on \endpythonturtle
+          timeLimit: 50000,
+          width: w,
+          height: h
+        });
       } else {
         blocks.push({ ...blockObj, localOnly: !inGroup });
       }
@@ -372,14 +411,27 @@ export function parseSheetToBlocks(lines) {
           delete lastBlock.lines;
         } else if (currentQuestion?.pythonBlocks?.length > 0) {
           const block = currentQuestion.pythonBlocks.pop();
+          const content = block.lines.join('\n');
           currentQuestion.pythonBlocks.push({
             type: currentField,
-            content: block.lines.join('\n'),
+            content,
             timeLimit: block.timeLimit || 50000,
             width: block.width,
             height: block.height,
           });
-
+          // mirror into latest python/turtle entry in codeBlocks
+          const idx = [...currentQuestion.codeBlocks]
+            .reverse()
+            .findIndex(cb => cb.lang === 'python' && !cb.content);
+          if (idx !== -1) {
+            const real = currentQuestion.codeBlocks.length - 1 - idx;
+            currentQuestion.codeBlocks[real].content = content;
+            // carry over turtle dimensions if present
+            if (currentField === 'pythonturtle') {
+              currentQuestion.codeBlocks[real].width = block.width;
+              currentQuestion.codeBlocks[real].height = block.height;
+            }
+          }
         }
         currentField = 'prompt';
       }
@@ -452,7 +504,8 @@ export function parseSheetToBlocks(lines) {
         responseLines: 1,
         samples: [],
         feedback: [],
-        followups: []
+        followups: [],
+        codeBlocks: []
       };
       continue;
     }
@@ -460,18 +513,21 @@ export function parseSheetToBlocks(lines) {
 
     if (trimmed === '\\endquestion') {
       if (currentQuestion !== null) {
-        const hasPython = !!(currentQuestion.pythonBlocks && currentQuestion.pythonBlocks.length);
-        const hasCpp = !!(currentQuestion.cppBlocks && currentQuestion.cppBlocks.length);
+        const hasAnyCode =
+          (currentQuestion.codeBlocks?.length || 0) > 0 ||
+          (currentQuestion.pythonBlocks?.length || 0) > 0 ||
+          (currentQuestion.cppBlocks?.length || 0) > 0;
         const hasTable = !!currentQuestion.hasTableResponse;
 
-        currentQuestion.hasPython = hasPython;
-        currentQuestion.hasCpp = hasCpp;
-        currentQuestion.hasPythonOnly = hasPython && !currentQuestion.hasTextResponse;
-        currentQuestion.hasCodeOnly = (hasPython || hasCpp) && !currentQuestion.hasTextResponse && !hasTable;
+        currentQuestion.hasPython = !!(currentQuestion.pythonBlocks && currentQuestion.pythonBlocks.length);
+        currentQuestion.hasCpp = !!(currentQuestion.cppBlocks && currentQuestion.cppBlocks.length);
+        currentQuestion.hasPythonOnly = currentQuestion.hasPython && !currentQuestion.hasTextResponse;
+        currentQuestion.hasCodeOnly = hasAnyCode && !currentQuestion.hasTextResponse && !hasTable;
 
-        // keep for convenience (python only)
-        currentQuestion._initialCode = (currentQuestion.pythonBlocks ?? []).map(b => b.content || '');
-
+        // convenience: starter templates in order
+        currentQuestion._initialCode =
+          (currentQuestion.codeBlocks?.map(cb => cb.content || '') || [])
+            .filter(x => x !== undefined);
         blocks.push(currentQuestion);
       }
       currentQuestion = null;
@@ -994,21 +1050,76 @@ export function renderBlocks(blocks, options = {}) {
     }
     if (block.type === 'cpp') {
       const tl = block.timeLimit ?? 5000;
-      const localKey = `localcpp-${index}-${(block.content || '').length}`;
-      const canEdit = true;
+
+      // Local-only top-level C++: ephemeral, not saved
+      if (block.localOnly) {
+        const localKey = `localcpp-${index}-${(block.content || '').length}`;
+        return (
+          <div key={localKey}>
+            {runMode === 'preview' && (
+              <div className="text-muted small mb-1">
+                ⏱ Time limit: {tl} ms · <span className="badge bg-secondary">C++</span> · <span className="badge bg-secondary">Local (not saved)</span>
+              </div>
+            )}
+            <ActivityCppBlock
+              code={block.content || ''}
+              blockIndex={localKey}
+              editable={true}
+              localOnly={true}
+              responseKey={localKey}
+              onCodeChange={onCodeChange}
+              fileContents={fileContents}
+              setFileContents={setFileContents}
+              timeLimit={tl}
+            />
+          </div>
+        );
+      }
+
+      // Persisted top-level C++ (rare): use canonical ...code# key
+      const groupPrefix = String((currentGroupIndex ?? 0) + 1);
+      const codeKey = `${groupPrefix}code${standaloneCodeCounter++}`;
+
+      const codeMode = options.codeViewMode?.[codeKey] || 'active';
+      const showToggle = !!allowLocalToggle && (options.isObserver || isInstructor);
+
+      const activeCode = prefill?.[codeKey]?.response || block.content || '';
+      const displayedCode = (showToggle && codeMode === 'local')
+        ? (options.localCode?.[codeKey] ?? activeCode)
+        : activeCode;
+
+      const canEdit = (editable && isActive) || (showToggle && codeMode === 'local');
+
       return (
-        <div key={localKey}>
+        <div key={`cpp-${index}`}>
           {runMode === 'preview' && (
             <div className="text-muted small mb-1">
               ⏱ Time limit: {tl} ms · <span className="badge bg-secondary">C++</span>
             </div>
           )}
+          {showToggle && (
+            <div className="d-flex justify-content-end mb-1">
+              <button
+                type="button"
+                className="btn btn-sm btn-outline-secondary"
+                onClick={() => options.onToggleViewMode?.(codeKey, codeMode === 'active' ? 'local' : 'active')}
+              >
+                {codeMode === 'active' ? 'Follow Active' : 'Local Sandbox'}
+              </button>
+            </div>
+          )}
           <ActivityCppBlock
-            code={block.content || ''}
-            blockIndex={localKey}
-            editable={true}
-            responseKey={localKey}
-            onCodeChange={onCodeChange}
+            code={displayedCode}
+            blockIndex={`cpp-${codeKey}-${index}`}
+            editable={canEdit}
+            responseKey={codeKey}
+            onCodeChange={(rk, code, extra) => {
+              if (showToggle && codeMode === 'local' && !isActive) {
+                options.onLocalCodeChange?.(rk, code);
+                return;
+              }
+              onCodeChange && onCodeChange(rk, code, { ...extra, lang: 'cpp' });
+            }}
             fileContents={fileContents}
             setFileContents={setFileContents}
             timeLimit={tl}
@@ -1016,6 +1127,7 @@ export function renderBlocks(blocks, options = {}) {
         </div>
       );
     }
+
 
     if (block.type === 'table') {
       return (
@@ -1170,7 +1282,7 @@ export function renderBlocks(blocks, options = {}) {
           })}
 
           {block.cppBlocks?.map((cpp, i) => {
-            const responseKey = `${block.groupId}${block.id}cpp${i + 1}`;
+            const responseKey = `${block.groupId}${block.id}code${i + 1}`;
             const saved = prefill?.[responseKey]?.response || cpp.content;
 
             const codeMode = options.codeViewMode?.[responseKey] || 'active';
@@ -1202,7 +1314,7 @@ export function renderBlocks(blocks, options = {}) {
                 <ActivityCppBlock
                   code={displayedCode}
                   blockIndex={`cpp-${block.groupId}-${block.id}-${i}`}
-                  editable={true}
+                  editable={canEdit}
                   responseKey={responseKey}
                   onCodeChange={(rk, code, extra) => {
                     if (showToggle && codeMode === 'local' && !isActive) {
