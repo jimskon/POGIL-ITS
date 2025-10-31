@@ -55,9 +55,11 @@ pm2 save
 pm2 status
 ```
 # Test
+
+## through nginx (what the browser does)
 ```
-# through nginx (what the browser does)
-curl -i -X POST https://csits.kenyon.edu/cxx-run/session/new \
+curl -si -X POST https://csits.kenyon.edu/cxx-run/session/new \
   -H 'Content-Type: application/json' \
   --data '{"code":"#include <iostream>\nint main(){std::cout<<\"hi\";}\n"}'
+
 ```
