@@ -1118,12 +1118,22 @@ export function renderBlocks(blocks, options = {}) {
                 options.onLocalCodeChange?.(rk, code);
                 return;
               }
-              onCodeChange && onCodeChange(rk, code, { ...extra, lang: 'cpp' });
+              onCodeChange && onCodeChange(rk, code, {
+                ...extra,
+                questionText: 'Write and run C++ code.',
+                hasTextResponse: false,
+                hasTableResponse: false,
+                lang: 'cpp',
+              });
             }}
             fileContents={fileContents}
             setFileContents={setFileContents}
             timeLimit={tl}
+            /* 👇 pass guidance like Python does */
+            codeFeedbackShown={codeFeedbackShown}
+            feedback={codeFeedbackShown?.[codeKey] || null}
           />
+
         </div>
       );
     }
@@ -1324,11 +1334,17 @@ export function renderBlocks(blocks, options = {}) {
                     onCodeChange && onCodeChange(rk, code, {
                       ...extra,
                       questionText: stripHtml(block.prompt || ''),
-                      lang: 'cpp'
+                      hasTextResponse: !!block.hasTextResponse,
+                      hasTableResponse: !!block.hasTableResponse,
+                      lang: 'cpp',
                     });
                   }}
                   timeLimit={cpp.timeLimit ?? 5000}
+                  /* 👇 pass guidance so the panel can render */
+                  codeFeedbackShown={codeFeedbackShown}
+                  feedback={codeFeedbackShown?.[responseKey] || null}
                 />
+
               </div>
             );
           })}
