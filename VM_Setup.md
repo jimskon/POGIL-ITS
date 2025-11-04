@@ -10,27 +10,30 @@
   - UFW open for 22/80/443.
 
 # Typical update/deploy flow
-## SSH in, then:
+## 1) SSH in, then:
 ```
 sudo -iu pogil
 cd /opt/POGIL-ITS
 git pull --ff-only
 ```
 
-## Server deps (if package.json changed)
+## 2) Server deps (if package.json changed)
 ```
 cd server && npm ci
 ```
 
-## Rebuild client
+## 3) Rebuild client
 ```
 cd ../client && npm ci && npm run build
 ```
-## Restart API
+## 4) Restart API
 ```
 pm2 restart pogil-its
 pm2 save
 ```
+## 4) Optional: CXX runner or multiple services
+If you run a separate C++ runner on port 5055, the Nginx /cxx-run/ location is already set.
+For more Node services, add another location /foo/ { proxy_pass http://127.0.0.1:PORT/; }.
 
 ## Copy-paste this as root (or sudo -i) — edit the VARS at the top first
 
