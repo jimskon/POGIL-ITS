@@ -37,21 +37,21 @@ pm2 save
 If you run a separate C++ runner on port 5055, the Nginx /cxx-run/ location is already set.
 For more Node services, add another location /foo/ { proxy_pass http://127.0.0.1:PORT/; }.
 
-## Copy-paste this as root (or sudo -i) — edit the VARS at the top first
+## Install Script
 
 ```
 #!/usr/bin/env bash
 set -euo pipefail
 
 ########### EDIT THESE ############
-DOMAIN="example.yourdomain.com"        # e.g., csits.kenyon.edu (must point to this server)
-APP_USER="pogil"                       # non-root user to own the app
+DOMAIN="csits.kenyon.edu"             # must resolve to this server
+APP_USER="pogil"                      # non-root user to own the app
 REPO_URL="https://github.com/jimskon/POGIL-ITS.git"
-APP_DIR="/opt/POGIL-ITS"               # will clone here
-NODE_PORT="4000"                       # your Node/Express port
+APP_DIR="/opt/POGIL-ITS"              # will clone here
+NODE_PORT="4000"                      # your Node/Express port
 DB_NAME="pogil_db"
 DB_USER="pogil_db_user"
-DB_PASS="$(openssl rand -base64 24)"   # auto-generate; print at end
+DB_PASS="$(openssl rand -base64 24)"  # auto-generate; printed at end
 ###################################
 
 echo "==> Updating system"
@@ -70,7 +70,7 @@ ufw allow OpenSSH
 ufw allow 80/tcp
 ufw allow 443/tcp
 yes | ufw enable || true
-ufw status
+ufw status || true
 
 echo "==> Install Node LTS (20.x) + PM2"
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
@@ -87,8 +87,7 @@ apt-get install -y mariadb-server mariadb-client
 systemctl enable mariadb
 systemctl start mariadb
 
-echo "==> Secure MariaDB (non-interactive)"
-# Set root to unix_socket auth (default on Ubuntu) and create app DB/user
+echo "==> Secure MariaDB (create DB/user)"
 mysql -u root <<SQL
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
@@ -111,12 +110,35 @@ else
   sudo -u "$APP_USER" git clone "$REPO_URL" "$APP_DIR"
 fi
 
+echo "==> Initialize database schema (if empty)"
+# Find schema.sql in the repo (project root, or up to 3 levels deep)
+SCHEMA_PATH="$(find "$APP_DIR" -maxdepth 3 -type f -iname 'schema.sql' | head -n1 || true)"
+if [ -z "$SCHEMA_PATH" ]; then
+  echo "WARNING: schema.sql not found under $APP_DIR (skipping import)"
+else
+  TABLE_COUNT="$(mysql -N -u root -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${DB_NAME}';")" || TABLE_COUNT=0
+  if [ "${TABLE_COUNT:-0}" -eq 0 ]; then
+    echo "No tables in ${DB_NAME}; importing schema from: $SCHEMA_PATH"
+    mysql -u root "${DB_NAME}" < "$SCHEMA_PATH"
+    echo "Schema import complete."
+  else
+    echo "Database ${DB_NAME} already has ${TABLE_COUNT} table(s); skipping schema import."
+  fi
+fi
+
+# (Optional) seed data if you keep one:
+# SEED_PATH="$(find "$APP_DIR" -maxdepth 3 -type f \( -iname 'seed.sql' -o -iname '*.seed.sql' \) | head -n1 || true)"
+# if [ -n "$SEED_PATH" ]; then
+#   echo "==> Importing seed data from: $SEED_PATH"
+#   mysql -u root "${DB_NAME}" < "$SEED_PATH"
+# fi
+
 echo "==> Install server deps"
 cd "$APP_DIR/server"
 sudo -u "$APP_USER" npm ci || sudo -u "$APP_USER" npm install
 
 echo "==> Create server .env"
-cat >/opt/POGIL-ITS/server/.env <<ENV
+cat > "$APP_DIR/server/.env" <<ENV
 # --- Server env ---
 PORT=${NODE_PORT}
 NODE_ENV=production
@@ -131,17 +153,20 @@ DB_PASS=${DB_PASS}
 # CORS / client
 CLIENT_ORIGIN=https://${DOMAIN}
 
-# Any service-account email or keys you use:
+# Service account (adjust if needed)
 SERVICE_ACCOUNT_EMAIL=pogil-sheets-reader@pogil-its.iam.gserviceaccount.com
 ENV
-
-chown "$APP_USER":"$APP_USER" /opt/POGIL-ITS/server/.env
-chmod 600 /opt/POGIL-ITS/server/.env
+chown "$APP_USER":"$APP_USER" "$APP_DIR/server/.env"
+chmod 600 "$APP_DIR/server/.env"
 
 echo "==> Build client"
 cd "$APP_DIR/client"
-# Set Vite base API URL to https://DOMAIN
-grep -q '^VITE_API_BASE_URL' .env 2>/dev/null && sed -i "s|^VITE_API_BASE_URL=.*|VITE_API_BASE_URL=https://${DOMAIN}|g" .env || echo "VITE_API_BASE_URL=https://${DOMAIN}" >> .env
+# Ensure Vite API base is the public HTTPS origin
+if grep -q '^VITE_API_BASE_URL' .env 2>/dev/null; then
+  sed -i "s|^VITE_API_BASE_URL=.*|VITE_API_BASE_URL=https://${DOMAIN}|g" .env
+else
+  echo "VITE_API_BASE_URL=https://${DOMAIN}" >> .env
+fi
 sudo -u "$APP_USER" npm ci || sudo -u "$APP_USER" npm install
 sudo -u "$APP_USER" npm run build
 
@@ -165,11 +190,12 @@ server {
   server_name ${DOMAIN};
 
   # SSL managed by certbot (will be inserted below)
+
   # ---- STATIC: client build ----
   root ${APP_DIR}/client/dist;
   index index.html;
 
-  # Try files, else 404
+  # SPA fallback
   location / {
     try_files \$uri \$uri/ /index.html;
   }
