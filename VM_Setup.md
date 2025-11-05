@@ -12,13 +12,13 @@
 # Typical update/deploy flow
 ## 1) SSH in, then:
 ```
-sudo -iu pogil
-cd /opt/POGIL-ITS
+cd ~/POGIL-ITS
 git pull --ff-only
 ```
 
 ## 2) Server deps (if package.json changed)
 ```
+sudo apt install npm
 cd server && npm ci
 ```
 
