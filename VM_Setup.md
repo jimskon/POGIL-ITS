@@ -12,7 +12,8 @@
 # Typical update/deploy flow
 ## 1) SSH in, then:
 ```
-cd ~/POGIL-ITS
+su pogil
+cd /opt/POGIL-ITS
 git pull --ff-only
 ```
 
@@ -28,6 +29,7 @@ cd ../client && npm ci && npm run build
 ```
 ## 4) Restart API
 ```
+pm2 start index.js
 pm2 restart pogil-its
 pm2 save
 ```
