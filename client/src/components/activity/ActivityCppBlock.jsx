@@ -34,6 +34,8 @@ export default function ActivityCppBlock({
   const fit = useRef(null);
   const wsRef = useRef(null);
   const onDataDisposeRef = useRef(null);
+  const inputBufferRef = useRef('');
+
 
   // --- Prism refs ---
   const codeId = `cpp-code-${blockIndex}`;
@@ -203,26 +205,46 @@ export default function ActivityCppBlock({
         term.current.writeln('');
         term.current.focus();
 
-        // LOCAL ECHO HANDLER
+        inputBufferRef.current = '';
+
         const onData = (d) => {
           if (!ws || ws.readyState !== WebSocket.OPEN) return;
 
-          if (d === '\r') { // ENTER (CR from xterm)
-            term.current.write('\r\n'); // move cursor visually
-            ws.send('\n');              // send LF to program
+          // ENTER: send the whole buffered line
+          if (d === '\r') { // xterm sends '\r' for Enter
+            const line = inputBufferRef.current;
+            term.current.write('\r\n');        // move to next line visually
+            ws.send(line + '\n');             // send line + newline to the program
+            inputBufferRef.current = '';      // reset buffer
             return;
           }
-          if (d === '\u007F') { // BACKSPACE
-            term.current.write('\b \b');
+
+          // BACKSPACE
+          if (d === '\u007F') {
+            if (inputBufferRef.current.length > 0) {
+              // Remove last char from buffer
+              inputBufferRef.current = inputBufferRef.current.slice(0, -1);
+              // Erase last char visually
+              term.current.write('\b \b');
+            }
+            return;
+          }
+
+          // Ctrl+C — send immediately (signal/interrupt)
+          if (d === '\u0003') {
             ws.send(d);
+            inputBufferRef.current = '';
+            term.current.write('^C\r\n');
             return;
           }
-          if (d === '\u0003') { // Ctrl+C
-            ws.send(d);
-            return;
+
+          // For now, treat everything else as normal character input:
+          // append to buffer and echo locally, but DO NOT send yet.
+          // This includes spaces, digits, letters, etc.
+          if (d >= ' ' && d !== '\x7f') {
+            inputBufferRef.current += d;
+            term.current.write(d);
           }
-          term.current.write(d); // local echo
-          ws.send(d);
         };
 
         try { onDataDisposeRef.current?.dispose(); } catch { }
@@ -233,9 +255,11 @@ export default function ActivityCppBlock({
       ws.onerror = () => { term.current.writeln('\r\n❌ [WebSocket error]'); };
       ws.onclose = () => {
         try { onDataDisposeRef.current?.dispose(); } catch { }
+        inputBufferRef.current = '';
         term.current.writeln('\r\n💡 [Program finished]');
         setIsRunning(false);
       };
+
     } catch (e) {
       term.current.writeln(`\n❌ Error: ${e.message}`);
       setIsRunning(false);
