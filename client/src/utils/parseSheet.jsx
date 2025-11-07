@@ -166,39 +166,87 @@ export function parseSheetToBlocks(lines) {
     if (currentBlock.length > 0) {
       blocks.push({
         type: 'text',
-        content: format(currentBlock.join(' ').trim())
+        // lines in currentBlock are ALREADY run through format()
+        content: currentBlock.join(' ').trim()
       });
       currentBlock = [];
     }
   };
 
+
   const stripHtml = (s = '') =>
     s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/?[^>]+>/g, '');
 
-  const format = (text) => {
+    const format = (text = '') => {
     const esc = (s) =>
-      s.replace(/&/g, '&amp;')
+      s
+        .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
 
-    return text
-      // monospace block (convert linebreaks inside the block, then wrap)
-      .replace(/\\mono\{([\s\S]*?)\}/g, (_, body) =>
-        `<span class="mono">${esc(body).replace(/\\\\/g, '<br>').replace(/\n/g, '<br>')}</span>`
-      )
-      .replace(/\\texttt\{([\s\S]*?)\}/g, (_, body) =>
-        `<span class="mono">${esc(body).replace(/\\\\/g, '<br>').replace(/\n/g, '<br>')}</span>`
-      )
+    if (!text) return '';
 
-      // inline styles
-      .replace(/\\textbf\{([\s\S]+?)\}/g, '<strong>$1</strong>')
-      .replace(/\\textit\{([\s\S]+?)\}/g, '<em>$1</em>')
-      .replace(/\\text\{([\s\S]+?)\}/g, '$1')
+    let s = text;
+    const stash = [];
+    const push = (html) => {
+      const token = `__HTML_${stash.length}__`;
+      stash.push(html);
+      return token;
+    };
 
-      // global line breaks (outside mono/texttt)
+    // --- 1) Handle formatted segments by STASHING real HTML ---
+
+    // \mono{...} → monospace, preserve line breaks inside
+    s = s.replace(/\\mono\{([\s\S]*?)\}/g, (_, body) =>
+      push(
+        `<span class="mono">${esc(body)
+          .replace(/\\\\/g, '<br>')
+          .replace(/\n/g, '<br>')}</span>`
+      )
+    );
+
+    // \texttt{...} → same as mono
+    s = s.replace(/\\texttt\{([\s\S]*?)\}/g, (_, body) =>
+      push(
+        `<span class="mono">${esc(body)
+          .replace(/\\\\/g, '<br>')
+          .replace(/\n/g, '<br>')}</span>`
+      )
+    );
+
+    // \textbf{...}
+    s = s.replace(/\\textbf\{([\s\S]+?)\}/g, (_, body) =>
+      push(`<strong>${esc(body)}</strong>`)
+    );
+
+    // \textit{...}
+    s = s.replace(/\\textit\{([\s\S]+?)\}/g, (_, body) =>
+      push(`<em>${esc(body)}</em>`)
+    );
+
+    // \text{...} → just escaped text, no extra tag
+    s = s.replace(/\\text\{([\s\S]+?)\}/g, (_, body) => esc(body));
+
+    // --- 2) Escape everything that remains (plain authored text) ---
+
+    s = esc(s);
+
+    // --- 3) Turn \\ and newlines into <br> ---
+
+    s = s
       .replace(/\\\\/g, '<br>')
       .replace(/\n/g, '<br>');
+
+    // --- 4) Restore stashed HTML snippets (which are already escaped safely) ---
+
+    stash.forEach((html, i) => {
+      const token = new RegExp(`__HTML_${i}__`, 'g');
+      s = s.replace(token, html);
+    });
+
+    return s;
   };
+
 
   for (let line of lines) {
     const trimmed = line.trim();
