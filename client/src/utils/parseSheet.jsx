@@ -177,7 +177,7 @@ export function parseSheetToBlocks(lines) {
   const stripHtml = (s = '') =>
     s.replace(/<br\s*\/?>/gi, '\n').replace(/<\/?[^>]+>/g, '');
 
-    const format = (text = '') => {
+  const format = (text = '') => {
     const esc = (s) =>
       s
         .replace(/&/g, '&amp;')
@@ -1051,7 +1051,10 @@ export function renderBlocks(blocks, options = {}) {
         ? (options.localCode?.[codeKey] ?? activeCode)
         : activeCode;
       // who can edit?
-      const canEdit = (editable && isActive) || (showToggle && codeMode === 'local');
+      const canEdit =
+        runMode === 'preview'
+          ? editable
+          : (editable && isActive) || (showToggle && codeMode === 'local');
       const showTL = runMode === 'preview';
 
       return (
@@ -1136,7 +1139,10 @@ export function renderBlocks(blocks, options = {}) {
         ? (options.localCode?.[codeKey] ?? activeCode)
         : activeCode;
 
-      const canEdit = (editable && isActive) || (showToggle && codeMode === 'local');
+      const canEdit =
+        runMode === 'preview'
+          ? editable
+          : (editable && isActive) || (showToggle && codeMode === 'local');
 
       return (
         <div key={`cpp-${index}`}>
@@ -1280,7 +1286,10 @@ export function renderBlocks(blocks, options = {}) {
             const displayedCode = (showToggle && codeMode === 'local')
               ? (options.localCode?.[responseKey] ?? savedResponse)
               : savedResponse;
-            const canEdit = (editable && isActive) || (showToggle && codeMode === 'local');
+            const canEdit =
+              runMode === 'preview'
+                ? editable
+                : (editable && isActive) || (showToggle && codeMode === 'local');
             const meta = {
               questionText: stripHtml(block.prompt || ''),                 // ✅ use the question’s prompt
               sampleResponse: stripHtml(block.samples?.[0] || ''),         // ✅ include per-question sample
@@ -1349,7 +1358,10 @@ export function renderBlocks(blocks, options = {}) {
               ? (options.localCode?.[responseKey] ?? saved)
               : saved;
 
-            const canEdit = (editable && isActive) || (showToggle && codeMode === 'local');
+            const canEdit =
+              runMode === 'preview'
+                ? editable
+                : (editable && isActive) || (showToggle && codeMode === 'local');
 
             return (
               <div key={`q-${block.groupId}-${block.id}-cpp-${i}`}>
