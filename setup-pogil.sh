@@ -2,14 +2,14 @@
 set -euo pipefail
 
 ########### EDIT THESE ############
-DOMAIN="csits.kenyon.edu"             # must resolve to this server
-APP_USER="pogil"                      # non-root user to own the app
+DOMAIN="its.jimskon.com"             # must resolve to this server
+APP_USER="skon"                      # non-root user to own the app
 REPO_URL="https://github.com/jimskon/POGIL-ITS.git"
 APP_DIR="/opt/POGIL-ITS"              # will clone here
 NODE_PORT="4000"                      # your Node/Express port
 DB_NAME="pogil_db"
 DB_USER="pogil_db_user"
-DB_PASS="$(openssl rand -base64 24)"  # auto-generate; printed at end
+DB_PASSWORD="$(openssl rand -base64 24)"  # auto-generate; printed at end
 ###################################
 
 echo "==> Updating system"
@@ -48,7 +48,7 @@ systemctl start mariadb
 echo "==> Secure MariaDB (create DB/user)"
 mysql -u root <<SQL
 CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASS}';
+CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';
 GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';
 FLUSH PRIVILEGES;
 SQL
@@ -106,7 +106,7 @@ DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_NAME=${DB_NAME}
 DB_USER=${DB_USER}
-DB_PASS=${DB_PASS}
+DB_PASSWORD=${DB_PASSWORD}
 
 # CORS / client
 CLIENT_ORIGIN=https://${DOMAIN}
@@ -207,7 +207,7 @@ echo "========================================="
 echo " Done."
 echo " Domain:           https://${DOMAIN}"
 echo " DB name/user:     ${DB_NAME} / ${DB_USER}"
-echo " DB password:      ${DB_PASS}"
+echo " DB password:      ${DB_PASSWORD}"
 echo " App directory:    ${APP_DIR}"
 echo " Node port:        ${NODE_PORT}"
 echo " Nginx site:       /etc/nginx/sites-available/pogil-its.conf"
