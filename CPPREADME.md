@@ -4,7 +4,7 @@ cd /opt/POGIL-ITS/ops
 ./02-deploy-cxx-runner.sh
 ./02b-restart-cxx-runner.sh
 ```
-### What for:
+### Watch for:
   - “Starting C++ runner (cxx-runner) on 5055->8000”
   - “Runner healthy at http://127.0.0.1:5055/health”
 
