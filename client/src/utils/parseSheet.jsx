@@ -102,14 +102,43 @@ function collapseBracedCommands(rawLines) {
   return out;
 }
 
-export default function FileBlock({ filename, fileContents, editable, setFileContents }) {
-  // ✅ Local editing buffer
-  const [localValue, setLocalValue] = useState(fileContents?.[filename] || '');
+export default function FileBlock({
+  filename,
+  initialContent = '',
+  fileContents,
+  editable,
+  setFileContents,
+}) {
+  // Use live value from fileContents if present, otherwise fall back to initialContent
+  const effective =
+    fileContents && Object.prototype.hasOwnProperty.call(fileContents, filename)
+      ? fileContents[filename]
+      : initialContent;
 
-  // ✅ Sync local when fileContents changes from outside (initial load or external update)
+  const [localValue, setLocalValue] = useState(effective);
+
+  // Keep local in sync when parent state or initial content changes
   useEffect(() => {
-    setLocalValue(fileContents?.[filename] || '');
-  }, [fileContents, filename]);
+    const next =
+      fileContents && Object.prototype.hasOwnProperty.call(fileContents, filename)
+        ? fileContents[filename]
+        : initialContent;
+    setLocalValue(next);
+  }, [fileContents, filename, initialContent]);
+
+  // 🔴 KEY: seed fileContents once so the runner sees authored files
+  useEffect(() => {
+    if (
+      setFileContents &&
+      initialContent &&
+      (!fileContents || !Object.prototype.hasOwnProperty.call(fileContents, filename))
+    ) {
+      setFileContents(prev => ({
+        ...prev,
+        [filename]: initialContent,
+      }));
+    }
+  }, [filename, initialContent, fileContents, setFileContents]);
 
   const handleChange = (e) => {
     const updated = e.target.value;
@@ -125,7 +154,7 @@ export default function FileBlock({ filename, fileContents, editable, setFileCon
 
   return (
     <div className="mb-3">
-      <strong>📄 File: <code>{filename}</code></strong>
+      <strong>File: <code>{filename}</code></strong>
       <Form.Control
         as="textarea"
         value={localValue}
@@ -137,6 +166,8 @@ export default function FileBlock({ filename, fileContents, editable, setFileCon
     </div>
   );
 }
+
+
 
 
 
@@ -859,15 +890,17 @@ export function renderBlocks(blocks, options = {}) {
     if (block.type === 'file') {
       return (
         <FileBlock
-          key={`file-${block.filename}`} // ✅ stable and unique
+          key={`file-${block.filename}-${index}`}
           filename={block.filename}
+          initialContent={block.content || ''}
           fileContents={fileContents}
           setFileContents={setFileContents}
           editable={true}
         />
-
       );
     }
+
+
 
     if (block.type === 'pythonturtle') {
       // Local-only top-level turtle: no DB keys, no prefill, always reflect sheet
@@ -1348,66 +1381,76 @@ export function renderBlocks(blocks, options = {}) {
 
           })}
 
-          {block.cppBlocks?.map((cpp, i) => {
-            const responseKey = `${block.groupId}${block.id}code${i + 1}`;
-            const saved = prefill?.[responseKey]?.response || cpp.content;
+{block.cppBlocks?.map((cpp, i) => {
+  const responseKey = `${block.groupId}${block.id}code${i + 1}`;
+  const saved = prefill?.[responseKey]?.response || cpp.content;
 
-            const codeMode = options.codeViewMode?.[responseKey] || 'active';
-            const showToggle = !!allowLocalToggle && (options.isObserver || isInstructor);
-            const displayedCode = (showToggle && codeMode === 'local')
-              ? (options.localCode?.[responseKey] ?? saved)
-              : saved;
+  const codeMode = options.codeViewMode?.[responseKey] || 'active';
+  const showToggle = !!allowLocalToggle && (options.isObserver || isInstructor);
 
-            const canEdit =
-              runMode === 'preview'
-                ? editable
-                : (editable && isActive) || (showToggle && codeMode === 'local');
+  const displayedCode = (showToggle && codeMode === 'local')
+    ? (options.localCode?.[responseKey] ?? saved)
+    : saved;
 
-            return (
-              <div key={`q-${block.groupId}-${block.id}-cpp-${i}`}>
-                {runMode === 'preview' && (
-                  <div className="text-muted small mb-1">
-                    ⏱ Time limit: {cpp.timeLimit ?? 5000} · <span className="badge bg-secondary">C++</span>
-                  </div>
-                )}
-                {showToggle && (
-                  <div className="d-flex justify-content-end mb-1">
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-outline-secondary"
-                      onClick={() => options.onToggleViewMode?.(responseKey, codeMode === 'active' ? 'local' : 'active')}
-                    >
-                      {codeMode === 'active' ? 'Follow Active' : 'Local Sandbox'}
-                    </button>
-                  </div>
-                )}
-                <ActivityCppBlock
-                  code={displayedCode}
-                  blockIndex={`cpp-${block.groupId}-${block.id}-${i}`}
-                  editable={canEdit}
-                  responseKey={responseKey}
-                  onCodeChange={(rk, code, extra) => {
-                    if (showToggle && codeMode === 'local' && !isActive) {
-                      options.onLocalCodeChange?.(rk, code);
-                      return;
-                    }
-                    onCodeChange && onCodeChange(rk, code, {
-                      ...extra,
-                      questionText: stripHtml(block.prompt || ''),
-                      hasTextResponse: !!block.hasTextResponse,
-                      hasTableResponse: !!block.hasTableResponse,
-                      lang: 'cpp',
-                    });
-                  }}
-                  timeLimit={cpp.timeLimit ?? 5000}
-                  /* 👇 pass guidance so the panel can render */
-                  codeFeedbackShown={codeFeedbackShown}
-                  feedback={codeFeedbackShown?.[responseKey] || null}
-                />
+  const canEdit =
+    runMode === 'preview'
+      ? editable
+      : (editable && isActive) || (showToggle && codeMode === 'local');
 
-              </div>
-            );
-          })}
+  return (
+    <div key={`q-${block.groupId}-${block.id}-cpp-${i}`}>
+      {runMode === 'preview' && (
+        <div className="text-muted small mb-1">
+          ⏱ Time limit: {cpp.timeLimit ?? 5000}{' '}
+          <span className="badge bg-secondary">C++</span>
+        </div>
+      )}
+
+      {showToggle && (
+        <div className="d-flex justify-content-end mb-1">
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary"
+            onClick={() =>
+              options.onToggleViewMode?.(
+                responseKey,
+                codeMode === 'active' ? 'local' : 'active'
+              )
+            }
+          >
+            {codeMode === 'active' ? 'Follow Active' : 'Local Sandbox'}
+          </button>
+        </div>
+      )}
+
+      <ActivityCppBlock
+        code={displayedCode}
+        blockIndex={`cpp-${block.groupId}-${block.id}-${i}`}
+        editable={canEdit}
+        responseKey={responseKey}
+        onCodeChange={(rk, code, extra) => {
+          if (showToggle && codeMode === 'local' && !isActive) {
+            options.onLocalCodeChange?.(rk, code);
+            return;
+          }
+          onCodeChange &&
+            onCodeChange(rk, code, {
+              ...extra,
+              questionText: stripHtml(block.prompt || ''),
+              hasTextResponse: !!block.hasTextResponse,
+              hasTableResponse: !!block.hasTableResponse,
+              lang: 'cpp',
+            });
+        }}
+        timeLimit={cpp.timeLimit ?? 5000}
+        codeFeedbackShown={codeFeedbackShown}
+        feedback={codeFeedbackShown?.[responseKey] || null}
+        fileContents={fileContents}
+        setFileContents={setFileContents}
+      />
+    </div>
+  );
+})}
 
           {block.tableBlocks?.map((table, i) => (
             <div key={`q-table-${index}-${i}`} className="my-3">
