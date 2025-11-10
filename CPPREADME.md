@@ -1,3 +1,22 @@
+## Restart after app.py change:
+```
+cd /opt/POGIL-ITS/ops
+./02-deploy-cxx-runner.sh
+./02b-restart-cxx-runner.sh
+```
+### Watch for:
+  - “Starting C++ runner (cxx-runner) on 5055->8000”
+  - “Runner healthy at http://127.0.0.1:5055/health”
+
+### Check
+```
+curl http://127.0.0.1:5055/health
+
+sudo docker logs cxx-runner --tail 40
+
+
+```
+
 
 ```
 cd /opt/POGIL-ITS/ops
