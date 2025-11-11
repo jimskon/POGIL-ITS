@@ -163,7 +163,8 @@ export default function ViewGroupsPage() {
           <option value="">Remove student...</option>
           {active.map((s) => (
             <option key={`${s.activity_instance_id}:${s.id}`} value={`${s.activity_instance_id}:${s.id}`}>
-              G{s.group_number} — {s.name} ({s.role})
+              G{s.group_number} — {s.name}
+              {s.role ? ` (${s.role})` : ''}
             </option>
           ))}
         </Form.Select>
@@ -220,8 +221,11 @@ export default function ViewGroupsPage() {
                           <FaUserCheck title="Active student" className="text-success ms-1" />
                         )}
                         {m.connected && <FaLaptop title="Connected" className="text-info ms-1" />}
-                        <span className="ms-2 text-muted">({m.role})</span>
+                        {m.role && (
+                          <span className="ms-2 text-muted">({m.role})</span>
+                        )}
                       </li>
+
                     ))}
                   </ul>
                 </Card.Body>

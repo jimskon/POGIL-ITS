@@ -1,35 +1,36 @@
 // GroupSetupPage.jsx
 
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom'; // ⬅️ Import useNavigate for redirection
+import { useParams, useNavigate } from 'react-router-dom';
 import { Container, Row, Col, Button, Form, Card } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
 
 export default function GroupSetupPage() {
   const { courseId, activityId } = useParams();
-  const navigate = useNavigate(); // ⬅️ Initialize useNavigate
-  console.log("GroupSetupPage🔍 courseId:", courseId, "activityId:", activityId);
+  const navigate = useNavigate();
 
   const [students, setStudents] = useState([]);
   const [selected, setSelected] = useState({});
   const [groups, setGroups] = useState([]);
+  const [groupSize, setGroupSize] = useState(4);      // 🔹 New: group size selector (1–5)
+  const [useRoles, setUseRoles] = useState(true);     // 🔹 New: toggle role assignment
 
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/courses/${courseId}/students`)
       .then(res => res.json())
       .then(data => {
         const loaded = Array.isArray(data) ? data : data.students;
-        setStudents(loaded);
+        setStudents(loaded || []);
 
-        // ✅ Initialize all as selected
+        // Initialize all students with role 'student' as selected
         const defaultSelected = {};
-        loaded.forEach(student => {
-          defaultSelected[student.id] = student.role === 'student'; // ✅ only auto-select students
+        (loaded || []).forEach(student => {
+          defaultSelected[student.id] = student.role === 'student';
         });
         setSelected(defaultSelected);
       })
       .catch(err => console.error('❌ Failed to load students:', err));
-  }, [activityId]);
+  }, [courseId, activityId]);
 
   const toggleSelect = (id) => {
     setSelected(prev => ({ ...prev, [id]: !prev[id] }));
@@ -37,48 +38,72 @@ export default function GroupSetupPage() {
 
   const generateGroups = () => {
     const present = students.filter(s => selected[s.id]);
-    const shuffled = [...present].sort(() => 0.5 - Math.random());
+    const shuffled = [...present].sort(() => Math.random() - 0.5);
 
-    const groups = [];
-    for (let i = 0; i < shuffled.length; i += 4) {
-      groups.push(shuffled.slice(i, i + 4));
+    if (shuffled.length === 0) {
+      setGroups([]);
+      return;
     }
 
-    const lastGroup = groups[groups.length - 1];
+    const size = Math.min(Math.max(groupSize, 1), 5); // clamp 1–5
 
-    if (lastGroup.length === 1 && groups.length >= 3) {
-      const merged = groups.splice(-3).flat();
-      groups.push(merged.slice(0, 3), merged.slice(3, 6), merged.slice(6));
-    } else if (lastGroup.length === 2 && groups.length >= 2) {
-      const merged = groups.splice(-2).flat();
-      groups.push(merged.slice(0, 3), merged.slice(3));
+    // Split into groups of chosen size
+    const rawGroups = [];
+    for (let i = 0; i < shuffled.length; i += size) {
+      rawGroups.push(shuffled.slice(i, i + size));
     }
 
-    const roleNames = ['facilitator', 'spokesperson', 'analyst', 'qc'];
-    const finalGroups = groups.map(group => {
-      const members = [];
-      if (group.length === 4) {
-        group.forEach((s, i) => {
-          members.push({ student_id: s.id, role: roleNames[i] });
-        });
-      } else if (group.length === 3) {
-        members.push({ student_id: group[0].id, role: 'facilitator' });
-        members.push({ student_id: group[0].id, role: 'spokesperson' });
-        members.push({ student_id: group[1].id, role: 'analyst' });
-        members.push({ student_id: group[2].id, role: 'qc' });
-      } else if (group.length < 3) {
-        const fillers = [...group];
-        while (fillers.length < 4) {
-          fillers.push(group[0]);
-        }
-        fillers.forEach((s, i) => {
-          members.push({ student_id: s.id, role: roleNames[i] });
-        });
+    // Keep your special merge behavior ONLY for size 4 (your previous logic)
+    if (size === 4 && rawGroups.length > 0) {
+      const lastGroup = rawGroups[rawGroups.length - 1];
+
+      if (lastGroup.length === 1 && rawGroups.length >= 3) {
+        const merged = rawGroups.splice(-3).flat();
+        rawGroups.push(
+          merged.slice(0, 3),
+          merged.slice(3, 6),
+          merged.slice(6)
+        );
+      } else if (lastGroup.length === 2 && rawGroups.length >= 2) {
+        const merged = rawGroups.splice(-2).flat();
+        rawGroups.push(
+          merged.slice(0, 3),
+          merged.slice(3)
+        );
       }
-      return { members };
-    });
+    }
 
-    console.log("🧩 Generated groups:", finalGroups);
+    const rolePriority = ['facilitator', 'analyst', 'qc', 'spokesperson'];
+
+const finalGroups = rawGroups.map(group => {
+  const gSize = group.length;
+
+  const members = group.map((student, index) => {
+    let role = null; // default: no role
+
+    if (useRoles) {
+      if (gSize < 4) {
+        // Fill roles in priority order for however many students there are
+        role = rolePriority[index] || null;
+      } else if (gSize === 4) {
+        role = rolePriority[index] || null;
+      } else {
+        // gSize === 5: first 4 get roles, 5th gets none
+        role = index < 4 ? rolePriority[index] : null;
+      }
+    }
+
+    return {
+      student_id: student.id,
+      role
+    };
+  });
+
+  return { members };
+});
+
+
+    console.log('🧩 Generated groups:', finalGroups);
     setGroups(finalGroups);
   };
 
@@ -93,11 +118,12 @@ export default function GroupSetupPage() {
           groups
         })
       });
+
       const data = await res.json();
+
       if (res.ok) {
         alert('✅ Groups saved successfully.');
-        // ✅ Redirect to the View Groups page after successful save
-        navigate(`/view-groups/${courseId}/${activityId}`); // ⬅️ Added this line for redirection
+        navigate(`/view-groups/${courseId}/${activityId}`);
       } else {
         alert(`❌ Error: ${data.error}`);
       }
@@ -110,6 +136,7 @@ export default function GroupSetupPage() {
   return (
     <Container className="mt-4">
       <h2>Group Setup</h2>
+
       <h5>Select Present Students:</h5>
       <Row>
         {Array.isArray(students) && students.length > 0 ? (
@@ -128,7 +155,34 @@ export default function GroupSetupPage() {
         )}
       </Row>
 
-      <Button className="mt-3" onClick={generateGroups}>Generate Groups</Button>
+      {/* 🔹 Controls: group size + use roles */}
+      <Row className="mt-3">
+        <Col md={3}>
+          <Form.Label>Group Size</Form.Label>
+          <Form.Select
+            value={groupSize}
+            onChange={(e) => setGroupSize(Number(e.target.value))}
+          >
+            {[1, 2, 3, 4, 5].map(size => (
+              <option key={size} value={size}>{size}</option>
+            ))}
+          </Form.Select>
+        </Col>
+        <Col md={3} className="d-flex align-items-end">
+          <Form.Check
+            type="checkbox"
+            id="use-roles"
+            label="Assign roles to group members"
+            checked={useRoles}
+            onChange={(e) => setUseRoles(e.target.checked)}
+          />
+        </Col>
+      </Row>
+
+      <Button className="mt-3" onClick={generateGroups}>
+        Generate Groups
+      </Button>
+
       {groups.length > 0 && (
         <>
           <h5 className="mt-4">Generated Groups:</h5>
@@ -137,10 +191,16 @@ export default function GroupSetupPage() {
               <Card.Header>Group {idx + 1}</Card.Header>
               <Card.Body>
                 <ul>
-                  {Array.isArray(group.members) ? (
+                  {Array.isArray(group.members) && group.members.length > 0 ? (
                     group.members.map((m, i) => {
                       const student = students.find(s => s.id === m.student_id);
-                      return <li key={i}>{m.role}: {student?.name || 'Unknown'}</li>;
+                      const name = student?.name || 'Unknown';
+                      // Show role label only if non-empty
+                      return (
+                        <li key={i}>
+                          {m.role ? `${m.role}: ${name}` : name}
+                        </li>
+                      );
                     })
                   ) : (
                     <li>⚠️ No members in this group.</li>

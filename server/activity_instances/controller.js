@@ -346,52 +346,79 @@ async function rotateActiveStudent(req, res) {
 
 }
 
+// Body: { activityId, courseId, groups: [ { members: [ { student_id, role } ] } ] }
 async function setupMultipleGroupInstances(req, res) {
   const { activityId, courseId, groups } = req.body;
 
-  if (!activityId || !courseId || !groups?.length) {
-    return res.status(400).json({ error: 'Missing data' });
+  if (!activityId || !courseId || !Array.isArray(groups)) {
+    return res.status(400).json({ error: 'activityId, courseId, and groups are required' });
   }
 
+  const conn = await db.getConnection();
   try {
-    const instanceIds = [];
+    await conn.beginTransaction();
+
+    // Remove existing instances + members for this course+activity
+    const [oldInstances] = await conn.query(
+      `SELECT id FROM activity_instances WHERE course_id = ? AND activity_id = ?`,
+      [courseId, activityId]
+    );
+
+    const instanceIds = oldInstances.map(r => r.id);
+    if (instanceIds.length > 0) {
+      await conn.query(
+        `DELETE FROM group_members WHERE activity_instance_id IN (?)`,
+        [instanceIds]
+      );
+      await conn.query(
+        `DELETE FROM activity_instances WHERE id IN (?)`,
+        [instanceIds]
+      );
+    }
+
+    // One activity_instance per group, then insert members
     for (let i = 0; i < groups.length; i++) {
       const group = groups[i];
-      const [result] = await db.query(
-        `INSERT INTO activity_instances (activity_id, course_id, group_number) VALUES (?, ?, ?)`,
-        [activityId, courseId, i + 1]
+      const group_number = i + 1;
+
+      const [instanceResult] = await conn.query(
+        `INSERT INTO activity_instances (course_id, activity_id, status, group_number)
+         VALUES (?, ?, 'in_progress', ?)`,
+        [courseId, activityId, group_number]
       );
-      const instanceId = result.insertId;
-      instanceIds.push(instanceId);
+      const instanceId = instanceResult.insertId;
 
-      for (const member of group.members) {
-        await db.query(`INSERT INTO group_members (activity_instance_id, student_id, role) VALUES (?, ?, ?)`,
-          [instanceId, member.student_id, member.role]);
+      if (Array.isArray(group.members)) {
+        for (const member of group.members) {
+          if (!member.student_id) continue;
+
+          // Only accept known roles; everything else -> NULL
+          const cleanRole =
+            member.role &&
+            ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
+              ? member.role
+              : null;
+
+          await conn.query(
+            `INSERT INTO group_members (activity_instance_id, student_id, role)
+             VALUES (?, ?, ?)`,
+            [instanceId, member.student_id, cleanRole]
+          );
+        }
       }
-
-      // Select only students from group
-      const [studentRows] = await db.query(
-        `SELECT u.id FROM users u
-   JOIN group_members gm ON u.id = gm.student_id
-   WHERE gm.activity_instance_id = ? AND u.role = 'student'`,
-        [instanceId]
-      );
-
-      if (studentRows.length > 0) {
-        const randomStudentId = studentRows[Math.floor(Math.random() * studentRows.length)].id;
-        await db.query(`UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
-          [randomStudentId, instanceId]);
-      } else {
-        console.warn(`⚠️ No student found in group ${i + 1}, skipping active assignment.`);
-      }
-
     }
-    res.json({ success: true, instanceIds });
+
+    await conn.commit();
+    return res.json({ success: true });
   } catch (err) {
-    console.error("❌ setupMultipleGroupInstances:", err);
-    res.status(500).json({ error: 'Failed to setup instances' });
+    await conn.rollback();
+    console.error('❌ Error setting up groups:', err);
+    return res.status(500).json({ error: 'Failed to setup groups' });
+  } finally {
+    conn.release();
   }
 }
+
 
 async function submitGroupResponses(req, res) {
   const { instanceId } = req.params;
