@@ -21,6 +21,7 @@ export default function ActivityCppBlock({
   codeFeedbackShown = {},
   fileContents = {},       // { "data.txt": "10 20 30", ... }
   setFileContents,         // fn to update sheet-level file contents
+  includeFiles = null,
 }) {
   // --- code state ---
   const [code, setCode] = useState(initialCode ?? '');
@@ -167,13 +168,13 @@ export default function ActivityCppBlock({
       window.removeEventListener('resize', onResize);
       try {
         onDataDisposeRef.current?.dispose();
-      } catch {}
+      } catch { }
       try {
         term.current?.dispose();
-      } catch {}
+      } catch { }
       try {
         wsRef.current?.close();
-      } catch {}
+      } catch { }
     };
   }, []);
 
@@ -202,15 +203,62 @@ export default function ActivityCppBlock({
     return `${proto}://${window.location.host}/cxx-run/session/ws/${sid}`;
   };
 
+    const [includeText, setIncludeText] = useState(
+    Array.isArray(includeFiles) ? includeFiles.join(', ') : ''
+  );
+
+  useEffect(() => {
+    if (Array.isArray(includeFiles)) {
+      setIncludeText(includeFiles.join(', '));
+    }
+  }, [includeFiles]);
+
+  const parseIncludeList = (text) =>
+    text
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+  const buildFilesPayload = () => {
+    if (!fileContents) return undefined;
+    const entries = Object.entries(fileContents);
+    if (!entries.length) return undefined;
+
+    const includeList = parseIncludeList(includeText);
+
+    // If no includes specified: legacy behavior, send everything.
+    if (!includeList.length) {
+      return { ...fileContents };
+    }
+
+    const selected = {};
+
+    // 1) Add explicitly included files if present
+    for (const name of includeList) {
+      if (fileContents[name] !== undefined) {
+        selected[name] = fileContents[name];
+      }
+    }
+
+    // 2) Always include non-C++ files as data (e.g., data.txt)
+    for (const [name, content] of entries) {
+      if (!/\.(cpp|cc|cxx|c)$/i.test(name) && selected[name] === undefined) {
+        selected[name] = content;
+      }
+    }
+
+    return Object.keys(selected).length ? selected : undefined;
+  };
+
   // --- unified run: interactive + sheet files ---
   const runInteractive = async () => {
     // close previous session if any
     try {
       wsRef.current?.close();
-    } catch {}
+    } catch { }
     try {
       onDataDisposeRef.current?.dispose();
-    } catch {}
+    } catch { }
 
     term.current?.clear();
     term.current?.writeln('Compiling...');
@@ -220,10 +268,11 @@ export default function ActivityCppBlock({
     try {
       const payload = { code };
 
-      // include sheet-authored files (e.g., data.txt, log.txt initial contents)
-      // fileContents is a plain { filename: content } map from the parent
-      if (!localOnly && fileContents && Object.keys(fileContents).length > 0) {
-        payload.files = fileContents;
+      if (!localOnly) {
+        const filesPayload = buildFilesPayload();
+        if (filesPayload) {
+          payload.files = filesPayload;
+        }
       }
 
       const res = await fetch('/cxx-run/session/new', {
@@ -297,7 +346,7 @@ export default function ActivityCppBlock({
 
         try {
           onDataDisposeRef.current?.dispose();
-        } catch {}
+        } catch { }
         onDataDisposeRef.current = term.current.onData(onData);
       };
 
@@ -337,7 +386,7 @@ export default function ActivityCppBlock({
       ws.onclose = () => {
         try {
           onDataDisposeRef.current?.dispose();
-        } catch {}
+        } catch { }
         inputBufferRef.current = '';
         term.current.writeln('\r\n[Program finished]');
         setIsRunning(false);
@@ -489,8 +538,22 @@ export default function ActivityCppBlock({
           >
             {isRunning ? 'Running…' : 'Run C++'}
           </Button>
+          
         </div>
-
+        {/* Optional include list (from \include{...}), editable locally */}
+        {(!localOnly) && (
+          <div className="mb-1">
+            <small className="text-muted me-1">Included files for compile:</small>
+            <Form.Control
+              type="text"
+              size="sm"
+              value={includeText}
+              onChange={(e) => setIncludeText(e.target.value)}
+              placeholder="(all .cpp files if left blank)"
+              className="d-inline-block"
+            />
+          </div>
+        )}
         {/* Editor / Viewer with line-number gutter */}
         <div style={styles.editorWrap}>
           <pre ref={gutterRef} style={styles.gutter} aria-hidden="true">

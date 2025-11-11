@@ -74,7 +74,7 @@ function ImgWithFallback({ src, alt, widthStyle, captionHtml }) {
 // Keeps everything else as-is. Works for any \SomeTag{ ... } (including section*, link, image, etc.)
 function collapseBracedCommands(rawLines) {
   const startsTag = (s) =>
-    /^\s*\\(?:title|name|activitycontext|studentlevel|aicodeguidance|section\*?|questiongroup|question|sampleresponses|feedbackprompt|followupprompt|table|image|link|file|pythonturtle|cpp)\{/.test(s);
+    +    /^\s*\\(?:title|name|activitycontext|studentlevel|aicodeguidance|section\*?|questiongroup|question|sampleresponses|feedbackprompt|followupprompt|table|image|link|file|pythonturtle|cpp|include)\{/.test(s);
   const out = [];
   let buf = null;
   let depth = 0;
@@ -192,6 +192,7 @@ export function parseSheetToBlocks(lines) {
   let openHeaderTag = null;
   let openHeaderBuf = [];
   let inGroup = false;
+  let pendingIncludeFiles = null;
 
   const flushCurrentBlock = () => {
     if (currentBlock.length > 0) {
@@ -281,6 +282,19 @@ export function parseSheetToBlocks(lines) {
 
   for (let line of lines) {
     const trimmed = line.trim();
+    // \include{file1.cpp,file2.cpp}
+    if (trimmed.startsWith('\\include{')) {
+      const m = trimmed.match(/^\\include\{([\s\S]+)\}$/);
+      if (m) {
+        pendingIncludeFiles = m[1]
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean);
+      } else {
+        pendingIncludeFiles = null;
+      }
+      continue;
+    }
 
     // If we're currently inside a multi-line header, keep collecting lines
     if (openHeaderTag) {
@@ -370,8 +384,13 @@ export function parseSheetToBlocks(lines) {
       flushCurrentBlock();
       currentField = 'cpp';
       const timeLimit = cppMatch[1] ? parseInt(cppMatch[1]) : 5000;
-      const blockObj = { type: 'cpp', lines: [], timeLimit };
-
+      const blockObj = {
+        type: 'cpp',
+        lines: [],
+        timeLimit,
+        includeFiles: pendingIncludeFiles || null,
+      };
+      pendingIncludeFiles = null;
       if (currentQuestion && currentQuestion.type === 'question') {
         if (!currentQuestion.cppBlocks) currentQuestion.cppBlocks = [];
         currentQuestion.cppBlocks.push(blockObj);
@@ -383,7 +402,8 @@ export function parseSheetToBlocks(lines) {
           index: nextIndex,
           editable: true,
           content: '',          // fill on \endcpp
-          timeLimit
+          timeLimit,
+          includeFiles: blockObj.includeFiles || null,
         });
       } else {
         blocks.push({ ...blockObj, localOnly: !inGroup });
@@ -404,6 +424,7 @@ export function parseSheetToBlocks(lines) {
             type: 'cpp',
             content,
             timeLimit: block.timeLimit || 5000,
+            includeFiles: block.includeFiles || null,
           });
           // mirror the content into the most-recent cpp entry in codeBlocks
           const idx = [...currentQuestion.codeBlocks]
@@ -1134,6 +1155,8 @@ export function renderBlocks(blocks, options = {}) {
     }
     if (block.type === 'cpp') {
       const tl = block.timeLimit ?? 5000;
+      const includeFiles = block.includeFiles || null;
+
 
       // Local-only top-level C++: ephemeral, not saved
       if (block.localOnly) {
@@ -1155,6 +1178,7 @@ export function renderBlocks(blocks, options = {}) {
               fileContents={fileContents}
               setFileContents={setFileContents}
               timeLimit={tl}
+              includeFiles={includeFiles}
             />
           </div>
         );
@@ -1216,6 +1240,8 @@ export function renderBlocks(blocks, options = {}) {
             fileContents={fileContents}
             setFileContents={setFileContents}
             timeLimit={tl}
+            includeFiles={includeFiles}
+
             /* 👇 pass guidance like Python does */
             codeFeedbackShown={codeFeedbackShown}
             feedback={codeFeedbackShown?.[codeKey] || null}
@@ -1381,76 +1407,77 @@ export function renderBlocks(blocks, options = {}) {
 
           })}
 
-{block.cppBlocks?.map((cpp, i) => {
-  const responseKey = `${block.groupId}${block.id}code${i + 1}`;
-  const saved = prefill?.[responseKey]?.response || cpp.content;
+          {block.cppBlocks?.map((cpp, i) => {
+            const responseKey = `${block.groupId}${block.id}code${i + 1}`;
+            const saved = prefill?.[responseKey]?.response || cpp.content;
+            const includeFiles = cpp.includeFiles || null;
 
-  const codeMode = options.codeViewMode?.[responseKey] || 'active';
-  const showToggle = !!allowLocalToggle && (options.isObserver || isInstructor);
+            const codeMode = options.codeViewMode?.[responseKey] || 'active';
+            const showToggle = !!allowLocalToggle && (options.isObserver || isInstructor);
 
-  const displayedCode = (showToggle && codeMode === 'local')
-    ? (options.localCode?.[responseKey] ?? saved)
-    : saved;
+            const displayedCode = (showToggle && codeMode === 'local')
+              ? (options.localCode?.[responseKey] ?? saved)
+              : saved;
 
-  const canEdit =
-    runMode === 'preview'
-      ? editable
-      : (editable && isActive) || (showToggle && codeMode === 'local');
+            const canEdit =
+              runMode === 'preview'
+                ? editable
+                : (editable && isActive) || (showToggle && codeMode === 'local');
 
-  return (
-    <div key={`q-${block.groupId}-${block.id}-cpp-${i}`}>
-      {runMode === 'preview' && (
-        <div className="text-muted small mb-1">
-          ⏱ Time limit: {cpp.timeLimit ?? 5000}{' '}
-          <span className="badge bg-secondary">C++</span>
-        </div>
-      )}
+            return (
+              <div key={`q-${block.groupId}-${block.id}-cpp-${i}`}>
+                {runMode === 'preview' && (
+                  <div className="text-muted small mb-1">
+                    ⏱ Time limit: {cpp.timeLimit ?? 5000}{' '}
+                    <span className="badge bg-secondary">C++</span>
+                  </div>
+                )}
 
-      {showToggle && (
-        <div className="d-flex justify-content-end mb-1">
-          <button
-            type="button"
-            className="btn btn-sm btn-outline-secondary"
-            onClick={() =>
-              options.onToggleViewMode?.(
-                responseKey,
-                codeMode === 'active' ? 'local' : 'active'
-              )
-            }
-          >
-            {codeMode === 'active' ? 'Follow Active' : 'Local Sandbox'}
-          </button>
-        </div>
-      )}
+                {showToggle && (
+                  <div className="d-flex justify-content-end mb-1">
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-secondary"
+                      onClick={() =>
+                        options.onToggleViewMode?.(
+                          responseKey,
+                          codeMode === 'active' ? 'local' : 'active'
+                        )
+                      }
+                    >
+                      {codeMode === 'active' ? 'Follow Active' : 'Local Sandbox'}
+                    </button>
+                  </div>
+                )}
 
-      <ActivityCppBlock
-        code={displayedCode}
-        blockIndex={`cpp-${block.groupId}-${block.id}-${i}`}
-        editable={canEdit}
-        responseKey={responseKey}
-        onCodeChange={(rk, code, extra) => {
-          if (showToggle && codeMode === 'local' && !isActive) {
-            options.onLocalCodeChange?.(rk, code);
-            return;
-          }
-          onCodeChange &&
-            onCodeChange(rk, code, {
-              ...extra,
-              questionText: stripHtml(block.prompt || ''),
-              hasTextResponse: !!block.hasTextResponse,
-              hasTableResponse: !!block.hasTableResponse,
-              lang: 'cpp',
-            });
-        }}
-        timeLimit={cpp.timeLimit ?? 5000}
-        codeFeedbackShown={codeFeedbackShown}
-        feedback={codeFeedbackShown?.[responseKey] || null}
-        fileContents={fileContents}
-        setFileContents={setFileContents}
-      />
-    </div>
-  );
-})}
+                <ActivityCppBlock
+                  code={displayedCode}
+                  blockIndex={`cpp-${block.groupId}-${block.id}-${i}`}
+                  editable={canEdit}
+                  responseKey={responseKey}
+                  onCodeChange={(rk, code, extra) => {
+                    if (showToggle && codeMode === 'local' && !isActive) {
+                      options.onLocalCodeChange?.(rk, code);
+                      return;
+                    }
+                    onCodeChange &&
+                      onCodeChange(rk, code, {
+                        ...extra,
+                        questionText: stripHtml(block.prompt || ''),
+                        hasTextResponse: !!block.hasTextResponse,
+                        hasTableResponse: !!block.hasTableResponse,
+                        lang: 'cpp',
+                      });
+                  }}
+                  timeLimit={cpp.timeLimit ?? 5000}
+                  codeFeedbackShown={codeFeedbackShown}
+                  feedback={codeFeedbackShown?.[responseKey] || null}
+                  fileContents={fileContents}
+                  setFileContents={setFileContents}
+                />
+              </div>
+            );
+          })}
 
           {block.tableBlocks?.map((table, i) => (
             <div key={`q-table-${index}-${i}`} className="my-3">
