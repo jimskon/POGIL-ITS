@@ -409,5 +409,9 @@ rm -rf node_modules package-lock.json
 npm install
 ```
 
-
+## Fix for flexible group size and no roles:
+```
+ALTER TABLE group_members
+  MODIFY COLUMN role ENUM('facilitator','analyst','qc','spokesperson')
+  NULL DEFAULT NULL;
 ```
