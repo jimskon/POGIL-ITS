@@ -1,3 +1,4 @@
+// server/groups/controller.js
 const db = require('../db');
 
 // POST /api/groups
