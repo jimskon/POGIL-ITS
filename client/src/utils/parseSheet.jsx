@@ -1300,6 +1300,11 @@ export function renderBlocks(blocks, options = {}) {
 
 
     if (block.type === 'question') {
+      const codeIndicesByLang = { python: [], cpp: [] };
+      (block.codeBlocks || []).forEach(cb => {
+        if (cb.lang === 'python') codeIndicesByLang.python.push(cb.index);
+        if (cb.lang === 'cpp') codeIndicesByLang.cpp.push(cb.index);
+      });
       const responseKey = `${block.groupId}${block.id}`;
       const followupAppeared = !!followupsShown?.[responseKey];
       const groupComplete = prefill?.[`${responseKey}S`] === 'complete';
@@ -1332,7 +1337,8 @@ export function renderBlocks(blocks, options = {}) {
           </p>
 
           {block.pythonBlocks?.map((py, i) => {
-            const responseKey = `${block.groupId}${block.id}code${i + 1}`;
+            const cbIndex = codeIndicesByLang.python[i] ?? (i + 1);
+            const responseKey = `${block.groupId}${block.id}code${cbIndex}`;
             const savedResponse = prefill?.[responseKey]?.response || py.content;
             const isTurtle = py.type === 'pythonturtle';
             const turtleId = isTurtle ? `sk-turtle-${block.groupId}${block.id}-${i}` : null;
@@ -1408,7 +1414,9 @@ export function renderBlocks(blocks, options = {}) {
           })}
 
           {block.cppBlocks?.map((cpp, i) => {
-            const responseKey = `${block.groupId}${block.id}code${i + 1}`;
+            const cbIndex = codeIndicesByLang.cpp[i] ?? (i + 1);
+            const responseKey = `${block.groupId}${block.id}code${cbIndex}`;
+
             const saved = prefill?.[responseKey]?.response || cpp.content;
             const includeFiles = cpp.includeFiles || null;
 
