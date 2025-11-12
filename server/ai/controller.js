@@ -34,6 +34,20 @@ const SOFT_PATTERNS = [
   /uppercase.*lowercase/i, /\brefactor\b/i, /\boptimi[sz]e\b/i, /\bextra feature\b/i
 ];
 
+function detectLangFromCode(src = "") {
+  const s = String(src).trim();
+  if (!s) return null;
+
+  // Very lightweight heuristics
+  if (/\b#include\s*<[^>]+>/.test(s) || /\bint\s+main\s*\(/.test(s) || /std::(cout|cin|string)/.test(s)) {
+    return "cpp";
+  }
+  if (/\bdef\s+\w+\s*\(/.test(s) || /\bprint\s*\(/.test(s) || /^\s*#/.test(s)) {
+    return "python";
+  }
+  return null;
+}
+
 function isSoft(text) {
   const t = String(text || '').trim();
   return !t || SOFT_PATTERNS.some(r => r.test(t));
@@ -418,6 +432,7 @@ async function evaluateCode({
   guidance = "",      // pass \aicodeguidance text here
   isCodeOnly = false, // true if this is a pure code question (allows a short follow-up only if policy permits)
   feedbackPrompt = "",
+  lang,
 }) {
   if (!questionText || !studentCode) {
     return { feedback: null, followup: null };
@@ -439,8 +454,15 @@ async function evaluateCode({
     policy.failOpen ? '- If minor issues but functionally OK, treat as correct (feedback=null, followup=null).' : '',
   ].filter(Boolean).join('\n');
 
+  const inferred = detectLangFromCode(studentCode);
+  const effLang = (lang || inferred || "").toLowerCase();
+
+  let langLabel = "the correct language for this code";
+  if (effLang === "cpp" || effLang === "c++") langLabel = "C++";
+  else if (effLang === "python") langLabel = "Python";
+
   const prompt = `
-You are a tutor evaluating a student's code.
+You are a ${langLabel} tutor evaluating a student's code.
 
 Per-question guidance (AUTHORITATIVE for this item):
 ${qGuide || "(none)"}
@@ -452,7 +474,7 @@ Task:
 ${questionText}
 
 Student's code (v${codeVersion}):
-\`\`\`
+\`\`\`${effLang === "cpp" || effLang === "c++" ? "cpp" : effLang === "python" ? "python" : ""}
 ${studentCode}
 \`\`\`
 
@@ -460,12 +482,13 @@ Return STRICT JSON with exactly these keys:
 {"feedback": string|null, "followup": string|null}
 
 Rules:
+- Base ALL syntax and feedback on ${langLabel}.
 - If the code is fully correct and appropriate: feedback=null, followup=null.
 - Otherwise:
   - "feedback" = ONE concise, actionable suggestion (single sentence).
   - "followup" = ${isCodeOnly ? 'ONE short tutor-style question (5–20 words) nudging toward the fix.' : 'null'}
 - No style/naming/formatting nits. No extra features beyond the prompt.
-- No f-strings if guidance says they’re unavailable.
+- Do NOT give Python-specific advice for non-Python code.
 ${rules ? '\n' + rules : ''}
 `.trim();
 
@@ -487,15 +510,15 @@ ${rules ? '\n' + rules : ''}
   const fatal = isFatal(feedback) || isFatal(followup);
 
   // If guidance says no follow-ups, drop them even if fatal (keep feedback).
-  if (policy.followupGate === 'none') followup = null;
-
-  // Fail-open / requirements-only → suppress soft/nitpicky output unless fatal.
-  if (!fatal && (policy.failOpen || policy.requirementsOnly)) {
-    feedback = null;
+  if (policy.followupGate === 'none') {
     followup = null;
   }
+
+  // Let the model handle "requirements-only" via the prompt wording.
+  // We still strip soft/nitpicky stuff unless it's clearly fatal.
   if (isSoft(feedback) && !fatal) feedback = null;
   if (isSoft(followup) && !fatal) followup = null;
+
 
   return { feedback, followup };
 }

@@ -1,3 +1,4 @@
+# ops/cxx-runner/app.py
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Union
@@ -11,13 +12,14 @@ import shutil
 import time
 import json
 import redis.asyncio as redis
+import math
 
 app = FastAPI(title="C++20 Runner", version="1.5")
 
 # --- configuration ---
 SESSION_TTL_SEC = 600
-WALL_LIMIT_SEC = 8
-IDLE_LIMIT_SEC = 4
+WALL_LIMIT_SEC = 60
+IDLE_LIMIT_SEC = 15
 
 r = redis.Redis(host="redis", port=6379, decode_responses=True)
 
@@ -35,9 +37,10 @@ async def health():
 
 class RunReq(BaseModel):
     code: str = Field(..., min_length=1, max_length=20000)
-    # Either { "name": "content", ... } or [ { "name", "content" }, ... ]
     files: Optional[Union[Dict[str, str], List[Dict[str, str]]]] = None
-
+    # NEW: optional per-request timeouts (milliseconds)
+    timeout_ms: Optional[int] = None         # wall clock
+    idle_timeout_ms: Optional[int] = None    # inactivity
 
 class RunResp(BaseModel):
     ok: bool
@@ -190,14 +193,17 @@ class NewSessionReq(RunReq):
     pass
 
 
+DEFAULT_WALL_LIMIT_SEC = 60
+DEFAULT_IDLE_LIMIT_SEC = 15
+
 @app.post("/session/new")
 async def session_new(req: NewSessionReq):
     """
     Create a new interactive session:
     - writes main.cpp
     - materializes any provided files
-    - compiles
-    - stores tmpdir/exe in Redis keyed by sessionId
+    - compiles (with a guard timeout)
+    - stores tmpdir/exe and per-session limits in Redis keyed by sessionId
     """
     td = tempfile.mkdtemp()
     src = os.path.join(td, "main.cpp")
@@ -220,22 +226,42 @@ async def session_new(req: NewSessionReq):
         stderr=asyncio.subprocess.PIPE,
         cwd=td,
     )
-    _out, err = await proc.communicate()
+
+    try:
+        _out, err = await asyncio.wait_for(proc.communicate(), timeout=10.0)
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        try:
+            await proc.wait()
+        except Exception:
+            pass
+        shutil.rmtree(td, ignore_errors=True)
+        return {"ok": False, "compile_error": "Compile timed out\n"}
 
     if proc.returncode != 0:
         shutil.rmtree(td, ignore_errors=True)
         return {"ok": False, "compile_error": err.decode(errors="ignore")}
+
+    # Per-session limits (fall back to defaults if not provided)
+    wall_sec = max(1, int((req.timeout_ms or DEFAULT_WALL_LIMIT_SEC * 1000) / 1000))
+    idle_sec = max(1, int((req.idle_timeout_ms or DEFAULT_IDLE_LIMIT_SEC * 1000) / 1000))
+    idle_sec = min(idle_sec, wall_sec)
 
     sid = str(uuid.uuid4())
     await r.hset(_session_key(sid), mapping={
         "tmpdir": td,
         "exe": exe,
         "created_at": str(time.time()),
+        "wall_sec": str(wall_sec),
+        "idle_sec": str(idle_sec),
     })
     await r.expire(_session_key(sid), SESSION_TTL_SEC)
 
-    return {"ok": True, "sessionId": sid}
-
+    # Return limits so the client can log them
+    return {"ok": True, "sessionId": sid, "wall_sec": wall_sec, "idle_sec": idle_sec}
 
 @app.websocket("/session/ws/{sid}")
 async def session_ws(ws: WebSocket, sid: str):
@@ -247,6 +273,7 @@ async def session_ws(ws: WebSocket, sid: str):
     - enforces wall/idle limits
     - on exit, sends [FILES]{json} with any small text files
     """
+
     await ws.accept()
 
     key = _session_key(sid)
@@ -259,17 +286,32 @@ async def session_ws(ws: WebSocket, sid: str):
     tmpdir = meta["tmpdir"]
     exe = meta["exe"]
 
+    # Pull per-session limits (fallback to defaults if missing)
+    try:
+        wall_sec = float(meta.get("wall_sec", DEFAULT_WALL_LIMIT_SEC))
+    except Exception:
+        wall_sec = float(DEFAULT_WALL_LIMIT_SEC)
+
+    try:
+        idle_sec = float(meta.get("idle_sec", DEFAULT_IDLE_LIMIT_SEC))
+    except Exception:
+        idle_sec = float(DEFAULT_IDLE_LIMIT_SEC)
+    cpu_limit = max(1, int(math.ceil(wall_sec)))  # seconds of CPU time
+
+    # Helpful debug line to the client
+    await ws.send_text(f"[server] limits: wall={int(wall_sec)}s idle={int(idle_sec)}s\n")
+
     try:
         proc = await asyncio.create_subprocess_exec(
-            "bash",
-            "-lc",
-            "ulimit -t 4 -c 0 -v 262144 -f 4096; "
+            "bash", "-lc",
+            f"ulimit -t {cpu_limit} -c 0 -v 262144 -f 4096; "
             f"stdbuf -oL -eL {shlex.quote(exe)}",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=tmpdir,
-        )
+)
+
     except Exception as e:
         await ws.send_text(f"Failed to start: {e}\n")
         await ws.close()
@@ -289,7 +331,7 @@ async def session_ws(ws: WebSocket, sid: str):
                 last_output = time.monotonic()
                 await ws.send_text(chunk.decode(errors="ignore"))
         except Exception:
-            # Do not crash the session for stdout issues
+            # don’t crash session for stdout issues
             pass
 
     async def watchdog():
@@ -299,11 +341,11 @@ async def session_ws(ws: WebSocket, sid: str):
                 now = time.monotonic()
                 if proc.returncode is not None:
                     break
-                if now - started_at > WALL_LIMIT_SEC:
+                if now - started_at > wall_sec:
                     await ws.send_text("\n[WALL TIME EXCEEDED]\n")
                     proc.kill()
                     break
-                if now - last_output > IDLE_LIMIT_SEC:
+                if now - last_output > idle_sec:
                     await ws.send_text("\n[IDLE TIME EXCEEDED]\n")
                     proc.kill()
                     break
@@ -315,12 +357,9 @@ async def session_ws(ws: WebSocket, sid: str):
 
     try:
         while True:
-            # If the program has already exited, stop reading input
             if proc.returncode is not None:
                 break
-
             try:
-                # Short timeout so we can re-check proc.returncode regularly
                 data = await asyncio.wait_for(ws.receive_text(), timeout=0.2)
             except asyncio.TimeoutError:
                 continue
@@ -336,7 +375,6 @@ async def session_ws(ws: WebSocket, sid: str):
             except Exception:
                 break
     finally:
-        # Ensure the process is stopped
         try:
             if proc.returncode is None:
                 proc.kill()
@@ -345,7 +383,7 @@ async def session_ws(ws: WebSocket, sid: str):
 
         await asyncio.gather(t_pump, t_watch, return_exceptions=True)
 
-        # Send back any small text files before cleanup
+        # send back any small text files before cleanup
         try:
             files_out = _collect_text_files(tmpdir, ignore=["main.cpp", "a.out"])
             if files_out:
@@ -359,7 +397,6 @@ async def session_ws(ws: WebSocket, sid: str):
             pass
 
         await _kill_and_cleanup(key, tmpdir)
-
 
 async def _kill_and_cleanup(key: str, tmpdir: str):
     try:

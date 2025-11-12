@@ -14,7 +14,7 @@ export default function ActivityCppBlock({
   code: initialCode,
   responseKey,
   onCodeChange,
-  timeLimit = 5000,        // currently unused but kept for API compatibility
+  timeLimit = 50000,        // currently unused but kept for API compatibility
   editable = true,
   blockIndex = 0,
   localOnly = false,       // if true, don't send files / remote sync
@@ -60,6 +60,7 @@ export default function ActivityCppBlock({
   const term = useRef(null);
   const fit = useRef(null);
   const wsRef = useRef(null);
+  const wsTimerRef = useRef(null);
   const onDataDisposeRef = useRef(null);
   const inputBufferRef = useRef('');
 
@@ -203,7 +204,7 @@ export default function ActivityCppBlock({
     return `${proto}://${window.location.host}/cxx-run/session/ws/${sid}`;
   };
 
-    const [includeText, setIncludeText] = useState(
+  const [includeText, setIncludeText] = useState(
     Array.isArray(includeFiles) ? includeFiles.join(', ') : ''
   );
 
@@ -274,12 +275,22 @@ export default function ActivityCppBlock({
           payload.files = filesPayload;
         }
       }
-
+      term.current.writeln(`[dbg] client timeLimit=${timeLimit}ms`);
+      console.log('[dbg] payload', { timeout_ms: timeLimit });
+      // Honor \cpp{...}: timeout on the compile step
+      const compileController = new AbortController();
+      const compileTimer = setTimeout(() => compileController.abort(), timeLimit);
       const res = await fetch('/cxx-run/session/new', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        signal: compileController.signal,
+        body: JSON.stringify({
+          ...payload,
+          timeout_ms: timeLimit,
+          idle_timeout_ms: timeLimit,
+        }),
       });
+      clearTimeout(compileTimer);
 
       const ctype = res.headers.get('content-type') || '';
       if (!ctype.includes('application/json')) {
@@ -290,6 +301,7 @@ export default function ActivityCppBlock({
       }
 
       const data = await res.json();
+      term.current.writeln(`[dbg] server limits wall=${data.wall_sec}s idle=${data.idle_sec}s`);
       if (!data.ok) {
         term.current.writeln('\r\n❌ Compile error:\n');
         term.current.writeln(data.compile_error || data.error || '(no details)');
@@ -307,6 +319,18 @@ export default function ActivityCppBlock({
         term.current.writeln('');
         term.current.focus();
         inputBufferRef.current = '';
+
+
+        // Enforce run-time limit for the program
+        try { clearTimeout(wsTimerRef.current); } catch { }
+        wsTimerRef.current = setTimeout(() => {
+          // Soft kill first (Ctrl+C), then close if still open shortly after
+          try { ws.send('\u0003'); } catch { }
+          term.current.writeln(`\r\n⏱️ Program time limit reached (${timeLimit} ms). Sending Ctrl+C...`);
+          setTimeout(() => {
+            try { ws.close(); } catch { }
+          }, 250);
+        }, timeLimit);
 
         const onData = (d) => {
           if (ws.readyState !== WebSocket.OPEN) return;
@@ -380,10 +404,12 @@ export default function ActivityCppBlock({
       };
 
       ws.onerror = () => {
+        try { clearTimeout(wsTimerRef.current); } catch { }
         term.current.writeln('\r\n❌ [WebSocket error]');
       };
 
       ws.onclose = () => {
+        try { clearTimeout(wsTimerRef.current); } catch { }
         try {
           onDataDisposeRef.current?.dispose();
         } catch { }
@@ -392,7 +418,11 @@ export default function ActivityCppBlock({
         setIsRunning(false);
       };
     } catch (e) {
-      term.current.writeln(`\r\n❌ Error: ${e.message}`);
+      if (e?.name === 'AbortError') {
+        term.current.writeln(`\r\n⏱️ Timed out during compilation after ${timeLimit} ms`);
+      } else {
+        term.current.writeln(`\r\n❌ Error: ${e.message}`);
+      }
       setIsRunning(false);
     }
   };
@@ -493,6 +523,7 @@ export default function ActivityCppBlock({
       {/* RIGHT: code editor + controls */}
       <Col md={6}>
         <div style={styles.controls}>
+          <small className="text-muted">⏱ Time limit: {timeLimit} ms</small>
           <Button
             variant="secondary"
             onClick={() => {
@@ -538,7 +569,7 @@ export default function ActivityCppBlock({
           >
             {isRunning ? 'Running…' : 'Run C++'}
           </Button>
-          
+
         </div>
         {/* Optional include list (from \include{...}), editable locally */}
         {(!localOnly) && (
