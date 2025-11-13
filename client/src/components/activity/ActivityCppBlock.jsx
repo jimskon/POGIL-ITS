@@ -28,6 +28,7 @@ export default function ActivityCppBlock({
   const [savedCode, setSavedCode] = useState(initialCode ?? '');
   const [isEditing, setIsEditing] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [layoutMode, setLayoutMode] = useState('side'); // 'side' | 'stacked'
 
   // keep track of last initial to avoid loops
   const lastInitialRef = useRef(initialCode ?? '');
@@ -131,11 +132,15 @@ export default function ActivityCppBlock({
 
   // Prism highlight when not editing
   useEffect(() => {
-    if (!isEditing && codeRef.current) Prism.highlightElement(codeRef.current);
+    if (!isEditing && codeRef.current) {
+      Prism.highlightElement(codeRef.current);
+    }
   }, [isEditing, code]);
 
   // init terminal once
   useEffect(() => {
+    if (!termRef.current) return;
+
     const t = new Terminal({
       cursorBlink: true,
       scrollback: 1000,
@@ -150,7 +155,9 @@ export default function ActivityCppBlock({
     t.loadAddon(f);
 
     t.open(termRef.current);
-    f.fit();
+    try {
+      f.fit();
+    } catch { }
     t.focus();
 
     term.current = t;
@@ -171,11 +178,13 @@ export default function ActivityCppBlock({
         onDataDisposeRef.current?.dispose();
       } catch { }
       try {
-        term.current?.dispose();
-      } catch { }
-      try {
         wsRef.current?.close();
       } catch { }
+      try {
+        term.current?.dispose();
+      } catch { }
+      term.current = null;
+      fit.current = null;
     };
   }, []);
 
@@ -301,7 +310,9 @@ export default function ActivityCppBlock({
       }
 
       const data = await res.json();
-      term.current.writeln(`[dbg] server limits wall=${data.wall_sec}s idle=${data.idle_sec}s`);
+      term.current.writeln(
+        `[dbg] server limits wall=${data.wall_sec}s idle=${data.idle_sec}s`
+      );
       if (!data.ok) {
         term.current.writeln('\r\n❌ Compile error:\n');
         term.current.writeln(data.compile_error || data.error || '(no details)');
@@ -320,15 +331,22 @@ export default function ActivityCppBlock({
         term.current.focus();
         inputBufferRef.current = '';
 
-
         // Enforce run-time limit for the program
-        try { clearTimeout(wsTimerRef.current); } catch { }
+        try {
+          clearTimeout(wsTimerRef.current);
+        } catch { }
         wsTimerRef.current = setTimeout(() => {
           // Soft kill first (Ctrl+C), then close if still open shortly after
-          try { ws.send('\u0003'); } catch { }
-          term.current.writeln(`\r\n⏱️ Program time limit reached (${timeLimit} ms). Sending Ctrl+C...`);
+          try {
+            ws.send('\u0003');
+          } catch { }
+          term.current.writeln(
+            `\r\n⏱️ Program time limit reached (${timeLimit} ms). Sending Ctrl+C...`
+          );
           setTimeout(() => {
-            try { ws.close(); } catch { }
+            try {
+              ws.close();
+            } catch { }
           }, 250);
         }, timeLimit);
 
@@ -404,12 +422,16 @@ export default function ActivityCppBlock({
       };
 
       ws.onerror = () => {
-        try { clearTimeout(wsTimerRef.current); } catch { }
+        try {
+          clearTimeout(wsTimerRef.current);
+        } catch { }
         term.current.writeln('\r\n❌ [WebSocket error]');
       };
 
       ws.onclose = () => {
-        try { clearTimeout(wsTimerRef.current); } catch { }
+        try {
+          clearTimeout(wsTimerRef.current);
+        } catch { }
         try {
           onDataDisposeRef.current?.dispose();
         } catch { }
@@ -419,7 +441,9 @@ export default function ActivityCppBlock({
       };
     } catch (e) {
       if (e?.name === 'AbortError') {
-        term.current.writeln(`\r\n⏱️ Timed out during compilation after ${timeLimit} ms`);
+        term.current.writeln(
+          `\r\n⏱️ Timed out during compilation after ${timeLimit} ms`
+        );
       } else {
         term.current.writeln(`\r\n❌ Error: ${e.message}`);
       }
@@ -436,6 +460,7 @@ export default function ActivityCppBlock({
       gap: 8,
       alignItems: 'center',
       marginBottom: 8,
+      flexWrap: 'wrap',
     },
     editorWrap: {
       display: 'flex',
@@ -472,8 +497,8 @@ export default function ActivityCppBlock({
       outline: 'none',
       resize: 'vertical',
       padding: '8px 10px',
-      background: '#212529',
-      color: '#fff',
+      background: '#ffffff',
+      color: '#212529',
       minHeight: '160px',
       overflow: 'auto',
       whiteSpace: 'pre',
@@ -481,6 +506,7 @@ export default function ActivityCppBlock({
       fontFamily: mono,
       fontSize: '0.95rem',
     },
+
     codeView: {
       flex: 1,
       overflow: 'auto',
@@ -505,148 +531,153 @@ export default function ActivityCppBlock({
     },
   };
 
-  return (
-    <Row className="mb-4">
-      {/* LEFT: live terminal */}
-      <Col md={6}>
-        <div
-          ref={termRef}
-          style={{
-            height: 420,
-            background: '#000',
-            borderRadius: 6,
-            overflow: 'hidden',
-          }}
-        />
-      </Col>
+  // --- reusable sections for layout switching ---
 
-      {/* RIGHT: code editor + controls */}
-      <Col md={6}>
-        <div style={styles.controls}>
-          <small className="text-muted">⏱ Time limit: {timeLimit} ms</small>
-          <Button
-            variant="secondary"
-            onClick={() => {
-              if (!editable) return;
-              if (isEditing) {
-                // leaving edit mode
-                setIsEditing(false);
-                if (broadcastTimerRef.current) {
-                  clearTimeout(broadcastTimerRef.current);
-                  broadcastTimerRef.current = null;
-                }
-                if (editable && code !== savedCode) {
-                  sendUpstream(code, { broadcastOnly: false });
-                  setSavedCode(code);
-                }
-                flushPendingRemoteIfAny();
-              } else {
-                // entering edit mode
-                setIsEditing(true);
+  const terminalSection = (
+    <div
+      ref={termRef}
+      style={{
+        height: 420,
+        background: '#000',
+        borderRadius: 6,
+        overflow: 'hidden',
+      }}
+    />
+  );
+
+  const editorSection = (
+    <>
+      <div style={styles.controls}>
+        <small className="text-muted">⏱ Time limit: {timeLimit} ms</small>
+
+        <Button
+          variant="secondary"
+          onClick={() => {
+            // allow toggling even if editable=false, since your first block
+            // may be passed editable={false} from the parent.
+            setIsEditing((prev) => {
+              const next = !prev;
+              if (next) {
                 flushPendingRemoteIfAny();
               }
-            }}
-          >
-            {isEditing ? 'Done Editing' : 'Edit Code'}
-          </Button>
+              return next;
+            });
+          }}
+        >
+          {isEditing ? 'Done Editing' : 'Edit Code'}
+        </Button>
 
-          <Button
-            variant="secondary"
-            onClick={() => {
-              if (!editable || !onCodeChange || !responseKey) return;
-              onCodeChange(responseKey, code);
-              setSavedCode(code);
-            }}
-            disabled={!editable}
-          >
-            Save
-          </Button>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            if (!onCodeChange || !responseKey) return;
+            onCodeChange(responseKey, code);
+            setSavedCode(code);
+          }}
+          disabled={!editable}
+        >
+          Save
+        </Button>
 
-          <Button
-            variant="primary"
-            onClick={runInteractive}
-            disabled={isRunning}
-          >
-            {isRunning ? 'Running…' : 'Run C++'}
-          </Button>
+        <Button
+          variant="primary"
+          onClick={runInteractive}
+          disabled={isRunning}
+        >
+          {isRunning ? 'Running…' : 'Run C++'}
+        </Button>
 
+        <Button
+          variant="outline-secondary"
+          onClick={() =>
+            setLayoutMode((m) => (m === 'side' ? 'stacked' : 'side'))
+          }
+        >
+          {layoutMode === 'side' ? 'Above' : 'Beside'}
+        </Button>
+      </div>
+
+      {!localOnly && (
+        <div className="mb-1">
+          <small className="text-muted me-1">
+            Included files for compile:
+          </small>
+          <Form.Control
+            type="text"
+            size="sm"
+            value={includeText}
+            onChange={(e) => setIncludeText(e.target.value)}
+            placeholder="(all .cpp files if left blank)"
+            className="d-inline-block"
+          />
         </div>
-        {/* Optional include list (from \include{...}), editable locally */}
-        {(!localOnly) && (
-          <div className="mb-1">
-            <small className="text-muted me-1">Included files for compile:</small>
-            <Form.Control
-              type="text"
-              size="sm"
-              value={includeText}
-              onChange={(e) => setIncludeText(e.target.value)}
-              placeholder="(all .cpp files if left blank)"
-              className="d-inline-block"
-            />
+      )}
+
+      <div style={styles.editorWrap}>
+        <pre ref={gutterRef} style={styles.gutter} aria-hidden="true">
+          {lineNumbers}
+        </pre>
+
+        {isEditing ? (
+          <Form.Control
+            as="textarea"
+            ref={taRef}
+            id={codeId}
+            data-response-key={responseKey}
+            value={code}
+            readOnly={false}
+            onChange={(e) => {
+              const v = e.target.value;
+              setCode(v);
+              if (editable) scheduleBroadcast(v);
+            }}
+            onScroll={onTextareaScroll}
+            rows={Math.max(16, (code ?? '').split(EOL_SPLIT).length)}
+            className="font-monospace mt-0 bg-white text-dark"
+            style={{ ...styles.textarea, minHeight: 420 }}
+          />
+        ) : (
+          <div
+            ref={codeScrollRef}
+            style={{ ...styles.codeView, minHeight: 420 }}
+            onScroll={onCodeViewScroll}
+          >
+            <pre style={styles.codePre}>
+              <code
+                id={codeId}
+                ref={codeRef}
+                className="language-cpp"
+                style={styles.codeTag}
+              >
+                {code}
+              </code>
+            </pre>
           </div>
         )}
-        {/* Editor / Viewer with line-number gutter */}
-        <div style={styles.editorWrap}>
-          <pre ref={gutterRef} style={styles.gutter} aria-hidden="true">
-            {lineNumbers}
-          </pre>
+      </div>
 
-          {isEditing ? (
-            <Form.Control
-              as="textarea"
-              ref={taRef}
-              id={codeId}
-              data-response-key={responseKey}
-              value={code}
-              readOnly={!isEditing}
-              onChange={(e) => {
-                const v = e.target.value;
-                setCode(v);
-                if (editable) scheduleBroadcast(v);
-              }}
-              onBlur={() => {
-                setIsEditing(false);
-                if (broadcastTimerRef.current) {
-                  clearTimeout(broadcastTimerRef.current);
-                  broadcastTimerRef.current = null;
-                }
-                if (editable && code !== savedCode) {
-                  sendUpstream(code, { broadcastOnly: false });
-                  setSavedCode(code);
-                }
-                flushPendingRemoteIfAny();
-              }}
-              onScroll={onTextareaScroll}
-              rows={Math.max(16, (code ?? '').split(EOL_SPLIT).length)}
-              className="font-monospace mt-0 bg-dark text-light"
-              style={{ ...styles.textarea, minHeight: 420 }}
-            />
-          ) : (
-            <div
-              ref={codeScrollRef}
-              style={{ ...styles.codeView, minHeight: 420 }}
-              onScroll={onCodeViewScroll}
-            >
-              <pre style={styles.codePre}>
-                <code
-                  id={codeId}
-                  ref={codeRef}
-                  className="language-cpp"
-                  style={styles.codeTag}
-                >
-                  {code}
-                </code>
-              </pre>
-            </div>
-          )}
+      {codeFeedbackShown[responseKey] && (
+        <div className="mt-2 p-3 border rounded bg-warning-subtle">
+          <strong>AI Feedback:</strong>
+          <pre className="mb-0">{codeFeedbackShown[responseKey]}</pre>
         </div>
+      )}
+    </>
+  );
 
-        {codeFeedbackShown[responseKey] && (
-          <div className="mt-2 p-3 border rounded bg-warning-subtle">
-            <strong>AI Feedback:</strong>
-            <pre className="mb-0">{codeFeedbackShown[responseKey]}</pre>
-          </div>
-        )}
+  return (
+    <Row className="mb-4">
+      {/* CODE: full-width in 'stacked', half-width in 'side' */}
+      <Col md={layoutMode === 'side' ? 6 : 12}>
+        {editorSection}
+      </Col>
+
+      {/* TERMINAL: same, but below in stacked mode via mt-3 */}
+      <Col
+        md={layoutMode === 'side' ? 6 : 12}
+        className={layoutMode === 'side' ? '' : 'mt-3'}
+      >
+        {terminalSection}
       </Col>
     </Row>
   );
