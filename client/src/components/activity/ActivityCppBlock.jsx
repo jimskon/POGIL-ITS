@@ -284,8 +284,8 @@ export default function ActivityCppBlock({
           payload.files = filesPayload;
         }
       }
-      term.current.writeln(`[dbg] client timeLimit=${timeLimit}ms`);
-      console.log('[dbg] payload', { timeout_ms: timeLimit });
+      //term.current.writeln(`[dbg] client timeLimit=${timeLimit}ms`);
+      //console.log('[dbg] payload', { timeout_ms: timeLimit });
       // Honor \cpp{...}: timeout on the compile step
       const compileController = new AbortController();
       const compileTimer = setTimeout(() => compileController.abort(), timeLimit);
@@ -310,9 +310,9 @@ export default function ActivityCppBlock({
       }
 
       const data = await res.json();
-      term.current.writeln(
-        `[dbg] server limits wall=${data.wall_sec}s idle=${data.idle_sec}s`
-      );
+      //term.current.writeln(
+      //  `[dbg] server limits wall=${data.wall_sec}s idle=${data.idle_sec}s`
+      //);
       if (!data.ok) {
         term.current.writeln('\r\n❌ Compile error:\n');
         term.current.writeln(data.compile_error || data.error || '(no details)');

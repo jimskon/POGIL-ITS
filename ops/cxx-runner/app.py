@@ -299,7 +299,7 @@ async def session_ws(ws: WebSocket, sid: str):
     cpu_limit = max(1, int(math.ceil(wall_sec)))  # seconds of CPU time
 
     # Helpful debug line to the client
-    await ws.send_text(f"[server] limits: wall={int(wall_sec)}s idle={int(idle_sec)}s\n")
+    #await ws.send_text(f"[server] limits: wall={int(wall_sec)}s idle={int(idle_sec)}s\n")
 
     try:
         proc = await asyncio.create_subprocess_exec(
