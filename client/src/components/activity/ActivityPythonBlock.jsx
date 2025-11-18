@@ -1,4 +1,3 @@
-// src: client/src/components/activity/ActivityPythonBlock.jsx
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Form, Button } from 'react-bootstrap';
 import Prism from 'prismjs';
@@ -13,11 +12,12 @@ export default function ActivityPythonBlock({
   codeFeedbackShown = {},
   fileContents,
   setFileContents,
-  timeLimit,               // existing
-  turtleTargetId,          // optional (only for \pythonturtle)
-  turtleWidth = 600,       // optional
-  turtleHeight = 400,      // optional
-  editable = true,         // allow parent to gate editing
+  timeLimit,
+  turtleTargetId,
+  turtleWidth = 600,
+  turtleHeight = 400,
+  editable = true,
+  includeFiles = [],
 }) {
   const [code, setCode] = useState(initialCode ?? '');
   useEffect(() => { if (localOnly) setCode(initialCode ?? ''); }, [initialCode, localOnly]);
@@ -26,11 +26,17 @@ export default function ActivityPythonBlock({
   const [isEditing, setIsEditing] = useState(false);
 
   const codeId = `sk-code-${blockIndex}`;
-  const codeRef = useRef(null);       // <code> (Prism)
-  const taRef = useRef(null);         // <textarea>
-  const gutterRef = useRef(null);     // gutter <pre>
-  const codeScrollRef = useRef(null); // scrollable wrapper for Prism view
+  const codeRef = useRef(null);
+  const taRef = useRef(null);
+  const gutterRef = useRef(null);
+  const codeScrollRef = useRef(null);
   const [outputText, setOutputText] = useState('');
+
+  // --- NEW: outputKey derived from responseKey, same rule as C++ ---
+  const outputKey = useMemo(() => {
+    if (!responseKey) return '';
+    return responseKey.replace(/code(\d+)$/, 'output$1');
+  }, [responseKey]);
 
   // --- live update plumbing (unchanged) ---
   const debounceMs = 300;
@@ -39,12 +45,10 @@ export default function ActivityPythonBlock({
   const lastSentRef = useRef(initialCode ?? '');
   const pendingRemoteRef = useRef(null);
 
-  // highlight when not editing
   useEffect(() => {
     if (!isEditing && codeRef.current) Prism.highlightElement(codeRef.current);
   }, [isEditing, code]);
 
-  // adopt external changes
   useEffect(() => {
     const next = initialCode ?? '';
     if (next === lastInitialRef.current) return;
@@ -66,7 +70,11 @@ export default function ActivityPythonBlock({
     if (!onCodeChange || !responseKey) return;
     if (val === lastSentRef.current) return;
     lastSentRef.current = val;
-    onCodeChange(responseKey, val, broadcastOnly ? { __broadcastOnly: true } : undefined);
+    onCodeChange(
+      responseKey,
+      val,
+      broadcastOnly ? { __broadcastOnly: true } : undefined
+    );
   };
 
   const scheduleBroadcast = (val) => {
@@ -88,7 +96,7 @@ export default function ActivityPythonBlock({
   };
 
   // --- line numbers + scroll sync ---
-  const LINE_H = 1.45; // keep identical on gutter/textarea/pre/code
+  const LINE_H = 1.45;
 
   const lineNumbers = useMemo(() => {
     const n = (code || '').split('\n').length || 1;
@@ -98,8 +106,33 @@ export default function ActivityPythonBlock({
   const syncGutterScroll = (top) => {
     if (gutterRef.current) gutterRef.current.scrollTop = top;
   };
-  const onTextareaScroll   = () => { if (taRef.current)       syncGutterScroll(taRef.current.scrollTop); };
-  const onCodeViewScroll   = () => { if (codeScrollRef.current) syncGutterScroll(codeScrollRef.current.scrollTop); };
+  const onTextareaScroll = () => {
+    if (taRef.current) syncGutterScroll(taRef.current.scrollTop);
+  };
+  const onCodeViewScroll = () => {
+    if (codeScrollRef.current) syncGutterScroll(codeScrollRef.current.scrollTop);
+  };
+
+  const buildMergedCode = () => {
+  if (!includeFiles || includeFiles.length === 0) {
+    return code;
+  }
+
+  let prelude = '';
+
+  includeFiles.forEach((fname) => {
+    const src = fileContents?.[fname];
+    if (!src) return; // silently skip missing file for now
+
+    prelude += `# ===== BEGIN ${fname} =====\n`;
+    prelude += src;
+    if (!src.endsWith('\n')) prelude += '\n';
+    prelude += `# ===== END ${fname} =====\n\n`;
+  });
+
+  return prelude + code;
+};
+
 
   const runPython = () => {
     if (editable && code !== savedCode) {
@@ -110,9 +143,12 @@ export default function ActivityPythonBlock({
       alert('Skulpt is still loading...');
       return;
     }
+
+    const finalCode = buildMergedCode();        // 👈 merged harness + student code
     const currentFiles = { ...fileContents };
+
     runSkulptCode({
-      code,
+      code: finalCode,
       fileContents: currentFiles,
       setOutput: setOutputText,
       setFileContents,
@@ -122,6 +158,8 @@ export default function ActivityPythonBlock({
       turtleHeight,
     });
   };
+
+
 
   const handleDoneEditing = () => {
     setIsEditing(false);
@@ -136,7 +174,6 @@ export default function ActivityPythonBlock({
     flushPendingRemoteIfAny();
   };
 
-  // --- inline styles ---
   const mono =
     'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
 
@@ -147,7 +184,7 @@ export default function ActivityPythonBlock({
       alignItems: 'center',
       marginBottom: 8,
       position: 'relative',
-      zIndex: 2, // ensure above editor container
+      zIndex: 2,
     },
     editorWrap: {
       display: 'flex',
@@ -172,7 +209,7 @@ export default function ActivityPythonBlock({
       userSelect: 'none',
       background: '#f1f3f5',
       borderRight: '1px solid #dee2e6',
-      overflow: 'hidden', // we sync scrollTop
+      overflow: 'hidden',
       whiteSpace: 'pre',
       lineHeight: LINE_H,
       fontFamily: mono,
@@ -197,11 +234,11 @@ export default function ActivityPythonBlock({
       flex: 1,
       overflow: 'auto',
       background: '#fff',
-      padding: '8px 10px', // same top padding as gutter for vertical align
+      padding: '8px 10px',
     },
     codePre: {
       margin: 0,
-      padding: 0,          // kill Prism’s default padding
+      padding: 0,
       lineHeight: LINE_H,
       fontSize: '0.95rem',
       fontFamily: mono,
@@ -209,7 +246,7 @@ export default function ActivityPythonBlock({
     codeTag: {
       display: 'block',
       margin: 0,
-      padding: 0,          // kill Prism’s code padding too
+      padding: 0,
       lineHeight: LINE_H,
       fontSize: '0.95rem',
       fontFamily: mono,
@@ -223,7 +260,14 @@ export default function ActivityPythonBlock({
       <div style={styles.controls}>
         <Button
           variant="secondary"
-          onClick={isEditing ? handleDoneEditing : () => { setIsEditing(true); flushPendingRemoteIfAny?.(); }}
+          onClick={
+            isEditing
+              ? handleDoneEditing
+              : () => {
+                  setIsEditing(true);
+                  flushPendingRemoteIfAny?.();
+                }
+          }
         >
           {isEditing ? 'Done Editing' : 'Edit Code'}
         </Button>
@@ -278,6 +322,7 @@ export default function ActivityPythonBlock({
         )}
       </div>
 
+      {/* Visible output for the student */}
       <pre className="mt-2 bg-light p-2 border">{outputText}</pre>
 
       {codeFeedbackShown[responseKey] && (
@@ -286,7 +331,26 @@ export default function ActivityPythonBlock({
           <pre className="mb-0">{codeFeedbackShown[responseKey]}</pre>
         </div>
       )}
-      
+
+      {/* Hidden mirror of code for test grading */}
+      {responseKey && (
+        <textarea
+          style={{ display: 'none' }}
+          data-response-key={responseKey}
+          readOnly
+          value={code}
+        />
+      )}
+
+      {/* Hidden mirror of Python output for test grading */}
+      {outputKey && (
+        <pre
+          style={{ display: 'none' }}
+          data-output-key={outputKey}
+        >
+          {outputText}
+        </pre>
+      )}
     </div>
   );
 }

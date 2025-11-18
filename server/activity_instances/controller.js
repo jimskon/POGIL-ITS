@@ -4,6 +4,8 @@ const fetch = require('node-fetch');
 const { JSDOM } = require('jsdom');
 const { google } = require('googleapis');
 const { authorize } = require('../utils/googleAuth');
+const { gradeTestQuestion } = require('../ai/controller');
+
 
 // ========== DOC PARSING ==========
 function parseGoogleDocHTML(html) {
@@ -395,7 +397,7 @@ async function setupMultipleGroupInstances(req, res) {
           // Only accept known roles; everything else -> NULL
           const cleanRole =
             member.role &&
-            ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
+              ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
               ? member.role
               : null;
 
@@ -704,6 +706,292 @@ async function refreshTotalGroups(req, res) {
   }
 }
 
+async function submitTest(req, res) {
+  const { instanceId } = req.params;
+  const { studentId, answers, questions = [] } = req.body || {};
+
+  if (!instanceId || !studentId || !answers) {
+    return res
+      .status(400)
+      .json({ error: 'Missing instanceId, studentId, or answers' });
+  }
+
+  console.log('🧪 submitTest instance:', instanceId, 'student:', studentId);
+  console.log('🧪 submitTest answers keys:', Object.keys(answers));
+  console.log('🧪 submitTest question list:', questions.length);
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    let totalEarnedPoints = 0;
+    let totalMaxPoints = 0;
+    const questionResults = [];
+
+    for (const q of questions) {
+      // --- Strict: question id must be provided by the client ---
+      const baseId = q.id || q.qid;
+      if (!baseId) {
+        console.error('❌ submitTest: question missing id:', q);
+        // Skip this question instead of guessing
+        continue;
+      }
+
+      const text = q.text || '';
+      const scores = q.scores || {}; // { code, output, response }
+
+      // --- Interpret score blocks (code/output/response) ---
+      const bucketPoints = (bucket) => {
+        if (!bucket) return 0;
+        if (typeof bucket === 'number') return bucket;
+        if (typeof bucket === 'object' && typeof bucket.points === 'number') {
+          return bucket.points;
+        }
+        return 0;
+      };
+
+      const maxCodePts = bucketPoints(scores.code);
+      const maxRunPts = bucketPoints(scores.output);
+      const maxRespPts = bucketPoints(scores.response);
+
+      console.log('🧮 Question rubric:', {
+        qid: baseId,
+        scores,
+        maxCodePts,
+        maxRunPts,
+        maxRespPts,
+      });
+
+      // --- Extract student artifacts from answers using ONLY baseId ---
+
+      // 1) Written response (if any) — key: "1a"
+      const written = (answers[baseId] || '').trim();
+
+      // 2) Code cells — keys: "1acode1", "1acode2", ...
+      const codeCells = [];
+      const codePrefix = (baseId + 'code').toLowerCase();
+
+      for (const [key, value] of Object.entries(answers)) {
+        if (!value || !String(value).trim()) continue;
+
+        const lowerKey = key.toLowerCase();
+        if (!lowerKey.startsWith(codePrefix)) continue;
+
+        // extract numeric suffix for labeling, e.g. "code1"
+        const labelMatch = key.match(/code(\d+)$/i);
+        const label = labelMatch ? labelMatch[1] : key;
+
+        codeCells.push({
+          code: String(value),
+          lang: 'cpp',          // you can refine this per question if needed
+          label: `code ${label}`,
+        });
+      }
+
+      // 3) Program output — keys: "1aoutput", "1aoutput1", ...
+      let outputText = '';
+      const outputPrefix = (baseId + 'output').toLowerCase();
+
+      for (const [key, value] of Object.entries(answers)) {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey === outputPrefix || lowerKey.startsWith(outputPrefix)) {
+          outputText = String(value || '').trim();
+          break;
+        }
+      }
+
+      console.log('🧪 submitTest artifacts for', baseId, {
+        writtenPresent: !!written,
+        codeCellsCount: codeCells.length,
+        hasOutput: !!outputText,
+      });
+
+      // If there are no points configured, skip this question.
+      if (maxCodePts <= 0 && maxRunPts <= 0 && maxRespPts <= 0) {
+        console.log(
+          '⚠️ No points configured for question',
+          baseId,
+          '- skipping grading.'
+        );
+        continue;
+      }
+
+      // --- Call AI grader with a clean, deterministic payload ---
+      const {
+        codeScore,
+        codeFeedback,
+        runScore,
+        runFeedback,
+        responseScore,
+        responseFeedback,
+      } = await gradeTestQuestion({
+        questionText: text,
+        scores,          // { code, output, response }
+        responseText: written,
+        codeCells,
+        outputText,
+        rubric: scores,  // full rubric, including instructions
+      });
+
+      console.log('✅ Test grading result:', {
+        instanceId,
+        studentId,
+        qid: baseId,
+        maxCodePts,
+        maxRunPts,
+        maxRespPts,
+        codeScore,
+        runScore,
+        responseScore,
+      });
+
+      const earned =
+        (codeScore || 0) +
+        (runScore || 0) +
+        (responseScore || 0);
+
+      const maxPts = maxCodePts + maxRunPts + maxRespPts;
+
+      totalEarnedPoints += earned;
+      totalMaxPoints += maxPts;
+
+      questionResults.push({
+        qid: baseId,
+        maxCodePts,
+        maxRunPts,
+        maxRespPts,
+        codeScore,
+        runScore,
+        responseScore,
+        codeFeedback: codeFeedback || '',
+        runFeedback: runFeedback || '',
+        responseFeedback: responseFeedback || '',
+      });
+
+      // --- Save per-question scores/feedback into responses table ---
+      const upsert = async (qid, value) => {
+        if (value == null || value === '') return;
+        await conn.query(
+          `
+          INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
+          VALUES (?, ?, 'text', ?, ?)
+          ON DUPLICATE KEY UPDATE
+            response = VALUES(response),
+            answered_by_user_id = VALUES(answered_by_user_id),
+            updated_at = CURRENT_TIMESTAMP
+        `,
+          [instanceId, qid, String(value), studentId]
+        );
+      };
+
+      // 3-band storage: Code, Run, Response
+      await upsert(`${baseId}CodeScore`, codeScore);
+      await upsert(`${baseId}CodeFeedback`, codeFeedback);
+
+      await upsert(`${baseId}RunScore`, runScore);
+      await upsert(`${baseId}RunFeedback`, runFeedback);
+
+      await upsert(`${baseId}ResponseScore`, responseScore);
+      await upsert(`${baseId}ResponseFeedback`, responseFeedback);
+    }
+
+    // --- Build human-readable 3-band summary text ---
+    const lines = [];
+
+    for (const qr of questionResults) {
+      const {
+        qid,
+        maxCodePts = 0,
+        maxRunPts = 0,
+        maxRespPts = 0,
+        codeScore = 0,
+        runScore = 0,
+        responseScore = 0,
+        codeFeedback = '',
+        runFeedback = '',
+        responseFeedback = '',
+      } = qr;
+
+      const bandParts = [];
+      if (maxCodePts > 0) bandParts.push(`Code ${codeScore}/${maxCodePts}`);
+      if (maxRunPts > 0) bandParts.push(`Run ${runScore}/${maxRunPts}`);
+      if (maxRespPts > 0) bandParts.push(`Response ${responseScore}/${maxRespPts}`);
+
+      const qMax = maxCodePts + maxRunPts + maxRespPts;
+      const qScore = codeScore + runScore + responseScore;
+
+      // Question header line
+      lines.push(`Question ${qid} – Total ${qScore}/${qMax}`);
+      if (bandParts.length) {
+        lines.push(`  ${bandParts.join(' · ')}`);
+      }
+
+      // Only include AI explanations when NOT full credit in that band
+      if (maxCodePts > 0 && codeScore < maxCodePts && codeFeedback) {
+        lines.push(`  Code feedback: ${codeFeedback}`);
+      }
+      if (maxRunPts > 0 && runScore < maxRunPts && runFeedback) {
+        lines.push(`  Run feedback: ${runFeedback}`);
+      }
+      if (maxRespPts > 0 && responseScore < maxRespPts && responseFeedback) {
+        lines.push(`  Response feedback: ${responseFeedback}`);
+      }
+
+      lines.push(''); // blank line between questions
+    }
+
+    // Overall total
+    lines.push(`Overall: ${totalEarnedPoints}/${totalMaxPoints}`);
+
+    const summaryText = lines.join('\n');
+
+    console.log('📊 Test grading summary:', {
+      instanceId,
+      studentId,
+      totalEarnedPoints,
+      totalMaxPoints,
+    });
+
+    const upsertTotal = async (qid, value) => {
+      if (value == null) return;
+      await conn.query(
+        `
+        INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
+        VALUES (?, ?, 'text', ?, ?)
+        ON DUPLICATE KEY UPDATE
+          response = VALUES(response),
+          answered_by_user_id = VALUES(answered_by_user_id),
+          updated_at = CURRENT_TIMESTAMP
+      `,
+        [instanceId, qid, String(value), studentId]
+      );
+    };
+
+    // store overall test totals
+    await upsertTotal('testTotalScore', totalEarnedPoints);
+    await upsertTotal('testMaxScore', totalMaxPoints);
+    await upsertTotal('testSummary', summaryText);
+
+    await conn.commit();
+    return res.json({
+      ok: true,
+      earned: totalEarnedPoints,
+      max: totalMaxPoints,
+      questions: questionResults,
+      summary: summaryText,
+    });
+  } catch (err) {
+    await conn.rollback();
+    console.error('❌ submitTest failed:', err);
+    return res.status(500).json({ error: 'submit-test failed' });
+  } finally {
+    conn.release();
+  }
+}
+
+
+
+
 
 // Export it as part of the module
 module.exports = {
@@ -720,5 +1008,6 @@ module.exports = {
   getInstanceGroups,
   getInstancesForActivityInCourse,
   getInstanceResponses,
-  refreshTotalGroups
+  refreshTotalGroups,
+  submitTest,
 };

@@ -72,12 +72,14 @@ export default function ActivityCppBlock({
   const gutterRef = useRef(null);
   const codeScrollRef = useRef(null);
 
+  
   // --- debounce plumbing for broadcast / sync ---
   const debounceMs = 300;
   const broadcastTimerRef = useRef(null);
   const lastSentRef = useRef(initialCode ?? '');
   const pendingRemoteRef = useRef(null);
 
+  
   useEffect(
     () => () => {
       if (broadcastTimerRef.current) clearTimeout(broadcastTimerRef.current);
@@ -260,6 +262,25 @@ export default function ActivityCppBlock({
     return Object.keys(selected).length ? selected : undefined;
   };
 
+  // --- terminal output capture for grading ---
+  const [terminalOutput, setTerminalOutput] = useState('');
+
+  const appendOutput = (chunk) => {
+    setTerminalOutput((prev) => prev + chunk);
+  };
+
+    // Derive the output key from the code key, e.g. 1acode1 -> 1aoutput1
+  const outputKey = useMemo(() => {
+    if (!responseKey) return '';
+    return responseKey.replace(/code(\d+)$/, 'output$1');
+  }, [responseKey]);
+
+  //const baseQid = useMemo(() => {
+  //  if (!responseKey) return '';
+  //  // e.g., "1acode1" -> "1a"
+  //  return responseKey.replace(/code\d+$/, '');
+  //}, [responseKey]);
+
   // --- unified run: interactive + sheet files ---
   const runInteractive = async () => {
     // close previous session if any
@@ -270,8 +291,10 @@ export default function ActivityCppBlock({
       onDataDisposeRef.current?.dispose();
     } catch { }
 
+    setTerminalOutput('');
     term.current?.clear();
     term.current?.writeln('Compiling...');
+    appendOutput('Compiling...\n');
     term.current?.focus();
     setIsRunning(true);
 
@@ -284,9 +307,7 @@ export default function ActivityCppBlock({
           payload.files = filesPayload;
         }
       }
-      //term.current.writeln(`[dbg] client timeLimit=${timeLimit}ms`);
-      //console.log('[dbg] payload', { timeout_ms: timeLimit });
-      // Honor \cpp{...}: timeout on the compile step
+
       const compileController = new AbortController();
       const compileTimer = setTimeout(() => compileController.abort(), timeLimit);
       const res = await fetch('/cxx-run/session/new', {
@@ -304,18 +325,18 @@ export default function ActivityCppBlock({
       const ctype = res.headers.get('content-type') || '';
       if (!ctype.includes('application/json')) {
         const text = await res.text();
-        term.current.writeln(`\r\n❌ Non-JSON response:\n${text.slice(0, 400)}`);
+        const msg = `\r\nNon-JSON response:\n${text.slice(0, 400)}`;
+        term.current.writeln(msg);
+        appendOutput(msg + '\n');
         setIsRunning(false);
         return;
       }
 
       const data = await res.json();
-      //term.current.writeln(
-      //  `[dbg] server limits wall=${data.wall_sec}s idle=${data.idle_sec}s`
-      //);
       if (!data.ok) {
-        term.current.writeln('\r\n❌ Compile error:\n');
-        term.current.writeln(data.compile_error || data.error || '(no details)');
+        const msg = '\r\nCompile error:\n' + (data.compile_error || data.error || '(no details)');
+        term.current.writeln(msg);
+        appendOutput(msg + '\n');
         setIsRunning(false);
         return;
       }
@@ -324,10 +345,10 @@ export default function ActivityCppBlock({
       wsRef.current = ws;
 
       ws.onopen = () => {
-        term.current.writeln(
-          '▶ Program started. Type input; press Enter to send.'
-        );
+        const msg = '▶ Program started. Type input; press Enter to send.\n\n';
+        term.current.writeln('▶ Program started. Type input; press Enter to send.');
         term.current.writeln('');
+        appendOutput(msg);
         term.current.focus();
         inputBufferRef.current = '';
 
@@ -336,13 +357,12 @@ export default function ActivityCppBlock({
           clearTimeout(wsTimerRef.current);
         } catch { }
         wsTimerRef.current = setTimeout(() => {
-          // Soft kill first (Ctrl+C), then close if still open shortly after
           try {
             ws.send('\u0003');
           } catch { }
-          term.current.writeln(
-            `\r\n⏱️ Program time limit reached (${timeLimit} ms). Sending Ctrl+C...`
-          );
+          const tmsg = `\r\n⏱️ Program time limit reached (${timeLimit} ms). Sending Ctrl+C...`;
+          term.current.writeln(tmsg);
+          appendOutput(tmsg + '\n');
           setTimeout(() => {
             try {
               ws.close();
@@ -358,6 +378,7 @@ export default function ActivityCppBlock({
             const line = inputBufferRef.current;
             term.current.write('\r\n');
             ws.send(line + '\n');
+            appendOutput(line + '\n');
             inputBufferRef.current = '';
             return;
           }
@@ -376,6 +397,7 @@ export default function ActivityCppBlock({
             ws.send(d);
             inputBufferRef.current = '';
             term.current.write('^C\r\n');
+            appendOutput('^C\n');
             return;
           }
 
@@ -383,6 +405,7 @@ export default function ActivityCppBlock({
           if (d >= ' ' && d !== '\x7f') {
             inputBufferRef.current += d;
             term.current.write(d);
+            appendOutput(d);
           }
         };
 
@@ -395,37 +418,36 @@ export default function ActivityCppBlock({
       ws.onmessage = (ev) => {
         const msg = ev.data;
 
-        // Convention: backend sends a final "[FILES]{json}" message
-        // with any files created/updated in the sandbox.
         if (typeof msg === 'string' && msg.startsWith('[FILES]')) {
           if (setFileContents) {
             try {
               const updated = JSON.parse(msg.slice(7));
-              // Merge: keep any files that already exist, overwrite updated ones.
               setFileContents((prev) => ({
                 ...(prev || {}),
                 ...(updated || {}),
               }));
             } catch (e) {
-              term.current.writeln(
-                '\r\n[Warning] Failed to parse returned files metadata.\r\n'
-              );
+              const warnMsg = '\r\n[Warning] Failed to parse returned files metadata.\r\n';
+              term.current.writeln(warnMsg);
+              appendOutput(warnMsg + '\n');
             }
           }
           return;
         }
 
-        // Normal program stdout/stderr stream
-        term.current.write(
-          typeof msg === 'string' ? msg : new TextDecoder().decode(msg)
-        );
+        const text =
+          typeof msg === 'string' ? msg : new TextDecoder().decode(msg);
+        term.current.write(text);
+        appendOutput(text);
       };
 
       ws.onerror = () => {
         try {
           clearTimeout(wsTimerRef.current);
         } catch { }
-        term.current.writeln('\r\n❌ [WebSocket error]');
+        const msg = '\r\n[WebSocket error]';
+        term.current.writeln(msg);
+        appendOutput(msg + '\n');
       };
 
       ws.onclose = () => {
@@ -436,16 +458,20 @@ export default function ActivityCppBlock({
           onDataDisposeRef.current?.dispose();
         } catch { }
         inputBufferRef.current = '';
-        term.current.writeln('\r\n[Program finished]');
+        const msg = '\r\n[Program finished]';
+        term.current.writeln(msg);
+        appendOutput(msg + '\n');
         setIsRunning(false);
       };
     } catch (e) {
       if (e?.name === 'AbortError') {
-        term.current.writeln(
-          `\r\n⏱️ Timed out during compilation after ${timeLimit} ms`
-        );
+        const msg = `\r\nTimed out during compilation after ${timeLimit} ms`;
+        term.current.writeln(msg);
+        appendOutput(msg + '\n');
       } else {
-        term.current.writeln(`\r\n❌ Error: ${e.message}`);
+        const msg = `\r\nError: ${e.message}`;
+        term.current.writeln(msg);
+        appendOutput(msg + '\n');
       }
       setIsRunning(false);
     }
@@ -531,8 +557,6 @@ export default function ActivityCppBlock({
     },
   };
 
-  // --- reusable sections for layout switching ---
-
   const terminalSection = (
     <div
       ref={termRef}
@@ -553,8 +577,6 @@ export default function ActivityCppBlock({
         <Button
           variant="secondary"
           onClick={() => {
-            // allow toggling even if editable=false, since your first block
-            // may be passed editable={false} from the parent.
             setIsEditing((prev) => {
               const next = !prev;
               if (next) {
@@ -665,20 +687,44 @@ export default function ActivityCppBlock({
     </>
   );
 
-  return (
-    <Row className="mb-4">
-      {/* CODE: full-width in 'stacked', half-width in 'side' */}
-      <Col md={layoutMode === 'side' ? 6 : 12}>
-        {editorSection}
-      </Col>
 
-      {/* TERMINAL: same, but below in stacked mode via mt-3 */}
-      <Col
-        md={layoutMode === 'side' ? 6 : 12}
-        className={layoutMode === 'side' ? '' : 'mt-3'}
-      >
-        {terminalSection}
-      </Col>
-    </Row>
+  // --- render ---
+  return (
+    <>
+      <Row className="mb-4">
+        {/* CODE: full-width in 'stacked', half-width in 'side' */}
+        <Col md={layoutMode === 'side' ? 6 : 12}>
+          {editorSection}
+        </Col>
+
+        {/* TERMINAL: same, but below in stacked mode via mt-3 */}
+        <Col
+          md={layoutMode === 'side' ? 6 : 12}
+          className={layoutMode === 'side' ? '' : 'mt-3'}
+        >
+          {terminalSection}
+        </Col>
+      </Row>
+
+      {/* Hidden mirror of code for test grading (independent of edit mode) */}
+      {responseKey && (
+        <textarea
+          style={{ display: 'none' }}
+          data-response-key={responseKey}
+          readOnly
+          value={code}
+        />
+      )}
+
+      {/* Hidden mirror of terminal output for test grading */}
+      {outputKey && (
+        <pre
+          style={{ display: 'none' }}
+          data-output-key={outputKey}
+        >
+          {terminalOutput}
+        </pre>
+      )}
+    </>
   );
 }
