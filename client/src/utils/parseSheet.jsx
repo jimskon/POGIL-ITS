@@ -74,7 +74,7 @@ function ImgWithFallback({ src, alt, widthStyle, captionHtml }) {
 // Keeps everything else as-is. Works for any \SomeTag{ ... } (including section*, link, image, etc.)
 function collapseBracedCommands(rawLines) {
   const startsTag = (s) =>
-    +    /^\s*\\(?:title|name|activitycontext|studentlevel|aicodeguidance|section\*?|questiongroup|question|sampleresponses|feedbackprompt|followupprompt|table|image|link|file|pythonturtle|cpp|include)\{/.test(s);
+    /^\s*\\(?:title|name|activitycontext|studentlevel|aicodeguidance|section\*?|questiongroup|question|sampleresponses|feedbackprompt|followupprompt|table|image|link|file|pythonturtle|cpp|include)\{/.test(s);
   const out = [];
   let buf = null;
   let depth = 0;
@@ -1159,7 +1159,7 @@ export function renderBlocks(blocks, options = {}) {
               fileContents={fileContents}
               setFileContents={setFileContents}
               timeLimit={tl}
-              includeFiles={block.imports || []} 
+              includeFiles={block.imports || []}
             />
           </div>
         );
@@ -1191,6 +1191,7 @@ export function renderBlocks(blocks, options = {}) {
         feedbackPrompt: '',
         hasTextResponse: !!block.hasTextResponse,
         hasTableResponse: !!block.hasTableResponse,
+        lang: 'python',
       };
 
       const tl = block.timeLimit ?? 50000;
@@ -1495,6 +1496,7 @@ export function renderBlocks(blocks, options = {}) {
               feedbackPrompt: stripHtml(block.feedback?.[0] || ''),        // ✅ include per-question guidance
               hasTextResponse: !!block.hasTextResponse,
               hasTableResponse: !!block.hasTableResponse,
+              lang: 'python',
             };
 
             const tl = py.timeLimit ?? block.timeLimit ?? 50000;
@@ -1541,7 +1543,7 @@ export function renderBlocks(blocks, options = {}) {
                   turtleTargetId={isTurtle ? turtleId : undefined}
                   turtleWidth={w}
                   turtleHeight={h}
-                  includeFiles={py.imports || []} 
+                  includeFiles={py.imports || []}
                 />
               </div>
             );
@@ -1607,6 +1609,9 @@ export function renderBlocks(blocks, options = {}) {
                       onCodeChange(rk, code, {
                         ...extra,
                         questionText: stripHtml(block.prompt || ''),
+                        sampleResponse: stripHtml(block.samples?.[0] || ''),    
+                        feedbackPrompt: stripHtml(block.feedback?.[0] || ''),    
+
                         hasTextResponse: !!block.hasTextResponse,
                         hasTableResponse: !!block.hasTableResponse,
                         lang: 'cpp',

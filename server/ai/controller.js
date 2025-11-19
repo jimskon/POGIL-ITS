@@ -259,23 +259,36 @@ async function evaluateStudentResponse(req, res) {
 
 
 async function evaluatePythonCode(req, res) {
-  const { questionText, studentCode, codeVersion, guidance = "", isCodeOnly = false, feedbackPrompt = "" } = req.body;
+  const {
+    questionText,
+    studentCode,
+    codeVersion,
+    guidance = "",
+    isCodeOnly = false,
+    feedbackPrompt = ""
+  } = req.body;
 
-  if (isNone(feedbackPrompt)) {
-    return res.status(200).json({ feedback: null, followup: null, verdict: 'minor' });
-  }
   if (!questionText || !studentCode) {
     return res.status(400).json({ error: 'Missing question text or student code' });
   }
-  if (String(feedbackPrompt).trim().toLowerCase() === "none") {
-    return res.status(200).json({ feedback: null, followup: null, verdict: "minor" });
-  }
 
+  // --- Split guidance into per-question + activity ---
   const combinedGuide = stripHtml(guidance || '');
-  // Split "per-question --- activity" (robust: any number of hyphens wrapped by newlines)
-  const parts = combinedGuide.split(/\n-{3,}\n/);
+  const parts = combinedGuide.split(/\n-{3,}\n/);  // '---' splitter
   const questionGuide = parts[0] || "";
   const activityGuide = parts[1] || "";
+
+  // 🔒 HARD SKIP: if this question’s feedback prompt is "none" in EITHER place,
+  // do not call OpenAI at all for code.
+  const fp = String(feedbackPrompt || '').trim();
+  if (
+    isNone(fp) || noFollowups(fp) ||
+    isNone(questionGuide) || noFollowups(questionGuide)
+  ) {
+    return res
+      .status(200)
+      .json({ feedback: null, followup: null, verdict: 'minor' });
+  }
 
   const policy = getEffectivePolicy(activityGuide, questionGuide);
 
@@ -310,9 +323,13 @@ Return STRICT JSON:
 Definitions:
 - "correct": Meets the task; acceptable output/logic.
 - "minor": Only trivial output/format differences that do NOT affect the task.
-- "wrong": Runs or is plausible but logic/output does NOT meet the task.
+- "wrong": There exists a concrete input for which the code clearly fails the stated task.
 - "off_prompt": Solves something else / ignores instructions.
 - "error": Syntax/runtime error or cannot reasonably run.
+
+IMPORTANT:
+- Only call something "wrong" or "error" if you can describe at least one specific input (or scenario) where it fails.
+- If you cannot find a clear failing input and the code matches the task in spirit, use "correct" or "minor".
 
 Rules:
 - If "correct" or "minor": feedback=null, followup=null. (No nits.)
@@ -346,7 +363,6 @@ ${rules ? '\n' + rules : ''}
     // Enforce "no followups" gate
     if (policy.followupGate === 'none') followup = null;
 
-    // If guides say "judge logic, not result / don't ask to change values", kill value-tweak nags
     const forbidValueNags =
       /\bjudge\b.*\blogic\b.*\bnot\b.*\b(true|false|result)\b/i.test(`${questionGuide} ${activityGuide}`) ||
       /\bdo not ask\b.*\bchange\b.*\bvalues?\b/i.test(`${questionGuide} ${activityGuide}`);
@@ -356,25 +372,31 @@ ${rules ? '\n' + rules : ''}
       if (mentionsValueTweak(feedback)) feedback = null;
     }
 
-    // Normalize by verdict
+    // 🔒 Emergency clamp: only give feedback for clear errors or off-prompt.
+    // Treat "wrong" as "minor" so we don't get bogus "improvements" suggestions.
     if (verdict === 'wrong') {
+      verdict = 'minor';
+      feedback = null;
       followup = null;
     } else if (verdict === 'correct' || verdict === 'minor') {
-      feedback = null; followup = null;
+      feedback = null;
+      followup = null;
     } else if (verdict === 'off_prompt' || verdict === 'error') {
+      // Keep feedback for truly broken / off-prompt code,
+      // but still obey "no followups" policy.
       if (policy.followupGate === 'none') followup = null;
     } else {
       verdict = 'minor';
-      feedback = null; followup = null;
+      feedback = null;
+      followup = null;
     }
 
-    // If policy is "gibberish-only", allow follow-up only for gibberish or true errors
+
     if (policy.followupGate === 'gibberish-only') {
       const gib = codeLooksGibberish(studentCode);
       if (!gib && verdict !== 'error' && verdict !== 'off_prompt') followup = null;
     }
 
-    // (Optional) quick debug log
     console.log('[POLICY]', {
       followupGate: policy.followupGate,
       verdict,
@@ -388,6 +410,8 @@ ${rules ? '\n' + rules : ''}
     return res.status(200).json({ feedback: null, followup: null, verdict: 'minor' });
   }
 }
+
+
 
 
 function getEffectivePolicy(activityGuide, questionGuide) {
@@ -429,21 +453,37 @@ async function evaluateCode({
   questionText,
   studentCode,
   codeVersion,
-  guidance = "",      // pass \aicodeguidance text here
-  isCodeOnly = false, // true if this is a pure code question (allows a short follow-up only if policy permits)
+  guidance = "",      // \aicodeguidance + maybe question guidance
+  isCodeOnly = false, // pure code question?
   feedbackPrompt = "",
   lang,
 }) {
   if (!questionText || !studentCode) {
     return { feedback: null, followup: null };
   }
-  if (String(feedbackPrompt).trim().toLowerCase() === "none") {
-    return { feedback: null, followup: null };
-  }
+
   const combined = stripHtml(guidance || '');
   const parts = combined.split(/\n-{3,}\n/);     // '---' splitter
-  const qGuide = parts[0] || "";
-  const aGuide = parts[1] || combined;
+  const fallbackQ = parts[0] || "";
+  const fallbackA = parts[1] || combined;
+
+  // 🔝 Per-question guidance: feedbackPrompt wins.
+  const questionGuideRaw = feedbackPrompt && !isNone(feedbackPrompt)
+    ? feedbackPrompt
+    : fallbackQ;
+
+  const qGuide = stripHtml(questionGuideRaw || "");
+  const aGuide = stripHtml(fallbackA || "");
+
+  // 🔒 HARD SKIP for \feedbackprompt{none} or equivalent
+  const fp = String(feedbackPrompt || '').trim();
+  if (
+    isNone(fp) || noFollowups(fp) ||
+    isNone(qGuide) || noFollowups(qGuide)
+  ) {
+    return { feedback: null, followup: null };
+  }
+
   const policy = getEffectivePolicy(aGuide, qGuide);
 
   const rules = [
@@ -454,8 +494,9 @@ async function evaluateCode({
     policy.failOpen ? '- If minor issues but functionally OK, treat as correct (feedback=null, followup=null).' : '',
   ].filter(Boolean).join('\n');
 
-  const inferred = detectLangFromCode(studentCode);
+  const inferred = lang ? null : detectLangFromCode(studentCode);
   const effLang = (lang || inferred || "").toLowerCase();
+
 
   let langLabel = "the correct language for this code";
   if (effLang === "cpp" || effLang === "c++") langLabel = "C++";
@@ -506,22 +547,23 @@ ${rules ? '\n' + rules : ''}
   let feedback = obj.feedback == null || String(obj.feedback).trim() === '' ? null : String(obj.feedback).trim();
   let followup = obj.followup == null || String(obj.followup).trim() === '' ? null : String(obj.followup).trim();
 
-  // ---- Policy filter (same spirit as evaluatePythonCode) ----
   const fatal = isFatal(feedback) || isFatal(followup);
 
-  // If guidance says no follow-ups, drop them even if fatal (keep feedback).
   if (policy.followupGate === 'none') {
     followup = null;
   }
 
-  // Let the model handle "requirements-only" via the prompt wording.
-  // We still strip soft/nitpicky stuff unless it's clearly fatal.
   if (isSoft(feedback) && !fatal) feedback = null;
   if (isSoft(followup) && !fatal) followup = null;
 
-
+  if (!fatal) {
+    feedback = null;
+    followup = null;
+  }
   return { feedback, followup };
 }
+
+
 // --- Test-question grader: returns numeric scores + short feedback ---
 // Now returns three bands: code, run/output, response
 async function gradeTestQuestion({
@@ -542,12 +584,12 @@ async function gradeTestQuestion({
   };
 
   // ---- Point caps per band ----
-  const codeBucket   = scores.code   || rubric.code   || {};
-  const runBucket    = scores.output || rubric.output || {};
-  const respBucket   = scores.response || rubric.response || {};
+  const codeBucket = scores.code || rubric.code || {};
+  const runBucket = scores.output || rubric.output || {};
+  const respBucket = scores.response || rubric.response || {};
 
   const maxCodePts = bucketPoints(codeBucket);
-  const maxRunPts  = bucketPoints(runBucket);
+  const maxRunPts = bucketPoints(runBucket);
   const maxRespPts = bucketPoints(respBucket);
 
   const maxTotal = maxCodePts + maxRunPts + maxRespPts;
@@ -567,20 +609,20 @@ async function gradeTestQuestion({
   // ---- Rubric text per band ----
   const codeRubricText = stripHtml(
     codeBucket.instructionsRaw ||
-      codeBucket.instructionsHtml ||
-      ""
+    codeBucket.instructionsHtml ||
+    ""
   ) || "(none)";
 
   const runRubricText = stripHtml(
     runBucket.instructionsRaw ||
-      runBucket.instructionsHtml ||
-      ""
+    runBucket.instructionsHtml ||
+    ""
   ) || "(none)";
 
   const responseRubricText = stripHtml(
     respBucket.instructionsRaw ||
-      respBucket.instructionsHtml ||
-      ""
+    respBucket.instructionsHtml ||
+    ""
   ) || "(none)";
 
   // ---- Build code bundle for the prompt ----
@@ -592,8 +634,8 @@ async function gradeTestQuestion({
         lang === "cpp" || lang === "c++"
           ? "cpp"
           : lang === "python"
-          ? "python"
-          : "";
+            ? "python"
+            : "";
       return [
         `Code cell ${idx + 1}${label}:`,
         "```" + fence,
@@ -661,14 +703,14 @@ async function gradeTestQuestion({
 
   userLines.push(
     `Return strict JSON only in this form:\n` +
-      `{"codeScore": number, "codeFeedback": string|null, ` +
-      `"runScore": number, "runFeedback": string|null, ` +
-      `"responseScore": number, "responseFeedback": string|null}\n` +
-      `- codeScore must be between 0 and ${maxCodePts}.\n` +
-      `- runScore must be between 0 and ${maxRunPts}.\n` +
-      `- responseScore must be between 0 and ${maxRespPts}.\n` +
-      `- For any band with full credit, feedback for that band MUST be null.\n` +
-      `- For bands with less than full credit, feedback should be ONE short sentence explaining why.`
+    `{"codeScore": number, "codeFeedback": string|null, ` +
+    `"runScore": number, "runFeedback": string|null, ` +
+    `"responseScore": number, "responseFeedback": string|null}\n` +
+    `- codeScore must be between 0 and ${maxCodePts}.\n` +
+    `- runScore must be between 0 and ${maxRunPts}.\n` +
+    `- responseScore must be between 0 and ${maxRespPts}.\n` +
+    `- For any band with full credit, feedback for that band MUST be null.\n` +
+    `- For bands with less than full credit, feedback should be ONE short sentence explaining why.`
   );
 
   const user = userLines.join("\n");
@@ -753,10 +795,45 @@ async function gradeTestQuestion({
   }
 }
 
+// C++-specific HTTP handler that wraps evaluateCode with lang="cpp"
+async function evaluateCppCode(req, res) {
+  const {
+    questionText,
+    studentCode,
+    codeVersion,
+    guidance = "",
+    isCodeOnly = false,
+    feedbackPrompt = ""
+  } = req.body || {};
+
+  if (!questionText || !studentCode) {
+    return res.status(400).json({ error: 'Missing question text or student code' });
+  }
+
+  try {
+    const { feedback, followup } = await evaluateCode({
+      questionText,
+      studentCode,
+      codeVersion,
+      guidance,
+      isCodeOnly,
+      feedbackPrompt,
+      lang: 'cpp',   // 🔒 FORCE C++
+    });
+
+    // You can add a verdict if your client expects one; "minor" is safe default
+    return res.status(200).json({ feedback, followup, verdict: 'minor' });
+  } catch (err) {
+    console.error('Error evaluating C++ code:', err);
+    return res.status(200).json({ feedback: null, followup: null, verdict: 'minor' });
+  }
+}
+
 
 module.exports = {
   evaluateStudentResponse,
   evaluatePythonCode,
   evaluateCode,
-  gradeTestQuestion
+  gradeTestQuestion,
+  evaluateCppCode,
 };
