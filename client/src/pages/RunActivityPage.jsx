@@ -136,6 +136,9 @@ export default function RunActivityPage({
   const [skulptLoaded, setSkulptLoaded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // per-group “ignore AI, let me continue” overrides
+  const [overrideGroups, setOverrideGroups] = useState({});
+
   const isLockedFU = (qid) => qidsNoFURef.current?.has(qid);
 
   // compute isActive first…
@@ -1024,7 +1027,7 @@ export default function RunActivityPage({
 
 
 
-  async function handleSubmit() {
+  async function handleSubmit(forceOverride = false) {
     if (isSubmitting) return;
     setIsSubmitting(true);
 
@@ -1463,11 +1466,16 @@ export default function RunActivityPage({
       );
       return attempts < 3;
     });
+    // Is this group set to "ignore AI gating"?
+    const overrideThisGroup =
+      forceOverride || !!overrideGroups[currentQuestionGroupIndex];
 
     const groupState =
-      pendingBase || pendingTextFollowups || pendingCodeGates
-        ? 'inprogress'
-        : 'completed';
+      overrideThisGroup
+        ? 'completed'
+        : pendingBase || pendingTextFollowups || pendingCodeGates
+          ? 'inprogress'
+          : 'completed';
 
     const stateKey = `${currentQuestionGroupIndex + 1}state`;
     answers[stateKey] = groupState;
@@ -1480,7 +1488,13 @@ export default function RunActivityPage({
       setIsSubmitting(false);
       return;
     }
-
+    if (groupState === 'completed' && overrideThisGroup &&
+      (pendingBase || pendingTextFollowups || pendingCodeGates)) {
+      alert(
+        'You chose to continue without fixing AI feedback. ' +
+        'Your instructor may review this later.'
+      );
+    }
     try {
       const response = await fetch(
         `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`,
@@ -1680,7 +1694,7 @@ export default function RunActivityPage({
     }
   }
   // Helper: pull score + explain fields for a base question id like "1a"
-   // Helper: pull tri-band scores + feedback for a base question id like "1a"
+  // Helper: pull tri-band scores + feedback for a base question id like "1a"
   function getQuestionScores(qid, block) {
     const codeScoreRaw =
       existingAnswers[`${qid}CodeScore`]?.response ??
@@ -1695,7 +1709,7 @@ export default function RunActivityPage({
       existingAnswers[`${qid}responseScore`]?.response;
 
     const codeScore = codeScoreRaw != null ? Number(codeScoreRaw) : null;
-    const runScore  = runScoreRaw  != null ? Number(runScoreRaw)  : null;
+    const runScore = runScoreRaw != null ? Number(runScoreRaw) : null;
     const respScore = respScoreRaw != null ? Number(respScoreRaw) : null;
 
     const codeExplain =
@@ -1724,12 +1738,12 @@ export default function RunActivityPage({
 
     const scores = block?.scores || {};
     const maxCode = bucketPoints(scores.code);
-    const maxRun  = bucketPoints(scores.output);
+    const maxRun = bucketPoints(scores.output);
     const maxResp = bucketPoints(scores.response);
 
     const hasAnyScore =
       codeScoreRaw != null ||
-      runScoreRaw  != null ||
+      runScoreRaw != null ||
       respScoreRaw != null ||
       existingAnswers.hasOwnProperty(`${qid}CodeScore`) ||
       existingAnswers.hasOwnProperty(`${qid}RunScore`) ||
@@ -1737,7 +1751,7 @@ export default function RunActivityPage({
 
     const earnedTotal =
       (codeScore != null ? codeScore : 0) +
-      (runScore  != null ? runScore  : 0) +
+      (runScore != null ? runScore : 0) +
       (respScore != null ? respScore : 0);
 
     const maxTotal = maxCode + maxRun + maxResp;
@@ -1793,6 +1807,22 @@ export default function RunActivityPage({
           const editable = isActive && isCurrent && !isComplete;
           const showGroup = isInstructor || isComplete || isCurrent;
           if (!showGroup) return null;
+
+          // NEW: does this group currently have AI feedback/guidance?
+          const hasAIGuidanceForGroup = (group.content || [])
+            .filter((b) => b.type === 'question')
+            .some((b) => {
+              const qid = `${b.groupId}${b.id}`;
+              const hasFU = !!followupsShown[qid];
+
+              // any code feedback for cells like "1acode1", "1acode2", ...
+              const hasCodeFb = Object.entries(codeFeedbackShown || {}).some(
+                ([key, fb]) =>
+                  key.startsWith(`${qid}code`) && fb && String(fb).trim() !== ''
+              );
+
+              return hasFU || hasCodeFb;
+            });
 
           return (
             <div
@@ -1942,7 +1972,7 @@ export default function RunActivityPage({
 
               {editable && (
                 <div className="mt-2">
-                  <Button onClick={handleSubmit} disabled={isSubmitting}>
+                  <Button onClick={() => handleSubmit(false)} disabled={isSubmitting}>
                     {isSubmitting ? (
                       <>
                         <Spinner
@@ -1958,6 +1988,22 @@ export default function RunActivityPage({
                       'Submit and Continue'
                     )}
                   </Button>
+                  {/* NEW: let students bypass AI gating in learning mode */}
+                  {!isTestMode && hasAIGuidanceForGroup && (
+                    <Button
+                      variant="outline-secondary"
+                      size="sm"
+                      className="ms-2"
+                      onClick={() => {
+                        // optional: remember this override
+                        setOverrideGroups((prev) => ({ ...prev, [index]: true }));
+                        // and actually submit with override
+                        handleSubmit(true);
+                      }}
+                    >
+                      Continue without fixing AI feedback
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
