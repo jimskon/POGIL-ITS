@@ -173,7 +173,7 @@ export default function FileBlock({
 
 
 export function parseSheetToBlocks(lines) {
-  console.log("🧑‍💻 parseSheetToBlocks invoked");
+  //console.log("🧑‍💻 parseSheetToBlocks invoked");
   lines = collapseBracedCommands(lines);
   const blocks = [];
   let groupNumber = 0;
@@ -188,7 +188,8 @@ export function parseSheetToBlocks(lines) {
   let listItems = [];
   let inFileBlock = false;
   let currentFile = null;
-  // NEW: multi-line header support (e.g., \aicodeguidance{ ... \n ... \n })
+  let inScoreBlock = false;
+  let currentScore = null;
   let openHeaderTag = null;
   let openHeaderBuf = [];
   let inGroup = false;
@@ -282,6 +283,29 @@ export function parseSheetToBlocks(lines) {
 
   for (let line of lines) {
     const trimmed = line.trim();
+    // --- inside a \score ... \endscore block ---
+    if (inScoreBlock && currentScore && currentQuestion) {
+      if (trimmed === '\\endscore') {
+        // finalize this score block
+        const rawText = currentScore.lines.join('\n').trim();
+        const htmlText = format(rawText);
+
+        if (!currentQuestion.scores) currentQuestion.scores = {};
+        // type is one of 'response', 'code', 'output'
+        currentQuestion.scores[currentScore.type] = {
+          points: currentScore.points,
+          instructionsHtml: htmlText,   // for display (instructor, preview)
+          instructionsRaw: rawText,     // for AI prompt building
+        };
+
+        inScoreBlock = false;
+        currentScore = null;
+        continue;
+      } else {
+        currentScore.lines.push(line);
+        continue;
+      }
+    }
     // \include{file1.cpp,file2.cpp}
     if (trimmed.startsWith('\\include{')) {
       const m = trimmed.match(/^\\include\{([\s\S]+)\}$/);
@@ -448,32 +472,60 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    const pythonMatch = trimmed.match(/^\\python(?:\{(\d+)\})?$/);
+    const pythonMatch = trimmed.match(/^\\python(?:\{([^}]*)\})?$/);
     const turtleMatch = trimmed.match(/^\\pythonturtle(?:\{(\d+)\s*(?:[x,])\s*(\d+)\})?$/i);
+
     if (pythonMatch) {
       flushCurrentBlock();
       currentField = 'python';
-      const timeLimit = pythonMatch[1] ? parseInt(pythonMatch[1]) : 50000;
 
-      const blockObj = { type: 'python', lines: [], timeLimit };
+      const argStr = pythonMatch[1] ? pythonMatch[1].trim() : '';
+      let timeLimit = 50000;
+      let imports = null;
+
+      if (argStr) {
+        const parts = argStr
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean);
+
+        // If first chunk is purely digits, treat it as timeLimit
+        if (parts.length > 0 && /^\d+$/.test(parts[0])) {
+          timeLimit = parseInt(parts[0], 10);
+          parts.shift();
+        }
+
+        // Look for imports=...
+        const impPart = parts.find(p => p.toLowerCase().startsWith('imports='));
+        if (impPart) {
+          const listStr = impPart.slice('imports='.length).trim();
+          if (listStr) {
+            imports = listStr
+              .split(/[;,]/)
+              .map(s => s.trim())
+              .filter(Boolean);
+          }
+        }
+      }
+
+      const blockObj = { type: 'python', lines: [], timeLimit, imports };
 
       if (currentQuestion && currentQuestion.type === 'question') {
         if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
         currentQuestion.pythonBlocks.push(blockObj);
-        const nextIndex =
-          (currentQuestion.codeBlocks?.length || 0) + 1;
+
+        const nextIndex = (currentQuestion.codeBlocks?.length || 0) + 1;
         currentQuestion.codeBlocks.push({
           lang: 'python',
           index: nextIndex,
           editable: true,
           content: '',        // fill on \endpython
-          timeLimit
+          timeLimit,
+          includeFiles: imports || null,   // not strictly needed, but consistent
         });
       } else {
         blocks.push({ ...blockObj, localOnly: !inGroup });
       }
-
-
 
       continue;
     }
@@ -518,7 +570,9 @@ export function parseSheetToBlocks(lines) {
             timeLimit: block.timeLimit || 50000,
             width: block.width,
             height: block.height,
+            imports: block.imports || null,   // 👈 preserve imports
           });
+
           // mirror into latest python/turtle entry in codeBlocks
           const idx = [...currentQuestion.codeBlocks]
             .reverse()
@@ -634,6 +688,49 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
+    if (trimmed.startsWith('\\question{')) {
+      // grab everything between the first '{' and the LAST '}' on this line
+      const open = trimmed.indexOf('{');
+      const close = trimmed.lastIndexOf('}');
+      const raw = (open >= 0 && close > open)
+        ? trimmed.slice(open + 1, close)
+        : trimmed.slice(open + 1);
+
+      const id = String.fromCharCode(questionLetterCode++);
+      const rawClean = raw.trimStart();
+      currentQuestion = {
+        type: 'question',
+        id,
+        groupId: groupNumber,
+        label: `${id}.`,
+        responseId: responseId++,
+        prompt: format(rawClean),
+        responseLines: 1,
+        samples: [],
+        feedback: [],
+        followups: [],
+        codeBlocks: [],
+        // NEW: per-question scoring metadata
+        scores: {},   // e.g. { response: {points, instructionsHtml, instructionsRaw}, ... }
+      };
+      continue;
+    }
+
+    // --- scoring blocks: \score{n,type} ... \endscore ---
+    // type is one of: response, code, output
+    const scoreMatch = trimmed.match(/^\\score\{(\d+)\s*,\s*(response|code|output)\}/i);
+    if (scoreMatch && currentQuestion) {
+      const points = parseInt(scoreMatch[1], 10);
+      const scoreType = scoreMatch[2].toLowerCase();
+
+      inScoreBlock = true;
+      currentScore = {
+        type: scoreType,
+        points,
+        lines: [],
+      };
+      continue;
+    }
 
     if (trimmed.startsWith('\\textresponse')) {
       const match = trimmed.match(/\\textresponse\{(\d+)\}/);
@@ -1062,6 +1159,7 @@ export function renderBlocks(blocks, options = {}) {
               fileContents={fileContents}
               setFileContents={setFileContents}
               timeLimit={tl}
+              includeFiles={block.imports || []} 
             />
           </div>
         );
@@ -1149,6 +1247,7 @@ export function renderBlocks(blocks, options = {}) {
             fileContents={fileContents}
             setFileContents={setFileContents}
             timeLimit={block.timeLimit || 50000}
+            includeFiles={block.imports || []}
           />
         </div>
       );
@@ -1305,26 +1404,61 @@ export function renderBlocks(blocks, options = {}) {
         if (cb.lang === 'python') codeIndicesByLang.python.push(cb.index);
         if (cb.lang === 'cpp') codeIndicesByLang.cpp.push(cb.index);
       });
+
       const responseKey = `${block.groupId}${block.id}`;
       const followupAppeared = !!followupsShown?.[responseKey];
       const groupComplete = prefill?.[`${responseKey}S`] === 'complete';
 
-
       const hasPython = (block.pythonBlocks?.length || 0) > 0;
       const hasCpp = (block.cppBlocks?.length || 0) > 0;
-      const isCodeOnly = (hasPython || hasCpp) && !block.hasTextResponse && !block.hasTableResponse;
+      const isCodeOnly =
+        (hasPython || hasCpp) && !block.hasTextResponse && !block.hasTableResponse;
 
       // Show a free-text box only if explicitly requested OR (no code & no table)
-      const showTextArea = block.hasTextResponse || (!hasPython && !hasCpp && !block.hasTableResponse);
+      const showTextArea =
+        block.hasTextResponse || (!hasPython && !hasCpp && !block.hasTableResponse);
 
-      const lockMainResponse = !!followupsShown?.[responseKey] && !!block.hasTextResponse;
+      const lockMainResponse =
+        !!followupsShown?.[responseKey] && !!block.hasTextResponse;
+
+      // NEW: formatted score badges
+      const scoreBadges = [];
+      if (block.scores) {
+        const scoreEntries = [
+          ['response', 'Response'],
+          ['code', 'Code'],
+          ['output', 'Output'],
+        ];
+        for (const [key, label] of scoreEntries) {
+          const s = block.scores[key];
+          if (s && typeof s.points === 'number') {
+            scoreBadges.push(
+              <span
+                key={`score-${responseKey}-${key}`}
+                className="badge bg-light text-muted border ms-2"
+              >
+                {s.points} pt{s.points !== 1 ? 's' : ''} {label}
+              </span>
+            );
+          }
+        }
+      }
 
       return (
-        <div key={`q-${block.groupId}-${block.id}`}  // ✅ unique per question
-          className="mb-4">
+        <div
+          key={`q-${block.groupId}-${block.id}`}  // ✅ unique per question
+          className="mb-4"
+        >
           <p>
             <strong>{block.label}</strong>{' '}
-            <span dangerouslySetInnerHTML={{ __html: block.prompt }} />
+            <span
+              dangerouslySetInnerHTML={{ __html: block.prompt }}
+            />
+            {scoreBadges.length > 0 && (
+              <span className="ms-2">
+                {scoreBadges}
+              </span>
+            )}
             {lockMainResponse && (
               <span
                 className="ms-2"
@@ -1407,6 +1541,7 @@ export function renderBlocks(blocks, options = {}) {
                   turtleTargetId={isTurtle ? turtleId : undefined}
                   turtleWidth={w}
                   turtleHeight={h}
+                  includeFiles={py.imports || []} 
                 />
               </div>
             );

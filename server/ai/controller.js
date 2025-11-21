@@ -185,7 +185,6 @@ async function evaluateStudentResponse(req, res) {
       'Accept partial/approximate answers that show understanding.',
       'Ask at most ONE follow-up only when the answer is incoherent, off-prompt, clearly wrong overall, overly simple for the task, or missing a required artifact (e.g., pasted output/tests).',
       'No nitpicks about style/naming/spacing/performance. Ignore extra features.',
-      'This Python environment does NOT support f-strings.',
       questionGuide ? `Per-question guidance (do not quote): ${questionGuide}` : '',
       activityGuide ? `Activity guidance (do not quote): ${activityGuide}` : '',
       'Return ONLY the JSON per the schema.',
@@ -285,7 +284,11 @@ async function evaluatePythonCode(req, res) {
     policy.forbidFStrings && "- Do NOT suggest or use f-strings (environment may not support them).",
     policy.noExtras && '- Do NOT ask for additional features beyond the prompt.',
     policy.failOpen && '- If minor issues but functionally OK, treat as correct.',
+    '- Assume standard Python 3 with full f-string support. ' +
+      'If a print statement already has matching parentheses, NEVER say it is missing a parenthesis. ' +
+      'Do NOT recommend switching to f-strings as an “improvement” when they are not used.'
   ].filter(Boolean).join('\n');
+
 
   const prompt = `
 You are a Python tutor evaluating a student's code.
@@ -440,11 +443,20 @@ async function evaluateCode({
   if (String(feedbackPrompt).trim().toLowerCase() === "none") {
     return { feedback: null, followup: null };
   }
+
   const combined = stripHtml(guidance || '');
   const parts = combined.split(/\n-{3,}\n/);     // '---' splitter
   const qGuide = parts[0] || "";
   const aGuide = parts[1] || combined;
   const policy = getEffectivePolicy(aGuide, qGuide);
+
+  // ✅ infer language BEFORE using effLang
+  const inferred = detectLangFromCode(studentCode);
+  const effLang = (lang || inferred || "").toLowerCase();
+
+  let langLabel = "the correct language for this code";
+  if (effLang === "cpp" || effLang === "c++") langLabel = "C++";
+  else if (effLang === "python") langLabel = "Python";
 
   const rules = [
     policy.requirementsOnly ? '- Judge ONLY whether it meets the stated task; no extras.' : '',
@@ -452,14 +464,10 @@ async function evaluateCode({
     policy.forbidFStrings ? "- Do NOT suggest or use f-strings (environment may not support them)." : '',
     policy.noExtras ? '- Do NOT ask for additional features beyond the prompt.' : '',
     policy.failOpen ? '- If minor issues but functionally OK, treat as correct (feedback=null, followup=null).' : '',
+    effLang === 'python'
+      ? '- Assume standard Python 3 with f-strings; do NOT claim missing parentheses for syntactically valid print statements.'
+      : ''
   ].filter(Boolean).join('\n');
-
-  const inferred = detectLangFromCode(studentCode);
-  const effLang = (lang || inferred || "").toLowerCase();
-
-  let langLabel = "the correct language for this code";
-  if (effLang === "cpp" || effLang === "c++") langLabel = "C++";
-  else if (effLang === "python") langLabel = "Python";
 
   const prompt = `
 You are a ${langLabel} tutor evaluating a student's code.
@@ -503,8 +511,14 @@ ${rules ? '\n' + rules : ''}
   const match = raw.match(/\{[\s\S]*\}/);
   let obj = match ? JSON.parse(match[0]) : JSON.parse(raw);
 
-  let feedback = obj.feedback == null || String(obj.feedback).trim() === '' ? null : String(obj.feedback).trim();
-  let followup = obj.followup == null || String(obj.followup).trim() === '' ? null : String(obj.followup).trim();
+  let feedback =
+    obj.feedback == null || String(obj.feedback).trim() === ''
+      ? null
+      : String(obj.feedback).trim();
+  let followup =
+    obj.followup == null || String(obj.followup).trim() === ''
+      ? null
+      : String(obj.followup).trim();
 
   // ---- Policy filter (same spirit as evaluatePythonCode) ----
   const fatal = isFatal(feedback) || isFatal(followup);
@@ -514,14 +528,13 @@ ${rules ? '\n' + rules : ''}
     followup = null;
   }
 
-  // Let the model handle "requirements-only" via the prompt wording.
   // We still strip soft/nitpicky stuff unless it's clearly fatal.
   if (isSoft(feedback) && !fatal) feedback = null;
   if (isSoft(followup) && !fatal) followup = null;
 
-
   return { feedback, followup };
 }
+
 
 module.exports = {
   evaluateStudentResponse,

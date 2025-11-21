@@ -16,10 +16,35 @@ export async function runSkulptCode({
     return;
   }
 
-  const __fileDict = Object.entries(fileContents || {}).map(
-    ([name, content]) => `"${name}": ${JSON.stringify(content)}`
-  ).join(",\n  ");
+  const filesMap = fileContents || {};
 
+  // 🔑 NEW: used for `import foo` → Sk.read("foo.py")
+  function readFromVfs(filename) {
+    // Exact match in our virtual files
+    if (Object.prototype.hasOwnProperty.call(filesMap, filename)) {
+      return String(filesMap[filename]);
+    }
+
+    // Try adding .py if missing
+    if (!filename.endsWith('.py')) {
+      const alt = filename + '.py';
+      if (Object.prototype.hasOwnProperty.call(filesMap, alt)) {
+        return String(filesMap[alt]);
+      }
+    }
+
+    // Fallback to Skulpt builtin files (if you still use them)
+    if (Sk.builtinFiles && Sk.builtinFiles['files']) {
+      const builtins = Sk.builtinFiles['files'];
+      if (builtins[filename]) return builtins[filename];
+    }
+
+    throw new Error('File not found: ' + filename);
+  }
+
+  const __fileDict = Object.entries(filesMap)
+    .map(([name, content]) => `"${name}": ${JSON.stringify(content)}`)
+    .join(',\n  ');
 
   const injectedPython = `
 __files__ = {
@@ -68,9 +93,7 @@ def open(filename, mode='r'):
 `;
 
   const finalCode = injectedPython + '\n' + code;
-  // how many lines were injected before the user's code?
-  const injectedLineCount = (injectedPython.match(/\n/g) || []).length + 1; // +1 for the extra '\n' we added
-  //console.log("📜 Final code to run:", finalCode);
+  const injectedLineCount = (injectedPython.match(/\n/g) || []).length + 1;
 
   Sk.python3 = true;
 
@@ -82,12 +105,10 @@ def open(filename, mode='r'):
         if (spaceIndex !== -1) {
           const filename = payload.slice(0, spaceIndex);
           const content = payload.slice(spaceIndex + 1);
-          //console.log("[runSkulptCode] FILEWRITE detected:", filename, content);
-          // Save to your React state
           if (setFileContents) {
-            setFileContents(prev => ({
+            setFileContents((prev) => ({
               ...prev,
-              [filename]: content
+              [filename]: content,
             }));
           }
         }
@@ -95,11 +116,13 @@ def open(filename, mode='r'):
         setOutput((prev) => prev + txt);
       }
     },
+
+    // 🔑 NEW: hook imports into our virtual files
+    read: readFromVfs,
+
     // Put the input prompt in the dialog box
     inputfun: (promptText) => {
-      // Use the browser prompt; coerce null (Cancel) to empty string
       const val = window.prompt(promptText ?? '') ?? '';
-      // Skulpt is fine with either a string or a Promise<string>; Promise is safest
       return Promise.resolve(val);
     },
     inputfunTakesPrompt: true,
@@ -133,26 +156,27 @@ def open(filename, mode='r'):
       no_long_type: true,
       ceil_floor_int: true,
       silent_octal_literal: true,
-    }
+    },
   });
 
   function formatSkErrorOffset(e, offset) {
     try {
-      // Prefer structured traceback when available
       if (e && Array.isArray(e.traceback) && e.traceback.length) {
         const tb = e.traceback;
-        const lines = ["Traceback (most recent call last):"];
+        const lines = ['Traceback (most recent call last):'];
         for (let i = tb.length - 1; i >= 0; i--) {
           const f = tb[i];
           const file = f.filename || '<stdin>';
           const func = f.func || '<module>';
           const isUser = /<stdin>(?:\.py)?$/i.test(file);
-          const lineno = Math.max(1, (f.lineno || 1) - (isUser ? offset : 0));
+          const lineno = Math.max(
+            1,
+            (f.lineno || 1) - (isUser ? offset : 0)
+          );
           lines.push(`  File "${file}", line ${lineno}, in ${func}`);
         }
 
-        // Adjust a trailing “… on line N” inside the exception text too
-        const msgRaw = e.toString ? e.toString() : (e.message || String(e));
+        const msgRaw = e.toString ? e.toString() : e.message || String(e);
         const msg = msgRaw.replace(/(on line\s+)(\d+)/gi, (_, p, n) =>
           p + Math.max(1, parseInt(n, 10) - offset)
         );
@@ -160,49 +184,46 @@ def open(filename, mode='r'):
         return lines.join('\n') + '\n' + msg;
       }
 
-      // Fallback: rewrite Skulpt’s pretty-printed string
-      const raw = (Sk.misceval.printError ? Sk.misceval.printError(e) : String(e));
+      const raw = Sk.misceval.printError
+        ? Sk.misceval.printError(e)
+        : String(e);
       return raw
-        // File "<stdin>" or "<stdin>.py", line N
         .replace(/(File\s+"<stdin>(?:\.py)?",\s+line\s+)(\d+)/gi, (_, p, n) =>
           p + Math.max(1, parseInt(n, 10) - offset)
         )
-        // “… on line N”
         .replace(/(on line\s+)(\d+)/gi, (_, p, n) =>
           p + Math.max(1, parseInt(n, 10) - offset)
         );
     } catch {
-      return (Sk.misceval.printError ? Sk.misceval.printError(e) : String(e));
+      return Sk.misceval.printError
+        ? Sk.misceval.printError(e)
+        : String(e);
     }
   }
 
-  // --- NEW: configure Turtle target if requested ---
+  // Turtle config (unchanged)
   if (turtleTargetId) {
     const mount = document.getElementById(turtleTargetId);
-    if (mount) mount.innerHTML = ''; // clear prior canvases
-    // Point Skulpt turtle at our mount
+    if (mount) mount.innerHTML = '';
     window.Sk.TurtleGraphics = {
       target: turtleTargetId,
       width: turtleWidth,
       height: turtleHeight,
     };
-  } else {
-    // Ensure a normal run doesn't inherit a prior turtle target
-    if (window.Sk && window.Sk.TurtleGraphics) {
-      try { delete window.Sk.TurtleGraphics; } catch { }
-    }
+  } else if (window.Sk && window.Sk.TurtleGraphics) {
+    try {
+      delete window.Sk.TurtleGraphics;
+    } catch {}
   }
 
   try {
     Sk.execLimit = execLimit;
     Sk.python3 = true;
-    //console.log("🚀 Running with fileContents:", fileContents); 
-    await Sk.misceval.asyncToPromise(() => {
-      return Sk.importMainWithBody('<stdin>', false, finalCode, true);
-    });
+    await Sk.misceval.asyncToPromise(() =>
+      Sk.importMainWithBody('<stdin>', false, finalCode, true)
+    );
   } catch (e) {
     const errText = formatSkErrorOffset(e, injectedLineCount);
-    setOutput(prev => prev + "\n❌ Error:\n" + errText);
+    setOutput((prev) => prev + '\n❌ Error:\n' + errText);
   }
-
 }

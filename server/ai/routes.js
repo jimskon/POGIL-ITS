@@ -1,4 +1,4 @@
-// routes/ai.js
+// server/ai/routes.js
 const express = require('express');
 const router = express.Router();
 const {
@@ -6,6 +6,12 @@ const {
   evaluatePythonCode,
   evaluateCode,
 } = require('./controller');
+
+console.log('AI handlers typeof:', {
+  evaluateStudentResponse: typeof evaluateStudentResponse,
+  evaluatePythonCode: typeof evaluatePythonCode,
+  evaluateCode: typeof evaluateCode,
+});
 
 // Short-answer / text evaluation
 router.post('/evaluate-response', evaluateStudentResponse);
