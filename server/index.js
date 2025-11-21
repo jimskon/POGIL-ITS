@@ -3,23 +3,39 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const express = require('express');
-//const path = require('path');
+const cors = require('cors');
 const fs = require('fs');
 const session = require('express-session');
-const app = express();
+
+const app = express();                 // ✅ app is created FIRST
 const PORT = process.env.PORT || 4000;
 const aiRoutes = require('./ai/routes');
 
-
-//require('dotenv').config();
 require('./heartbeatCleaner');
-
-
 const db = require('./db'); // Make sure db is accessible
 
 const staticDir = path.join(__dirname, '../client/dist');
 app.use(express.json());
 
+// ✅ CORS config goes AFTER app exists
+const allowedOrigins = new Set([
+  "https://colearn-ai.com",
+  "https://www.colearn-ai.com",
+  "https://its.jimskon.com"
+]);
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true); // allow curl/health checks
+    if (allowedOrigins.has(origin)) return cb(null, true);
+    return cb(new Error("Not allowed by CORS"));
+  },
+  credentials: true,
+  methods: ["GET","POST","PUT","DELETE","OPTIONS"],
+  allowedHeaders: ["Content-Type","Authorization"]
+}));
+
+app.options("*", cors());
 app.use('/api/ai', aiRoutes);
 
 app.use(session({
