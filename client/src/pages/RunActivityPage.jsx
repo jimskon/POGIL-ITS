@@ -197,6 +197,28 @@ export default function RunActivityPage({
     );
   }, [activity, groups]);
 
+    // ✅ NEW: overall totals useMemo — MUST be up here with other hooks
+  const overallTestTotals = useMemo(() => {
+    if (!isTestMode || !groups || groups.length === 0) {
+      return { earned: 0, max: 0 };
+    }
+
+    let earned = 0;
+    let max = 0;
+
+    for (const g of groups) {
+      for (const b of g.content || []) {
+        if (b?.type !== 'question') continue;
+        const qid = `${b.groupId}${b.id}`;
+        const { hasAnyScore, earnedTotal, maxTotal } = getQuestionScores(qid, b);
+        if (!hasAnyScore) continue;
+        if (Number.isFinite(earnedTotal)) earned += earnedTotal;
+        if (Number.isFinite(maxTotal)) max += maxTotal;
+      }
+    }
+    return { earned, max };
+  }, [isTestMode, groups, existingAnswers]);
+    
   const handleUpdateFileContents = (updaterFn) => {
     setFileContents((prev) => {
       const before = Object.fromEntries(
@@ -1876,6 +1898,8 @@ export default function RunActivityPage({
                 },
               })}
               {/* Show per-question scores + AI explanations in TEST MODE */}
+
+              {/* Show per-question scores + AI explanations in TEST MODE */}
               {isTestMode && (
                 <div className="mt-3">
                   {group.content
@@ -1886,33 +1910,85 @@ export default function RunActivityPage({
                         hasAnyScore,
                         respScore,
                         codeScore,
-                        totalScore,
+                        runScore,
                         respExplain,
                         codeExplain,
-                        totalExplain,
-                      } = getQuestionScores(qid);
+                        runExplain,
+                        maxCode,
+                        maxRun,
+                        maxResp,
+                        earnedTotal,
+                        maxTotal,
+                      } = getQuestionScores(qid, b);
 
                       if (!hasAnyScore) return null;
+
+                      // Safe numeric fallbacks
+                      const wEarn = Number.isFinite(respScore) ? respScore : 0;
+                      const rEarn = Number.isFinite(runScore)  ? runScore  : 0;
+                      const cEarn = Number.isFinite(codeScore) ? codeScore : 0;
+
+                      const wBand =
+                        maxResp > 0 ? `Written ${wEarn}/${maxResp}` :
+                        respScore != null ? `Written ${wEarn}` : null;
+
+                      const rBand =
+                        maxRun > 0 ? `Run ${rEarn}/${maxRun}` :
+                        runScore != null ? `Run ${rEarn}` : null;
+
+                      const cBand =
+                        maxCode > 0 ? `Code ${cEarn}/${maxCode}` :
+                        codeScore != null ? `Code ${cEarn}` : null;
+
+                      const bandSummary = [wBand, rBand, cBand]
+                        .filter(Boolean)
+                        .join(' · ');
+
+                      const totalEarn = Number.isFinite(earnedTotal)
+                        ? earnedTotal
+                        : 0;
+                      const totalMax = Number.isFinite(maxTotal)
+                        ? maxTotal
+                        : 0;
+
+                      const totalSummary =
+                        totalMax > 0
+                          ? `${totalEarn}/${totalMax}`
+                          : `${totalEarn}`;
 
                       return (
                         <div
                           key={`${qid}-scores`}
                           className="mt-2 p-2 border rounded bg-light"
                         >
-                          <strong>Question {qid} – Score: </strong>
-                          {totalScore ||
-                            [
-                              respScore && `Written ${respScore}`,
-                              codeScore && `Code ${codeScore}`,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')}
+                          <div>
+                            <strong>Question {qid} – Total: </strong>
+                            {totalSummary}
+                          </div>
+
+                          {bandSummary && (
+                            <div className="small">
+                              <strong>Components:</strong>{' '}
+                              <span style={{ whiteSpace: 'pre-wrap' }}>
+                                {bandSummary}
+                              </span>
+                            </div>
+                          )}
 
                           {respExplain && (
                             <div className="mt-1 small">
-                              <strong>Written/output feedback:</strong>{' '}
+                              <strong>Written feedback:</strong>{' '}
                               <span style={{ whiteSpace: 'pre-wrap' }}>
                                 {respExplain}
+                              </span>
+                            </div>
+                          )}
+
+                          {runExplain && (
+                            <div className="mt-1 small">
+                              <strong>Run/output feedback:</strong>{' '}
+                              <span style={{ whiteSpace: 'pre-wrap' }}>
+                                {runExplain}
                               </span>
                             </div>
                           )}
@@ -1925,20 +2001,12 @@ export default function RunActivityPage({
                               </span>
                             </div>
                           )}
-
-                          {totalExplain && (
-                            <div className="mt-1 small">
-                              <strong>Overall comment:</strong>{' '}
-                              <span style={{ whiteSpace: 'pre-wrap' }}>
-                                {totalExplain}
-                              </span>
-                            </div>
-                          )}
                         </div>
                       );
                     })}
                 </div>
               )}
+		
 
               {editable && (
                 <div className="mt-2">
@@ -1970,6 +2038,17 @@ export default function RunActivityPage({
               All questions complete! Review your responses above.
             </Alert>
           )}
+	  {isTestMode && overallTestTotals.max > 0 && (
+          <Alert variant="info" className="mt-3">
+            Overall test score:{' '}
+            <strong>
+              {overallTestTotals.earned}/{overallTestTotals.max}
+            </strong>{' '}
+            ({((overallTestTotals.earned / overallTestTotals.max) * 100).toFixed(1)}
+            %)
+          </Alert>
+        )}
+
       </Container>
 
       {DEBUG_FILES && (
