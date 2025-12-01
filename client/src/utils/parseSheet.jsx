@@ -816,11 +816,30 @@ export function parseSheetToBlocks(lines) {
     if (trimmed.startsWith('\\file{')) {
       flushCurrentBlock();
       inFileBlock = true;
-      const filename = trimmed.match(/\\file\{(.+?)\}/)?.[1]?.trim();
-      console.log("📂 Starting file block for:", filename);
-      currentFile = { type: 'file', filename, lines: [] };
+
+      const m = trimmed.match(/\\file\{([\s\S]+?)\}/);
+      const inner = m?.[1]?.trim() || '';
+
+      // Support: \file{test.cpp} and \file{test.cpp,readonly}
+      const parts = inner
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      const filename = parts[0] || '';
+      const readonly = (parts[1]?.toLowerCase() === 'readonly');
+
+      console.log("📂 Starting file block for:", filename, "readonly:", readonly);
+
+      currentFile = {
+        type: 'file',
+        filename,
+        readonly,      // 👈 carry this through to the block
+        lines: [],
+      };
       continue;
     }
+
 
     if (trimmed === '\\endfile') {
       if (currentFile) {
@@ -1006,6 +1025,8 @@ export function renderBlocks(blocks, options = {}) {
     }
 
     if (block.type === 'file') {
+      const isReadonly = !!block.readonly;
+
       return (
         <FileBlock
           key={`file-${block.filename}-${index}`}
@@ -1013,10 +1034,12 @@ export function renderBlocks(blocks, options = {}) {
           initialContent={block.content || ''}
           fileContents={fileContents}
           setFileContents={setFileContents}
-          editable={true}
+          // readonly in the markup overrides everything
+          editable={!isReadonly && editable}
         />
       );
     }
+
 
 
 
@@ -1609,8 +1632,8 @@ export function renderBlocks(blocks, options = {}) {
                       onCodeChange(rk, code, {
                         ...extra,
                         questionText: stripHtml(block.prompt || ''),
-                        sampleResponse: stripHtml(block.samples?.[0] || ''),    
-                        feedbackPrompt: stripHtml(block.feedback?.[0] || ''),    
+                        sampleResponse: stripHtml(block.samples?.[0] || ''),
+                        feedbackPrompt: stripHtml(block.feedback?.[0] || ''),
 
                         hasTextResponse: !!block.hasTextResponse,
                         hasTableResponse: !!block.hasTableResponse,
