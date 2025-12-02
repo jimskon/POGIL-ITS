@@ -20,6 +20,10 @@ const roleLabels = {
   qc: 'Quality Control',
 };
 
+// Normalize question / group status strings
+const normalizeStatus = (raw) =>
+  raw === 'completed' ? 'complete' : (raw || 'inprogress');
+
 function isNoAI(val) {
   return String(val ?? '').trim().toLowerCase() === 'none';
 }
@@ -135,6 +139,7 @@ export default function RunActivityPage({
   const [existingAnswers, setExistingAnswers] = useState({});
   const [skulptLoaded, setSkulptLoaded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [textFeedbackShown, setTextFeedbackShown] = useState({});
 
   // per-group “ignore AI, let me continue” overrides
   const [overrideGroups, setOverrideGroups] = useState({});
@@ -177,12 +182,15 @@ export default function RunActivityPage({
   const currentQuestionGroupIndex = useMemo(() => {
     if (!existingAnswers || Object.keys(existingAnswers).length === 0) return 0;
     let count = 0;
-    while (
-      count < groups.length &&
-      existingAnswers[`${count + 1}state`]?.response === 'completed'
-    ) {
+
+    while (count < groups.length) {
+      const raw = existingAnswers[`${count + 1}state`]?.response;
+      const status = normalizeStatus(raw);
+
+      if (status !== 'complete') break;
       count++;
     }
+
     return count;
   }, [existingAnswers, groups]);
 
@@ -200,7 +208,7 @@ export default function RunActivityPage({
     );
   }, [activity, groups]);
 
-    // ✅ NEW: overall totals useMemo — MUST be up here with other hooks
+  // ✅ NEW: overall totals useMemo
   const overallTestTotals = useMemo(() => {
     if (!isTestMode || !groups || groups.length === 0) {
       return { earned: 0, max: 0 };
@@ -221,7 +229,7 @@ export default function RunActivityPage({
     }
     return { earned, max };
   }, [isTestMode, groups, existingAnswers]);
-    
+
   const handleUpdateFileContents = (updaterFn) => {
     setFileContents((prev) => {
       const before = Object.fromEntries(
@@ -265,7 +273,7 @@ export default function RunActivityPage({
         if (data.activeStudentId !== activeStudentId) {
           await loadActivity();
         }
-      } catch { }
+      } catch {}
     }, 10000);
     return () => clearInterval(interval);
   }, [instanceId, activeStudentId]);
@@ -291,7 +299,7 @@ export default function RunActivityPage({
             body: JSON.stringify({ userId: user.id }),
           }
         );
-      } catch { }
+      } catch {}
     };
     sendHeartbeat();
     const interval = setInterval(sendHeartbeat, 20000);
@@ -318,7 +326,7 @@ export default function RunActivityPage({
           'https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js'
         );
         if (window.Sk && window.Sk.builtinFiles) setSkulptLoaded(true);
-      } catch { }
+      } catch {}
     };
     loadSkulpt();
   }, []);
@@ -343,7 +351,7 @@ export default function RunActivityPage({
     }
   }, [socket, instanceId]);
 
-  // NOTE: findQuestionBlockByQid moved *inside* component so it can see `groups`
+  // NOTE: findQuestionBlockByQid moved inside component so it can see `groups`
   function findQuestionBlockByQid(qid) {
     for (const g of groups) {
       for (const b of [g.intro, ...(g.content || [])]) {
@@ -358,24 +366,16 @@ export default function RunActivityPage({
 
     const handleUpdate = ({ responseKey, value, followupPrompt, answeredBy }) => {
       if (answeredBy && String(answeredBy) === String(user?.id)) return;
-      if (responseKey.endsWith('FA1')) {
-        const qid = responseKey.replace('FA1', '');
-        if (isLockedFU(qid)) return;
-        setFollowupAnswers((prev) => ({ ...prev, [responseKey]: value }));
-        setFollowupsShown((prev) => ({
-          ...prev,
-          [qid]: followupPrompt || prev[qid] || 'Follow-up question',
-        }));
-      } else {
-        setExistingAnswers((prev) => ({
-          ...prev,
-          [responseKey]: {
-            ...prev[responseKey],
-            response: value,
-            type: 'text',
-          },
-        }));
-      }
+
+      // Just mirror base text answers (no more FA1 special-casing)
+      setExistingAnswers((prev) => ({
+        ...prev,
+        [responseKey]: {
+          ...prev[responseKey],
+          response: value,
+          type: 'text',
+        },
+      }));
     };
 
     socket.on('response:update', handleUpdate);
@@ -443,7 +443,7 @@ export default function RunActivityPage({
             userId: user.id,
             answers: textToSave,
           }),
-        }).catch(() => { });
+        }).catch(() => {});
       }
     }, 10000);
 
@@ -751,7 +751,7 @@ export default function RunActivityPage({
     studentAnswer,
     { forceFollowup = false } = {}
   ) {
-    // NEW: no AI follow-ups during tests
+    // NEW: no AI feedback during tests
     if (isTestMode) return null;
 
     const qid = `${questionBlock.groupId}${questionBlock.id}`;
@@ -762,10 +762,10 @@ export default function RunActivityPage({
     ) {
       return null;
     }
+
     const codeContext =
-      (questionBlock.pythonBlocks
-        ?.map((py) => py.content)
-        .join('\n\n')) || '';
+      (questionBlock.pythonBlocks?.map((py) => py.content).join('\n\n')) || '';
+
     const body = {
       questionText: questionBlock.prompt,
       studentAnswer,
@@ -793,7 +793,14 @@ export default function RunActivityPage({
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      return data.followupQuestion || null;
+
+      // Treat either feedback or followupQuestion as a single feedback blob
+      const feedback =
+        (data.feedback && String(data.feedback).trim()) ||
+        (data.followupQuestion && String(data.followupQuestion).trim()) ||
+        '';
+
+      return feedback || null;
     } catch {
       return null;
     }
@@ -938,8 +945,8 @@ export default function RunActivityPage({
     // DOM textareas
     const taCount = container
       ? container.querySelectorAll(
-        `textarea[data-response-key^="${qid}code"]`
-      ).length
+          `textarea[data-response-key^="${qid}code"]`
+        ).length
       : 0;
 
     // existing answers
@@ -1046,9 +1053,6 @@ export default function RunActivityPage({
     return { answers, questions };
   }
 
-
-
-
   async function handleSubmit(forceOverride = false) {
     if (isSubmitting) return;
     setIsSubmitting(true);
@@ -1076,7 +1080,10 @@ export default function RunActivityPage({
     // ---------- TEST MODE PATH ----------
     if (isTestMode) {
       try {
-        const { answers, questions } = buildTestSubmissionPayload(blocks, container);
+        const { answers, questions } = buildTestSubmissionPayload(
+          blocks,
+          container
+        );
 
         const res = await fetch(
           `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-test`,
@@ -1094,7 +1101,8 @@ export default function RunActivityPage({
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           alert(
-            `Test submission failed: ${err.error || 'Unknown error submitting test.'
+            `Test submission failed: ${
+              err.error || 'Unknown error submitting test.'
             }`
           );
           setIsSubmitting(false);
@@ -1335,10 +1343,12 @@ export default function RunActivityPage({
       }
 
       // ---------- TEXT/TABLE PATH ----------
+
       const el = container.querySelector(`[data-question-id="${qid}"]`);
       const baseAnswer = el?.value?.trim() || '';
       const tableMarkdown = buildMarkdownTableFromBlock(block, container);
 
+      // ---- Gather table inputs & save them ----
       let tableHasInput = false;
       if (block.tableBlocks?.length > 0) {
         for (let t = 0; t < block.tableBlocks.length; t++) {
@@ -1361,12 +1371,32 @@ export default function RunActivityPage({
         }
       }
 
-      const hasExistingFU = !!existingAnswers[`${qid}F1`]?.response;
+      // Determine what gets evaluated as the "answer"
       let aiInput = baseAnswer;
       if (block.hasTableResponse && tableHasInput) {
         aiInput = tableMarkdown;
-        answers[qid] = tableMarkdown;
       }
+
+      // If nothing at all was entered → required
+      if (!aiInput) {
+        unanswered.push(`${qid} (base)`);
+        answers[`${qid}S`] = 'inprogress';
+
+        // also clear any old suggestion
+        setTextFeedbackShown((prev) => {
+          const next = { ...prev };
+          delete next[qid];
+          return next;
+        });
+
+        continue;
+      }
+
+      // Save the main answer (text or table) to DB payload
+      answers[qid] = baseAnswer || tableMarkdown;
+
+      // ---- AI suggestion gating ----
+      let suggestion = textFeedbackShown[qid] || null;
 
       const looksCodeOnlyNow = isCodeOnlyQuestion(
         block,
@@ -1374,75 +1404,41 @@ export default function RunActivityPage({
         container,
         existingAnswers
       );
-      if (
-        !looksCodeOnlyNow &&
-        aiInput &&
-        !followupsShown[qid] &&
-        !isLockedFU(qid) &&
-        !hasExistingFU
-      ) {
-        const aiFollowup = await evaluateResponseWithAI(block, aiInput, {
+
+      if (!looksCodeOnlyNow && !isLockedFU(qid) && !isTestMode) {
+        const aiSuggestion = await evaluateResponseWithAI(block, aiInput, {
           forceFollowup: false,
         });
-        if (aiFollowup) {
-          const baseToSave =
-            baseAnswer || (tableHasInput ? tableMarkdown : '');
-          if (baseToSave) answers[qid] = baseToSave;
 
-          await saveResponse(instanceId, `${qid}F1`, aiFollowup);
-          await saveResponse(instanceId, `${qid}S`, 'inprogress');
+        if (aiSuggestion && aiSuggestion.trim()) {
+          suggestion = aiSuggestion.trim();
 
-          setFollowupsShown((prev) => ({ ...prev, [qid]: aiFollowup }));
+          // store suggestion in state for display
+          setTextFeedbackShown((prev) => ({
+            ...prev,
+            [qid]: suggestion,
+          }));
 
-          if (socket && instanceId) {
-            socket.emit('response:update', {
-              instanceId,
-              responseKey: `${qid}F1`,
-              value: aiFollowup,
-              followupPrompt: aiFollowup,
-            });
-          }
-
-          alert(`A follow-up question has been added for ${qid}. Please answer it.`);
-          setIsSubmitting(false);
-          return;
-        }
-      } else {
-        setFollowupsShown((prev) => {
-          const next = { ...prev };
-          delete next[qid];
-          return next;
-        });
-      }
-
-      const followupPrompt = followupsShown[qid];
-      const followupKey = `${qid}FA1`;
-      const followupAnswer = (followupAnswers[followupKey] || '').trim();
-
-      let missingBase = false;
-      let missingFU = false;
-
-      if (baseAnswer) {
-        answers[qid] = baseAnswer;
-      } else if (tableHasInput) {
-        answers[qid] = tableMarkdown;
-      } else {
-        missingBase = true;
-        unanswered.push(`${qid} (base)`);
-      }
-
-      if (followupPrompt) {
-        answers[`${qid}F1`] = followupPrompt;
-        if (followupAnswer) {
-          answers[followupKey] = followupAnswer;
+          // Save as F1 for instructor / later use
+          await saveResponse(instanceId, `${qid}F1`, suggestion);
         } else {
-          missingFU = true;
-          unanswered.push(`${qid} (follow-up)`);
+          // no suggestion → clear any previous one
+          suggestion = null;
+          setTextFeedbackShown((prev) => {
+            const next = { ...prev };
+            delete next[qid];
+            return next;
+          });
+          await saveResponse(instanceId, `${qid}F1`, '');
         }
       }
 
-      answers[`${qid}S`] =
-        missingBase || missingFU ? 'inprogress' : 'completed';
+      // ---- Completion for this question ----
+      answers[`${qid}S`] = suggestion ? 'inprogress' : 'completed';
+
+      if (suggestion) {
+        unanswered.push(`${qid} (AI feedback)`);
+      }
     }
 
     // ---- completion logic ----
@@ -1460,34 +1456,39 @@ export default function RunActivityPage({
 
     const pendingBase = unanswered.length > 0;
 
+    // TEXT AI gating: use textFeedbackShown instead of followupsShown
     const pendingTextFollowups = qBlocks.some((b) => {
       const qid = `${b.groupId}${b.id}`;
       if (isCodeOnlyMap[qid]) return false;
-      const fuShown = !!followupsShown[qid];
-      if (!fuShown) return false;
-      const fuAns = (
-        followupAnswers[`${qid}FA1`] ||
-        existingAnswers[`${qid}FA1`]?.response ||
-        ''
-      ).trim();
-      return fuShown && !fuAns;
+
+      const suggestion = textFeedbackShown[qid];
+
+      // Normalize status from memory or DB
+      const status = normalizeStatus(
+        answers[`${qid}S`] ?? existingAnswers[`${qid}S`]?.response
+      );
+
+      // Pending if there is an AI suggestion and the question isn't marked complete
+      return !!suggestion && status !== 'complete';
     });
 
     const pendingCodeGates = qBlocks.some((b) => {
       const qid = `${b.groupId}${b.id}`;
       if (!isCodeOnlyMap[qid]) return false;
-      const status =
-        answers[`${qid}S`] ||
-        existingAnswers[`${qid}S`]?.response ||
-        'inprogress';
-      if (status === 'completed') return false;
+
+      const status = normalizeStatus(
+        answers[`${qid}S`] ?? existingAnswers[`${qid}S`]?.response
+      );
+      if (status === 'complete') return false;
+
       const attempts = Number(
-        answers[`${qid}attempts`] ||
-        existingAnswers[`${qid}attempts`]?.response ||
-        0
+        answers[`${qid}attempts`] ??
+          existingAnswers[`${qid}attempts`]?.response ??
+          0
       );
       return attempts < 3;
     });
+
     // Is this group set to "ignore AI gating"?
     const overrideThisGroup =
       forceOverride || !!overrideGroups[currentQuestionGroupIndex];
@@ -1496,8 +1497,8 @@ export default function RunActivityPage({
       overrideThisGroup
         ? 'completed'
         : pendingBase || pendingTextFollowups || pendingCodeGates
-          ? 'inprogress'
-          : 'completed';
+        ? 'inprogress'
+        : 'completed';
 
     const stateKey = `${currentQuestionGroupIndex + 1}state`;
     answers[stateKey] = groupState;
@@ -1510,13 +1511,18 @@ export default function RunActivityPage({
       setIsSubmitting(false);
       return;
     }
-    if (groupState === 'completed' && overrideThisGroup &&
-      (pendingBase || pendingTextFollowups || pendingCodeGates)) {
+
+    if (
+      groupState === 'completed' &&
+      overrideThisGroup &&
+      (pendingBase || pendingTextFollowups || pendingCodeGates)
+    ) {
       alert(
         'You chose to continue without fixing AI feedback. ' +
-        'Your instructor may review this later.'
+          'Your instructor may review this later.'
       );
     }
+
     try {
       const response = await fetch(
         `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`,
@@ -1552,7 +1558,6 @@ export default function RunActivityPage({
       setIsSubmitting(false);
     }
   }
-
 
   async function handleCodeChange(responseKey, updatedCode, meta = {}) {
     setLastEditTs(Date.now());
@@ -1715,8 +1720,8 @@ export default function RunActivityPage({
       console.error('handleCodeChange failed:', err);
     }
   }
-  // Helper: pull score + explain fields for a base question id like "1a"
-  // Helper: pull tri-band scores + feedback for a base question id like "1a"
+
+  // Helper: tri-band scores + feedback for a base question id like "1a"
   function getQuestionScores(qid, block) {
     const codeScoreRaw =
       existingAnswers[`${qid}CodeScore`]?.response ??
@@ -1737,22 +1742,22 @@ export default function RunActivityPage({
     const codeExplain =
       existingAnswers[`${qid}CodeFeedback`]?.response ||
       existingAnswers[`${qid}CodeExplain`]?.response ||
-      "";
+      '';
 
     const runExplain =
       existingAnswers[`${qid}RunFeedback`]?.response ||
       existingAnswers[`${qid}RunExplain`]?.response ||
-      "";
+      '';
 
     const respExplain =
       existingAnswers[`${qid}ResponseFeedback`]?.response ||
       existingAnswers[`${qid}ResponseExplain`]?.response ||
-      "";
+      '';
 
     const bucketPoints = (bucket) => {
       if (!bucket) return 0;
-      if (typeof bucket === "number") return bucket;
-      if (typeof bucket === "object" && typeof bucket.points === "number") {
+      if (typeof bucket === 'number') return bucket;
+      if (typeof bucket === 'object' && typeof bucket.points === 'number') {
         return bucket.points;
       }
       return 0;
@@ -1767,9 +1772,12 @@ export default function RunActivityPage({
       codeScoreRaw != null ||
       runScoreRaw != null ||
       respScoreRaw != null ||
-      existingAnswers.hasOwnProperty(`${qid}CodeScore`) ||
-      existingAnswers.hasOwnProperty(`${qid}RunScore`) ||
-      existingAnswers.hasOwnProperty(`${qid}ResponseScore`);
+      Object.prototype.hasOwnProperty.call(existingAnswers, `${qid}CodeScore`) ||
+      Object.prototype.hasOwnProperty.call(existingAnswers, `${qid}RunScore`) ||
+      Object.prototype.hasOwnProperty.call(
+        existingAnswers,
+        `${qid}ResponseScore`
+      );
 
     const earnedTotal =
       (codeScore != null ? codeScore : 0) +
@@ -1801,8 +1809,8 @@ export default function RunActivityPage({
           {activity?.title
             ? `Activity: ${activity.title}`
             : courseName
-              ? `Course: ${courseName}`
-              : 'Untitled Activity'}
+            ? `Course: ${courseName}`
+            : 'Untitled Activity'}
         </h2>
 
         {renderBlocks(preamble, {
@@ -1822,19 +1830,21 @@ export default function RunActivityPage({
 
         {groups.map((group, index) => {
           const stateKey = `${index + 1}state`;
-          const isComplete =
-            existingAnswers[stateKey]?.response === 'completed';
+          const rawState = existingAnswers[stateKey]?.response;
+          const isComplete = normalizeStatus(rawState) === 'complete';
+
           const isCurrent = index === currentQuestionGroupIndex;
 
           const editable = isActive && isCurrent && !isComplete;
           const showGroup = isInstructor || isComplete || isCurrent;
           if (!showGroup) return null;
 
-          // NEW: does this group currently have AI feedback/guidance?
+          // does this group currently have AI feedback/guidance?
           const hasAIGuidanceForGroup = (group.content || [])
             .filter((b) => b.type === 'question')
             .some((b) => {
               const qid = `${b.groupId}${b.id}`;
+              const hasTextSuggestion = !!textFeedbackShown[qid];
               const hasFU = !!followupsShown[qid];
 
               // any code feedback for cells like "1acode1", "1acode2", ...
@@ -1843,7 +1853,7 @@ export default function RunActivityPage({
                   key.startsWith(`${qid}code`) && fb && String(fb).trim() !== ''
               );
 
-              return hasFU || hasCodeFb;
+              return hasTextSuggestion || hasFU || hasCodeFb;
             });
 
           return (
@@ -1884,8 +1894,7 @@ export default function RunActivityPage({
                 prefill: existingAnswers,
                 currentGroupIndex: index,
                 followupsShown,
-                followupAnswers,
-                setFollowupAnswers,
+                textFeedbackShown,
                 socket,
                 instanceId,
                 answeredBy: user?.id,
@@ -1901,21 +1910,15 @@ export default function RunActivityPage({
                 localCode,
                 onLocalCodeChange: updateLocalCode,
                 onTextChange: (responseKey, value) => {
-                  if (responseKey.endsWith('FA1')) {
-                    setFollowupAnswers((prev) => ({
-                      ...prev,
-                      [responseKey]: value,
-                    }));
-                  } else {
-                    setExistingAnswers((prev) => ({
-                      ...prev,
-                      [responseKey]: {
-                        ...prev[responseKey],
-                        response: value,
-                        type: 'text',
-                      },
-                    }));
-                  }
+                  // no special FA1 handling; we store anything as text
+                  setExistingAnswers((prev) => ({
+                    ...prev,
+                    [responseKey]: {
+                      ...prev[responseKey],
+                      response: value,
+                      type: 'text',
+                    },
+                  }));
                   if (isActive && socket) {
                     socket.emit('response:update', {
                       instanceId,
@@ -1927,7 +1930,6 @@ export default function RunActivityPage({
                   setLastEditTs(Date.now());
                 },
               })}
-              {/* Show per-question scores + AI explanations in TEST MODE */}
 
               {/* Show per-question scores + AI explanations in TEST MODE */}
               {isTestMode && (
@@ -1955,20 +1957,29 @@ export default function RunActivityPage({
 
                       // Safe numeric fallbacks
                       const wEarn = Number.isFinite(respScore) ? respScore : 0;
-                      const rEarn = Number.isFinite(runScore)  ? runScore  : 0;
+                      const rEarn = Number.isFinite(runScore) ? runScore : 0;
                       const cEarn = Number.isFinite(codeScore) ? codeScore : 0;
 
                       const wBand =
-                        maxResp > 0 ? `Written ${wEarn}/${maxResp}` :
-                        respScore != null ? `Written ${wEarn}` : null;
+                        maxResp > 0
+                          ? `Written ${wEarn}/${maxResp}`
+                          : respScore != null
+                          ? `Written ${wEarn}`
+                          : null;
 
                       const rBand =
-                        maxRun > 0 ? `Run ${rEarn}/${maxRun}` :
-                        runScore != null ? `Run ${rEarn}` : null;
+                        maxRun > 0
+                          ? `Run ${rEarn}/${maxRun}`
+                          : runScore != null
+                          ? `Run ${rEarn}`
+                          : null;
 
                       const cBand =
-                        maxCode > 0 ? `Code ${cEarn}/${maxCode}` :
-                        codeScore != null ? `Code ${cEarn}` : null;
+                        maxCode > 0
+                          ? `Code ${cEarn}/${maxCode}`
+                          : codeScore != null
+                          ? `Code ${cEarn}`
+                          : null;
 
                       const bandSummary = [wBand, rBand, cBand]
                         .filter(Boolean)
@@ -1977,9 +1988,7 @@ export default function RunActivityPage({
                       const totalEarn = Number.isFinite(earnedTotal)
                         ? earnedTotal
                         : 0;
-                      const totalMax = Number.isFinite(maxTotal)
-                        ? maxTotal
-                        : 0;
+                      const totalMax = Number.isFinite(maxTotal) ? maxTotal : 0;
 
                       const totalSummary =
                         totalMax > 0
@@ -2036,7 +2045,6 @@ export default function RunActivityPage({
                     })}
                 </div>
               )}
-		
 
               {editable && (
                 <div className="mt-2">
@@ -2056,16 +2064,15 @@ export default function RunActivityPage({
                       'Submit and Continue'
                     )}
                   </Button>
-                  {/* NEW: let students bypass AI gating in learning mode */}
+
+                  {/* Let students bypass AI gating in learning mode */}
                   {!isTestMode && hasAIGuidanceForGroup && (
                     <Button
                       variant="outline-secondary"
                       size="sm"
                       className="ms-2"
                       onClick={() => {
-                        // optional: remember this override
                         setOverrideGroups((prev) => ({ ...prev, [index]: true }));
-                        // and actually submit with override
                         handleSubmit(true);
                       }}
                     >
@@ -2084,17 +2091,21 @@ export default function RunActivityPage({
               All questions complete! Review your responses above.
             </Alert>
           )}
-	  {isTestMode && overallTestTotals.max > 0 && (
+
+        {isTestMode && overallTestTotals.max > 0 && (
           <Alert variant="info" className="mt-3">
             Overall test score:{' '}
             <strong>
               {overallTestTotals.earned}/{overallTestTotals.max}
             </strong>{' '}
-            ({((overallTestTotals.earned / overallTestTotals.max) * 100).toFixed(1)}
+            (
+            {(
+              (overallTestTotals.earned / overallTestTotals.max) *
+              100
+            ).toFixed(1)}
             %)
           </Alert>
         )}
-
       </Container>
 
       {DEBUG_FILES && (
@@ -2103,8 +2114,8 @@ export default function RunActivityPage({
           {Object.keys(fileContents).length === 0
             ? '(none)'
             : Object.entries(fileContents)
-              .map(([k, v]) => `${k}(${(v ?? '').length})`)
-              .join(', ')}
+                .map(([k, v]) => `${k}(${(v ?? '').length})`)
+                .join(', ')}
         </div>
       )}
     </>

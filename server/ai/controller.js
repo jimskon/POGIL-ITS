@@ -12,7 +12,6 @@ function stripHtml(s = '') {
     .replace(/<\/?[A-Za-z!][^>]*>/g, ''); // strip only real tags, not "< 1" or "> 10"
 }
 
-
 const noFollowups = (s) => /^\s*(none|no\s*follow-?ups?|no\s*feedback)\s*$/i
   .test(String(s || '').trim());
 
@@ -86,20 +85,19 @@ function derivePolicyFromGuidance(guidanceText = '') {
       noExtras: false,
     };
   }
-  //const g = stripHtml(guidanceText).toLowerCase();
+
   const explicitFU = (g.match(/follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i) || [])[1];
-  const noFollowups = /do not ask a follow up/.test(g);
+  const noFollowupFlag = /do not ask a follow up/.test(g);
   const requirementsOnly = /requirements-only/.test(g);
   const ignoreSpacing = /ignore spacing/.test(g);
   const forbidFStrings = /f-strings.*(unavailable|do not|don't)/.test(g);
   const failOpen = /fail[- ]open/.test(g) || /doesn'?t have to be perfect/.test(g);
   const noExtras = /do not require extra features|do not require extras/.test(g);
 
-  // If not explicitly “no followups”, default to gibberish-only followups when requirements-only/fail-open vibe is present.
-  // Prefer "default" unless explicitly set to "none".
+  // Prefer explicit gate; otherwise honor "do not ask a follow up"
   const followupGate = explicitFU
     ? explicitFU.toLowerCase()
-    : (noFollowups ? 'none' : 'default');
+    : (noFollowupFlag ? 'none' : 'default');
 
   return {
     followupGate,           // 'none' | 'gibberish-only' | 'default'
@@ -128,7 +126,6 @@ const VALUE_TWEAK_PATTERNS = [
   /\b(?:so that|to make)\s+it\s+(?:true|false)\b/i,
 ];
 
-
 function mentionsValueTweak(s) {
   const t = String(s || '').trim();
   return !!t && VALUE_TWEAK_PATTERNS.some(r => r.test(t));
@@ -143,6 +140,7 @@ function codeLooksGibberish(src) {
   return false;
 }
 
+// ---------------------- STUDENT RESPONSE (TEXT) ----------------------
 async function evaluateStudentResponse(req, res) {
   const {
     questionText,
@@ -153,7 +151,7 @@ async function evaluateStudentResponse(req, res) {
     forceFollowup = false,
     context = {},
     guidance = "",
-    codeContext = ""        // 👈 NEW: optional code shown with the question
+    codeContext = ""        // optional code shown with the question
   } = req.body || {};
 
   if (String(feedbackPrompt).trim().toLowerCase() === "none") {
@@ -177,8 +175,6 @@ async function evaluateStudentResponse(req, res) {
       return res.status(200).json({ followupQuestion: null, meta: { reason: 'policy_no_followups' } });
     }
 
-    // 🔎 Let the model judge coherence, relevance, wrong, overly simple, missing artifact.
-    //    (No early return on "gibberish-only".)
     const sys = [
       'You are a concise, supportive grading assistant for an intro programming class.',
       'Judge answers by whether they are coherent, on-topic, and meet the prompt’s intent.',
@@ -256,38 +252,25 @@ async function evaluateStudentResponse(req, res) {
   }
 }
 
-
+// ---------------------- PYTHON CODE (GROUP MODE / GENERAL) ----------------------
 async function evaluatePythonCode(req, res) {
-  const {
-    questionText,
-    studentCode,
-    codeVersion,
-    guidance = "",
-    isCodeOnly = false,
-    feedbackPrompt = ""
-  } = req.body;
+  const { questionText, studentCode, codeVersion, guidance = "", isCodeOnly = false, feedbackPrompt = "" } = req.body;
 
+  if (isNone(feedbackPrompt)) {
+    return res.status(200).json({ feedback: null, followup: null, verdict: 'minor' });
+  }
   if (!questionText || !studentCode) {
     return res.status(400).json({ error: 'Missing question text or student code' });
   }
+  if (String(feedbackPrompt).trim().toLowerCase() === "none") {
+    return res.status(200).json({ feedback: null, followup: null, verdict: "minor" });
+  }
 
-  // --- Split guidance into per-question + activity ---
   const combinedGuide = stripHtml(guidance || '');
-  const parts = combinedGuide.split(/\n-{3,}\n/);  // '---' splitter
+  // Split "per-question --- activity" (robust: any number of hyphens wrapped by newlines)
+  const parts = combinedGuide.split(/\n-{3,}\n/);
   const questionGuide = parts[0] || "";
   const activityGuide = parts[1] || "";
-
-  // 🔒 HARD SKIP: if this question’s feedback prompt is "none" in EITHER place,
-  // do not call OpenAI at all for code.
-  const fp = String(feedbackPrompt || '').trim();
-  if (
-    isNone(fp) || noFollowups(fp) ||
-    isNone(questionGuide) || noFollowups(questionGuide)
-  ) {
-    return res
-      .status(200)
-      .json({ feedback: null, followup: null, verdict: 'minor' });
-  }
 
   const policy = getEffectivePolicy(activityGuide, questionGuide);
 
@@ -326,13 +309,9 @@ Return STRICT JSON:
 Definitions:
 - "correct": Meets the task; acceptable output/logic.
 - "minor": Only trivial output/format differences that do NOT affect the task.
-- "wrong": There exists a concrete input for which the code clearly fails the stated task.
+- "wrong": Runs or is plausible but logic/output does NOT meet the task.
 - "off_prompt": Solves something else / ignores instructions.
 - "error": Syntax/runtime error or cannot reasonably run.
-
-IMPORTANT:
-- Only call something "wrong" or "error" if you can describe at least one specific input (or scenario) where it fails.
-- If you cannot find a clear failing input and the code matches the task in spirit, use "correct" or "minor".
 
 Rules:
 - If "correct" or "minor": feedback=null, followup=null. (No nits.)
@@ -366,6 +345,7 @@ ${rules ? '\n' + rules : ''}
     // Enforce "no followups" gate
     if (policy.followupGate === 'none') followup = null;
 
+    // If guides say "judge logic, not result / don't ask to change values", kill value-tweak nags
     const forbidValueNags =
       /\bjudge\b.*\blogic\b.*\bnot\b.*\b(true|false|result)\b/i.test(`${questionGuide} ${activityGuide}`) ||
       /\bdo not ask\b.*\bchange\b.*\bvalues?\b/i.test(`${questionGuide} ${activityGuide}`);
@@ -375,31 +355,25 @@ ${rules ? '\n' + rules : ''}
       if (mentionsValueTweak(feedback)) feedback = null;
     }
 
-    // 🔒 Emergency clamp: only give feedback for clear errors or off-prompt.
-    // Treat "wrong" as "minor" so we don't get bogus "improvements" suggestions.
+    // Normalize by verdict
     if (verdict === 'wrong') {
-      verdict = 'minor';
-      feedback = null;
       followup = null;
     } else if (verdict === 'correct' || verdict === 'minor') {
-      feedback = null;
-      followup = null;
+      feedback = null; followup = null;
     } else if (verdict === 'off_prompt' || verdict === 'error') {
-      // Keep feedback for truly broken / off-prompt code,
-      // but still obey "no followups" policy.
       if (policy.followupGate === 'none') followup = null;
     } else {
       verdict = 'minor';
-      feedback = null;
-      followup = null;
+      feedback = null; followup = null;
     }
 
-
+    // If policy is "gibberish-only", allow follow-up only for gibberish or true errors
     if (policy.followupGate === 'gibberish-only') {
       const gib = codeLooksGibberish(studentCode);
       if (!gib && verdict !== 'error' && verdict !== 'off_prompt') followup = null;
     }
 
+    // (Optional) quick debug log
     console.log('[POLICY]', {
       followupGate: policy.followupGate,
       verdict,
@@ -414,9 +388,7 @@ ${rules ? '\n' + rules : ''}
   }
 }
 
-
-
-
+// ---------------------- POLICY COMBINER ----------------------
 function getEffectivePolicy(activityGuide, questionGuide) {
   const a = derivePolicyFromGuidance(activityGuide);
   const q = derivePolicyFromGuidance(questionGuide);
@@ -447,56 +419,30 @@ function getEffectivePolicy(activityGuide, questionGuide) {
   };
 }
 
-
-// server/ai/controller.js
-
-// Keep the helpers added earlier: stripHtml, derivePolicyFromGuidance, isFatal, isSoft
-
+// ---------------------- GENERIC CODE EVAL (PY/CPP/etc.) ----------------------
 async function evaluateCode({
   questionText,
   studentCode,
   codeVersion,
-  guidance = "",      // \aicodeguidance + maybe question guidance
-  isCodeOnly = false, // pure code question?
+  guidance = "",      // pass \aicodeguidance text here
+  isCodeOnly = false, // true if this is a pure code question (allows a short follow-up only if policy permits)
   feedbackPrompt = "",
   lang,
 }) {
   if (!questionText || !studentCode) {
     return { feedback: null, followup: null };
   }
-
-  // Hard skip if per-question feedback prompt is explicitly "none"
   if (String(feedbackPrompt).trim().toLowerCase() === "none") {
     return { feedback: null, followup: null };
   }
 
-  // --- Split guidance into per-question + activity ---
-  const combined = stripHtml(guidance || "");
-  const parts = combined.split(/\n-{3,}\n/); // '---' splitter
-  const fallbackQ = parts[0] || "";
-  const fallbackA = parts[1] || combined;
-
-  // Per-question guidance: feedbackPrompt wins if present and not "none"
-  const questionGuideRaw =
-    feedbackPrompt && !isNone(feedbackPrompt) ? feedbackPrompt : fallbackQ;
-
-  const qGuide = stripHtml(questionGuideRaw || "");
-  const aGuide = stripHtml(fallbackA || "");
-
-  // 🔒 HARD SKIP for \feedbackprompt{none} / "no follow-ups"
-  const fp = String(feedbackPrompt || "").trim();
-  if (
-    isNone(fp) ||
-    noFollowups(fp) ||
-    isNone(qGuide) ||
-    noFollowups(qGuide)
-  ) {
-    return { feedback: null, followup: null };
-  }
-
+  const combined = stripHtml(guidance || '');
+  const parts = combined.split(/\n-{3,}\n/);     // '---' splitter
+  const qGuide = parts[0] || "";
+  const aGuide = parts[1] || combined;
   const policy = getEffectivePolicy(aGuide, qGuide);
 
-  // ✅ infer language BEFORE building rules
+  // ✅ infer language BEFORE using effLang
   const inferred = detectLangFromCode(studentCode);
   const effLang = (lang || inferred || "").toLowerCase();
 
@@ -505,27 +451,15 @@ async function evaluateCode({
   else if (effLang === "python") langLabel = "Python";
 
   const rules = [
-    policy.requirementsOnly
-      ? "- Judge ONLY whether it meets the stated task; no extras."
-      : "",
-    policy.ignoreSpacing
-      ? "- Ignore whitespace/formatting; never mention spacing."
-      : "",
-    policy.forbidFStrings
-      ? "- Do NOT suggest or use f-strings (environment may not support them)."
-      : "",
-    policy.noExtras
-      ? "- Do NOT ask for additional features beyond the prompt."
-      : "",
-    policy.failOpen
-      ? "- If minor issues but functionally OK, treat as correct (feedback=null, followup=null)."
-      : "",
-    effLang === "python"
-      ? "- Assume standard Python 3 with f-strings; do NOT claim missing parentheses for syntactically valid print statements."
-      : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+    policy.requirementsOnly ? '- Judge ONLY whether it meets the stated task; no extras.' : '',
+    policy.ignoreSpacing ? '- Ignore whitespace/formatting; never mention spacing.' : '',
+    policy.forbidFStrings ? "- Do NOT suggest or use f-strings (environment may not support them)." : '',
+    policy.noExtras ? '- Do NOT ask for additional features beyond the prompt.' : '',
+    policy.failOpen ? '- If minor issues but functionally OK, treat as correct (feedback=null, followup=null).' : '',
+    effLang === 'python'
+      ? '- Assume standard Python 3 with f-strings; do NOT claim missing parentheses for syntactically valid print statements.'
+      : ''
+  ].filter(Boolean).join('\n');
 
   const prompt = `
 You are a ${langLabel} tutor evaluating a student's code.
@@ -552,52 +486,48 @@ Rules:
 - If the code is fully correct and appropriate: feedback=null, followup=null.
 - Otherwise:
   - "feedback" = ONE concise, actionable suggestion (single sentence).
-  - "followup" = ${isCodeOnly ? "ONE short tutor-style question (5–20 words) nudging toward the fix." : "null"}
+  - "followup" = ${isCodeOnly ? 'ONE short tutor-style question (5–20 words) nudging toward the fix.' : 'null'}
 - No style/naming/formatting nits. No extra features beyond the prompt.
 - Do NOT give Python-specific advice for non-Python code.
-${rules ? "\n" + rules : ""}
+${rules ? '\n' + rules : ''}
 `.trim();
 
-  try {
-    const chat = await openai.chat.completions.create({
-      model: MODEL,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
-      max_tokens: 180,
-    });
+  const chat = await openai.chat.completions.create({
+    model: MODEL,
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.2,
+    max_tokens: 180,
+  });
 
-    const raw = (chat.choices?.[0]?.message?.content ?? "").trim();
-    const match = raw.match(/\{[\s\S]*\}/);
-    let obj = match ? JSON.parse(match[0]) : JSON.parse(raw);
+  const raw = (chat.choices?.[0]?.message?.content ?? '').trim();
+  const match = raw.match(/\{[\s\S]*\}/);
+  let obj = match ? JSON.parse(match[0]) : JSON.parse(raw);
 
-    let feedback =
-      obj.feedback == null || String(obj.feedback).trim() === ""
-        ? null
-        : String(obj.feedback).trim();
-    let followup =
-      obj.followup == null || String(obj.followup).trim() === ""
-        ? null
-        : String(obj.followup).trim();
+  let feedback =
+    obj.feedback == null || String(obj.feedback).trim() === ''
+      ? null
+      : String(obj.feedback).trim();
+  let followup =
+    obj.followup == null || String(obj.followup).trim() === ''
+      ? null
+      : String(obj.followup).trim();
 
-    const fatal = isFatal(feedback) || isFatal(followup);
+  // ---- Policy filter (same spirit as evaluatePythonCode) ----
+  const fatal = isFatal(feedback) || isFatal(followup);
 
-    if (policy.followupGate === "none") {
-      followup = null;
-    }
-
-    // Strip soft / nitpicky stuff unless it's clearly fatal
-    if (isSoft(feedback) && !fatal) feedback = null;
-    if (isSoft(followup) && !fatal) followup = null;
-
-    return { feedback, followup };
-  } catch (err) {
-    console.error("Error in evaluateCode:", err);
-    return { feedback: null, followup: null };
+  // If guidance says no follow-ups, drop them even if fatal (keep feedback).
+  if (policy.followupGate === 'none') {
+    followup = null;
   }
+
+  // We still strip soft/nitpicky stuff unless it's clearly fatal.
+  if (isSoft(feedback) && !fatal) feedback = null;
+  if (isSoft(followup) && !fatal) followup = null;
+
+  return { feedback, followup };
 }
 
-// --- Test-question grader: returns numeric scores + short feedback ---
-// Now returns three bands: code, run/output, response
+// ---------------------- TEST-MODE: gradeTestQuestion ----------------------
 async function gradeTestQuestion({
   questionText,
   scores = {}, // rubric buckets from the sheet: { code, output, response }
@@ -822,7 +752,7 @@ async function gradeTestQuestion({
   }
 }
 
-// C++-specific HTTP handler that wraps evaluateCode with lang="cpp"
+// ---------------------- TEST-MODE: C++ wrapper ----------------------
 async function evaluateCppCode(req, res) {
   const {
     questionText,
@@ -848,7 +778,7 @@ async function evaluateCppCode(req, res) {
       lang: "cpp", // 🔒 FORCE C++
     });
 
-    // You can add a verdict if your client expects one; "minor" is a safe default
+    // "minor" is a safe default verdict for the HTTP shape
     return res.status(200).json({ feedback, followup, verdict: "minor" });
   } catch (err) {
     console.error("Error evaluating C++ code:", err);
@@ -858,6 +788,7 @@ async function evaluateCppCode(req, res) {
   }
 }
 
+// ---------------------- EXPORTS ----------------------
 module.exports = {
   evaluateStudentResponse,
   evaluatePythonCode,
