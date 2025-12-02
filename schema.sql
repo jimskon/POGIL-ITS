@@ -50,19 +50,42 @@ CREATE TABLE IF NOT EXISTS course_enrollments (
   FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Activities
 CREATE TABLE IF NOT EXISTS pogil_activities (
   id INT AUTO_INCREMENT PRIMARY KEY,
+
+  -- Activity metadata
   name VARCHAR(191) NOT NULL,
   title TEXT NOT NULL,
+
+  -- Google Doc / Sheet reference
   sheet_url TEXT,
+
+  -- Parent class
   class_id INT NOT NULL,
+
+  -- Logical ordering within the class
   order_index INT NOT NULL DEFAULT 0,
+
+  -- Creator user (nullable)
   created_by INT NULL,
+
+  -- Tracks last time the document was fetched/parsed
   last_loaded TIMESTAMP NULL DEFAULT NULL,
-  FOREIGN KEY (class_id) REFERENCES pogil_classes(id) ON DELETE CASCADE,
-  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+  -- NEW: indicates whether the activity is a test/assessment
+  is_test TINYINT(1) NOT NULL DEFAULT 0,
+
+  -- FKs
+  FOREIGN KEY (class_id)
+    REFERENCES pogil_classes(id)
+    ON DELETE CASCADE,
+
+  FOREIGN KEY (created_by)
+    REFERENCES users(id)
+    ON DELETE SET NULL
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_unicode_ci;
 
 -- Activity Instances (one per group)
 CREATE TABLE IF NOT EXISTS activity_instances (

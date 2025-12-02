@@ -669,42 +669,75 @@ async function getInstanceResponses(req, res) {
 
 async function refreshTotalGroups(req, res) {
   const { instanceId } = req.params;
-  try {
-    const [[row]] = await db.query(`
-      SELECT a.sheet_url
-      FROM activity_instances ai
-      JOIN pogil_activities a ON ai.activity_id = a.id
-      WHERE ai.id = ?
-    `, [instanceId]);
 
-    if (!row?.sheet_url) {
-      return res.status(404).json({ error: 'Missing sheet_url' });
+  try {
+    // 1) Look up the activity + sheet_url for this instance
+    const [[row]] = await db.query(
+      `SELECT ai.activity_id, a.sheet_url
+       FROM activity_instances ai
+       JOIN pogil_activities a ON ai.activity_id = a.id
+       WHERE ai.id = ?`,
+      [instanceId]
+    );
+
+    if (!row) {
+      return res.status(404).json({ error: 'Activity instance not found' });
     }
 
-    const docId = row.sheet_url.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1];
-    if (!docId) throw new Error('Invalid sheet_url');
+    if (!row.sheet_url) {
+      // Fallback: no sheet_url, just set total_groups = 1 and return
+      await db.query(
+        `UPDATE activity_instances SET total_groups = 1 WHERE id = ?`,
+        [instanceId]
+      );
+      return res.json({ success: true, groupCount: 1, isTest: false });
+    }
 
+    // 2) Extract Google Doc ID from the URL
+    const docId = row.sheet_url.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1];
+    if (!docId) {
+      throw new Error(`Invalid sheet_url for instance ${instanceId}: ${row.sheet_url}`);
+    }
+
+    // 3) Fetch the doc via Google Docs API
     const auth = authorize();
     const docs = google.docs({ version: 'v1', auth });
     const doc = await docs.documents.get({ documentId: docId });
 
-    const lines = doc.data.body.content
+    // 4) Flatten to "lines"
+    const lines = (doc.data.body?.content || [])
       .map(block => {
         if (!block.paragraph?.elements) return null;
-        return block.paragraph.elements.map(e => e.textRun?.content || '').join('').trim();
+        return block.paragraph.elements
+          .map(e => e.textRun?.content || '')
+          .join('')
+          .trim();
       })
       .filter(Boolean);
 
-    const groupCount = lines.filter(line => line.startsWith('\\questiongroup')).length;
+    // 5) Count \questiongroup lines
+    let groupCount = lines.filter(line => line.startsWith('\\questiongroup')).length;
+    if (groupCount <= 0) groupCount = 1; // at least 1
 
-    await db.query(`UPDATE activity_instances SET total_groups = ? WHERE id = ?`, [groupCount, instanceId]);
+    // 6) Detect \test marker in the doc (for future use, but we DON'T write a.is_test)
+    const isTest = lines.some(line => line.trim() === '\\test');
 
-    res.json({ success: true, groupCount });
+    // 7) Update ONLY total_groups (no a.is_test column!)
+    await db.query(
+      `UPDATE activity_instances
+       SET total_groups = ?
+       WHERE id = ?`,
+      [groupCount, instanceId]
+    );
+
+    return res.json({ success: true, groupCount, isTest });
   } catch (err) {
-    console.error("❌ refreshTotalGroups:", err);
-    res.status(500).json({ error: 'Failed to refresh total_groups' });
+    console.error('❌ refreshTotalGroups:', err);
+    return res.status(500).json({ error: 'Failed to refresh total_groups' });
   }
 }
+
+
 
 async function submitTest(req, res) {
   const { instanceId } = req.params;

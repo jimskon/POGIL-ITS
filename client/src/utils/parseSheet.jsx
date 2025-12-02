@@ -175,6 +175,7 @@ export default function FileBlock({
 export function parseSheetToBlocks(lines) {
   //console.log("🧑‍💻 parseSheetToBlocks invoked");
   lines = collapseBracedCommands(lines);
+  let isTest = false;
   const blocks = [];
   let groupNumber = 0;
   let questionLetterCode = 97;
@@ -283,6 +284,12 @@ export function parseSheetToBlocks(lines) {
 
   for (let line of lines) {
     const trimmed = line.trim();
+    // mark this activity as a test
+    if (trimmed === '\\test') {
+      isTest = true;
+
+      continue;
+    }
     // --- inside a \score ... \endscore block ---
     if (inScoreBlock && currentScore && currentQuestion) {
       if (trimmed === '\\endscore') {
