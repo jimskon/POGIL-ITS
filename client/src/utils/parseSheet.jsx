@@ -9,6 +9,7 @@ import { Form } from 'react-bootstrap';
 import { useState, useEffect } from 'react';
 
 import ActivityCppBlock from '../components/activity/ActivityCppBlock';
+import { Alert } from 'react-bootstrap';
 
 
 // --- helpers ---
@@ -905,6 +906,7 @@ export function renderBlocks(blocks, options = {}) {
     codeFeedbackShown = {},
     fileContents,
     setFileContents,
+    textFeedbackShown = {},
   } = options;
 
   let standaloneCodeCounter = 1;
@@ -1450,7 +1452,10 @@ export function renderBlocks(blocks, options = {}) {
         block.hasTextResponse || (!hasPython && !hasCpp && !block.hasTableResponse);
 
       const lockMainResponse =
-        !!followupsShown?.[responseKey] && !!block.hasTextResponse;
+        runMode === 'preview'
+          ? !!followupsShown?.[responseKey] && !!block.hasTextResponse
+          : false;
+
 
       // NEW: formatted score badges
       const scoreBadges = [];
@@ -1708,31 +1713,49 @@ export function renderBlocks(blocks, options = {}) {
                 hasTextResponse: !!block.hasTextResponse,
                 hasTableResponse: !!block.hasTableResponse,
               };
+
+              const guidance = textFeedbackShown?.[responseKey];
+
               return (
-                <Form.Control
-                  as="textarea"
-                  rows={Math.max((block.responseLines || 1), 2)}
-                  value={prefill?.[responseKey]?.response || ''}
-                  readOnly={
-                    !editable ||
-                    lockMainResponse ||
-                    prefill?.[`${responseKey}S`] === 'complete' ||
-                    prefill?.[`${responseKey}S`]?.response === 'complete'
-                  }
-                  data-question-id={responseKey}
-                  className="mt-2"
-                  style={{ resize: 'vertical' }}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (options.onTextChange) {
-                      // 👇 pass meta as the 3rd arg
-                      options.onTextChange(responseKey, val, meta);
+                <>
+                  <Form.Control
+                    as="textarea"
+                    rows={Math.max((block.responseLines || 1), 2)}
+                    value={prefill?.[responseKey]?.response || ''}
+                    readOnly={
+                      !editable ||
+                      lockMainResponse ||
+                      prefill?.[`${responseKey}S`] === 'complete' ||
+                      prefill?.[`${responseKey}S`]?.response === 'complete'
                     }
-                  }}
-                />
+                    data-question-id={responseKey}
+                    className="mt-2"
+                    style={{ resize: 'vertical' }}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (options.onTextChange) {
+                        options.onTextChange(responseKey, val, meta);
+                      }
+                    }}
+                  />
+
+                  {/* 🔶 AI Guidance: visible to active student, observers, and instructor */}
+                  {guidance && (
+                    <Alert
+                      variant="warning"
+                      className="mt-2"
+                      style={{ whiteSpace: 'pre-wrap' }}
+                    >
+                      <strong>AI Guidance</strong>
+                      <div>{guidance}</div>
+                    </Alert>
+                  )}
+                </>
               );
             })()
           ) : null}
+
+
 
 
           {runMode === 'preview' && (
