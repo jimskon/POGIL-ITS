@@ -107,6 +107,16 @@ function isCodeOnlyByBlock(block) {
   return anyCode && !hasText && !hasTable;
 }
 
+// NEW: pretty formatting for countdown
+function formatRemainingSeconds(sec) {
+  if (sec == null || sec < 0) return '';
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m <= 0) return `${s}s`;
+  if (s === 0) return `${m}m`;
+  return `${m}m ${s}s`;
+}
+
 export default function RunActivityPage({
   setRoleLabel,
   setStatusText,
@@ -144,22 +154,30 @@ export default function RunActivityPage({
   // per-group “ignore AI, let me continue” overrides
   const [overrideGroups, setOverrideGroups] = useState({});
 
+  // NEW: test timing lock state + auto-submit guard
+  const [testLockState, setTestLockState] = useState({
+    lockedBefore: false,
+    lockedAfter: false,
+    remainingSeconds: null,
+  });
+  const [autoSubmitted, setAutoSubmitted] = useState(false);
+
   const isLockedFU = (qid) => qidsNoFURef.current?.has(qid);
 
   // compute isActive first…
   const isActive = user && user.id === activeStudentId;
   const isObserver = !isActive;
+  const isInstructor =
+    user?.role === 'instructor' ||
+    user?.role === 'root' ||
+    user?.role === 'creator';
+  const isStudent = user?.role === 'student';
 
   const toggleCodeViewMode = (rk, next) =>
     setCodeViewMode((prev) => ({ ...prev, [rk]: next }));
 
   const updateLocalCode = (rk, code) =>
     setLocalCode((prev) => ({ ...prev, [rk]: code }));
-
-  const isInstructor =
-    user?.role === 'instructor' ||
-    user?.role === 'root' ||
-    user?.role === 'creator';
 
   const userRoles = groupMembers
     .filter((m) => String(m.student_id) === String(user.id))
@@ -207,6 +225,83 @@ export default function RunActivityPage({
       )
     );
   }, [activity, groups]);
+
+  // NEW: compute test window from activity fields (if present)
+  const testWindow = useMemo(() => {
+    if (!isTestMode) return null;
+    const startStr = activity?.test_start_at;
+    const dur = activity?.test_duration_minutes;
+    if (!startStr || !dur) return null;
+
+    const start = new Date(startStr);
+    if (Number.isNaN(start.getTime())) return null;
+
+    let end = new Date(start.getTime() + Number(dur) * 60 * 1000);
+
+    if (activity?.test_reopen_until) {
+      const reopen = new Date(activity.test_reopen_until);
+      if (!Number.isNaN(reopen.getTime()) && reopen > end) {
+        end = reopen;
+      }
+    }
+    return { start, end };
+  }, [
+    isTestMode,
+    activity?.test_start_at,
+    activity?.test_duration_minutes,
+    activity?.test_reopen_until,
+  ]);
+
+  // NEW: drive lock state + countdown from testWindow (and backend hints if present)
+  useEffect(() => {
+    if (!isTestMode || !testWindow) {
+      setTestLockState({
+        lockedBefore: false,
+        lockedAfter: false,
+        remainingSeconds: null,
+      });
+      return;
+    }
+
+    const baseLockedBefore = !!activity?.locked_before_start;
+    const baseLockedAfter = !!activity?.locked_after_end;
+    const hasSubmitted = !!activity?.submitted_at;
+    const { start, end } = testWindow;
+
+    const update = () => {
+      const now = new Date();
+      let lockedBefore = baseLockedBefore;
+      let lockedAfter = baseLockedAfter || hasSubmitted;
+      let remainingSeconds = null;
+
+      if (!lockedAfter) {
+        if (now < start && !hasSubmitted) {
+          lockedBefore = true;
+          lockedAfter = false;
+          remainingSeconds = Math.floor(
+            (start.getTime() - now.getTime()) / 1000
+          );
+        } else {
+          const diff = Math.floor(
+            (end.getTime() - now.getTime()) / 1000
+          );
+          remainingSeconds = diff > 0 ? diff : 0;
+          lockedBefore = false;
+          if (diff <= 0 || hasSubmitted) {
+            lockedAfter = true;
+          }
+        }
+      } else {
+        remainingSeconds = 0;
+      }
+
+      setTestLockState({ lockedBefore, lockedAfter, remainingSeconds });
+    };
+
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [isTestMode, testWindow, activity?.locked_before_start, activity?.locked_after_end, activity?.submitted_at]);
 
   // ✅ NEW: overall totals useMemo
   const overallTestTotals = useMemo(() => {
@@ -495,6 +590,36 @@ export default function RunActivityPage({
       }
     };
   }, [user?.id, activeStudentId]);
+
+  // NEW: auto-submit at time 0 for active student in test mode
+  useEffect(() => {
+    if (!isTestMode) return;
+    if (!isStudent) return;
+    if (!isActive) return;
+    if (!testWindow) return;
+    if (autoSubmitted) return;
+
+    if (testLockState.lockedAfter) return;
+    if (testLockState.remainingSeconds !== 0) return;
+
+    (async () => {
+      try {
+        setAutoSubmitted(true);
+        await handleSubmit(false);
+      } catch (err) {
+        console.error('Auto-submit failed:', err);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isTestMode,
+    isStudent,
+    isActive,
+    testWindow,
+    testLockState.remainingSeconds,
+    testLockState.lockedAfter,
+    autoSubmitted,
+  ]);
 
   if (loading) {
     return (
@@ -1802,6 +1927,12 @@ export default function RunActivityPage({
     };
   }
 
+  // Convenience flags for student test locking
+  const testLockedForStudent =
+    isTestMode &&
+    isStudent &&
+    (testLockState.lockedBefore || testLockState.lockedAfter);
+
   return (
     <>
       <Container className="pt-3 mt-2">
@@ -1812,6 +1943,59 @@ export default function RunActivityPage({
             ? `Course: ${courseName}`
             : 'Untitled Activity'}
         </h2>
+
+        {/* TEST STATUS BANNER */}
+        {isTestMode && (
+          <Alert
+            variant={
+              testLockState.lockedAfter
+                ? 'secondary'
+                : testLockState.lockedBefore
+                ? 'warning'
+                : 'info'
+            }
+            className="mt-2"
+          >
+            <div>
+              <strong>This is a timed test.</strong>
+            </div>
+            {testWindow && (
+              <div className="small mt-1">
+                Start:{' '}
+                <strong>{testWindow.start.toLocaleString()}</strong> &nbsp;–&nbsp;
+                End:{' '}
+                <strong>{testWindow.end.toLocaleString()}</strong>
+              </div>
+            )}
+
+            {isStudent && testLockState.lockedBefore && (
+              <div className="small mt-1">
+                The test has not started yet. It will unlock at the start time.
+              </div>
+            )}
+
+            {isStudent &&
+              !testLockState.lockedBefore &&
+              !testLockState.lockedAfter &&
+              testLockState.remainingSeconds != null && (
+                <div className="small mt-1">
+                  Time remaining:{' '}
+                  <strong>
+                    {formatRemainingSeconds(testLockState.remainingSeconds)}
+                  </strong>
+                </div>
+              )}
+
+            {isStudent && testLockState.lockedAfter && (
+              <div className="small mt-1">
+                The test window is closed
+                {activity?.submitted_at
+                  ? ' and your test has been submitted.'
+                  : '.'}
+              </div>
+            )}
+          </Alert>
+        )}
 
         {renderBlocks(preamble, {
           editable: false,
@@ -1835,7 +2019,18 @@ export default function RunActivityPage({
 
           const isCurrent = index === currentQuestionGroupIndex;
 
-          const editable = isActive && isCurrent && !isComplete;
+          // For students in test mode, no editing when locked or after end
+          const editable =
+            isActive &&
+            isCurrent &&
+            !isComplete &&
+            !(isTestMode && isStudent && (testLockState.lockedBefore || testLockState.lockedAfter));
+
+          // For students before start, hide groups completely
+          if (isTestMode && isStudent && testLockState.lockedBefore && !isInstructor) {
+            return null;
+          }
+
           const showGroup = isInstructor || isComplete || isCurrent;
           if (!showGroup) return null;
 
