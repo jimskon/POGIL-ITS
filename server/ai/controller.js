@@ -170,6 +170,57 @@ async function evaluateStudentResponse(req, res) {
     const questionGuide = stripHtml(feedbackPrompt || '');
     const policy = getEffectivePolicy(activityGuide, questionGuide);
 
+    // -------------------- REQUIREMENTS-ONLY SHORTCUT --------------------
+    // If the policy says "requirements-only", we try to accept anything that is:
+    //   - non-empty
+    //   - not gibberish
+    //   - and clearly related to the question or sample response.
+    //
+    // Only truly off-topic or nonsense answers fall through to full AI eval.
+    const relaxedMode = policy.requirementsOnly === true;
+
+    if (relaxedMode && !forceFollowup) {
+      const answerRaw = String(studentAnswer || '').trim();
+
+      // Empty, obvious non-answer, or gibberish → let AI handle it
+      if (
+        !answerRaw ||
+        looksGibberish(answerRaw) ||
+        /^\s*(none|idk|i don't know)\s*$/i.test(answerRaw)
+      ) {
+        // fall through to AI below
+      } else {
+        // Cheap relevance check: look for overlap of meaningful words
+        const q = stripHtml(questionText || '').toLowerCase();
+        const s = stripHtml(answerRaw).toLowerCase();
+        const sample = stripHtml(sampleResponse || '').toLowerCase();
+
+        const extractWords = (text) =>
+          text.split(/\W+/).filter(w => w.length > 4); // ignore tiny/common words
+
+        const qWords = extractWords(q);
+        const sampleWords = extractWords(sample);
+
+        const containsAny = (words, haystack) =>
+          words.some(w => haystack.includes(w));
+
+        const relevant =
+          (qWords.length && containsAny(qWords, s)) ||
+          (sampleWords.length && containsAny(sampleWords, s));
+
+        if (relevant) {
+          // Close enough for requirements-only: accept with no follow-up.
+          return res.status(200).json({
+            followupQuestion: null,
+            feedback: null,
+            meta: { reason: 'requirements_only_ok' }
+          });
+        }
+        // If not clearly relevant, fall through to full AI eval.
+      }
+    }
+    // --------------------------------------------------------------------
+
     // Respect explicit "no follow-ups"
     if (policy.followupGate === 'none' && !forceFollowup) {
       return res.status(200).json({ followupQuestion: null, meta: { reason: 'policy_no_followups' } });
@@ -281,8 +332,8 @@ async function evaluatePythonCode(req, res) {
     policy.noExtras && '- Do NOT ask for additional features beyond the prompt.',
     policy.failOpen && '- If minor issues but functionally OK, treat as correct.',
     '- Assume standard Python 3 with full f-string support. ' +
-      'If a print statement already has matching parentheses, NEVER say it is missing a parenthesis. ' +
-      'Do NOT recommend switching to f-strings as an “improvement” when they are not used.'
+    'If a print statement already has matching parentheses, NEVER say it is missing a parenthesis. ' +
+    'Do NOT recommend switching to f-strings as an “improvement” when they are not used.'
   ].filter(Boolean).join('\n');
 
 
@@ -591,8 +642,8 @@ async function gradeTestQuestion({
         lang === "cpp" || lang === "c++"
           ? "cpp"
           : lang === "python"
-          ? "python"
-          : "";
+            ? "python"
+            : "";
       return [
         `Code cell ${idx + 1}${label}:`,
         "```" + fence,
@@ -660,14 +711,14 @@ async function gradeTestQuestion({
 
   userLines.push(
     `Return strict JSON only in this form:\n` +
-      `{"codeScore": number, "codeFeedback": string|null, ` +
-      `"runScore": number, "runFeedback": string|null, ` +
-      `"responseScore": number, "responseFeedback": string|null}\n` +
-      `- codeScore must be between 0 and ${maxCodePts}.\n` +
-      `- runScore must be between 0 and ${maxRunPts}.\n` +
-      `- responseScore must be between 0 and ${maxRespPts}.\n` +
-      `- For any band with full credit, feedback for that band MUST be null.\n` +
-      `- For bands with less than full credit, feedback should be ONE short sentence explaining why.`
+    `{"codeScore": number, "codeFeedback": string|null, ` +
+    `"runScore": number, "runFeedback": string|null, ` +
+    `"responseScore": number, "responseFeedback": string|null}\n` +
+    `- codeScore must be between 0 and ${maxCodePts}.\n` +
+    `- runScore must be between 0 and ${maxRunPts}.\n` +
+    `- responseScore must be between 0 and ${maxRespPts}.\n` +
+    `- For any band with full credit, feedback for that band MUST be null.\n` +
+    `- For bands with less than full credit, feedback should be ONE short sentence explaining why.`
   );
 
   const user = userLines.join("\n");

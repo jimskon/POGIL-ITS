@@ -226,6 +226,20 @@ export default function RunActivityPage({
     );
   }, [activity, groups]);
 
+  // NEW: test mode detection
+  const isTestMode = useMemo(() => {
+    if (activity?.is_test) return true;
+    if (!groups || groups.length !== 1) return false;
+    return groups.some((g) =>
+      (g.content || []).some(
+        (b) =>
+          b?.type === 'question' &&
+          b.scores &&
+          Object.keys(b.scores).length > 0
+      )
+    );
+  }, [activity, groups]);
+
   // NEW: compute test window from activity fields (if present)
   const testWindow = useMemo(() => {
     if (!isTestMode) return null;
@@ -282,9 +296,7 @@ export default function RunActivityPage({
             (start.getTime() - now.getTime()) / 1000
           );
         } else {
-          const diff = Math.floor(
-            (end.getTime() - now.getTime()) / 1000
-          );
+          const diff = Math.floor((end.getTime() - now.getTime()) / 1000);
           remainingSeconds = diff > 0 ? diff : 0;
           lockedBefore = false;
           if (diff <= 0 || hasSubmitted) {
@@ -301,7 +313,19 @@ export default function RunActivityPage({
     update();
     const id = setInterval(update, 1000);
     return () => clearInterval(id);
-  }, [isTestMode, testWindow, activity?.locked_before_start, activity?.locked_after_end, activity?.submitted_at]);
+  }, [
+    isTestMode,
+    testWindow,
+    activity?.locked_before_start,
+    activity?.locked_after_end,
+    activity?.submitted_at,
+  ]);
+
+  // NEW: if aicodeguidance says "Follow-ups: requirements-only", don't gate on AI feedback
+  const isRequirementsOnly = useMemo(() => {
+    const g = activity?.aicodeguidance || '';
+    return /follow-ups:\s*requirements-only/i.test(g);
+  }, [activity?.aicodeguidance]);
 
   // ✅ NEW: overall totals useMemo
   const overallTestTotals = useMemo(() => {
@@ -368,7 +392,7 @@ export default function RunActivityPage({
         if (data.activeStudentId !== activeStudentId) {
           await loadActivity();
         }
-      } catch {}
+      } catch { }
     }, 10000);
     return () => clearInterval(interval);
   }, [instanceId, activeStudentId]);
@@ -394,7 +418,7 @@ export default function RunActivityPage({
             body: JSON.stringify({ userId: user.id }),
           }
         );
-      } catch {}
+      } catch { }
     };
     sendHeartbeat();
     const interval = setInterval(sendHeartbeat, 20000);
@@ -421,7 +445,7 @@ export default function RunActivityPage({
           'https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js'
         );
         if (window.Sk && window.Sk.builtinFiles) setSkulptLoaded(true);
-      } catch {}
+      } catch { }
     };
     loadSkulpt();
   }, []);
@@ -538,7 +562,7 @@ export default function RunActivityPage({
             userId: user.id,
             answers: textToSave,
           }),
-        }).catch(() => {});
+        }).catch(() => { });
       }
     }, 10000);
 
@@ -729,23 +753,58 @@ export default function RunActivityPage({
       );
       const answersData = await answersRes.json();
 
+      // 1) Merge into existingAnswers so renderBlocks can prefill
+      setExistingAnswers((prev) => ({ ...prev, ...answersData }));
+
+      // 2) Restore code feedback (per-code-cell feedback from backend)
       setCodeFeedbackShown((prev) => {
         const merged = { ...prev };
-        for (const [qid, entry] of Object.entries(answersData)) {
-          if ('python_feedback' in entry && entry.python_feedback !== undefined) {
-            merged[qid] = entry.python_feedback;
+        for (const [key, entry] of Object.entries(answersData)) {
+          if (
+            entry &&
+            Object.prototype.hasOwnProperty.call(entry, 'python_feedback')
+          ) {
+            merged[key] = entry.python_feedback;
           }
         }
         return merged;
       });
 
-      setExistingAnswers((prev) => ({ ...prev, ...answersData }));
+      // 3) Restore text AI guidance from saved F1 entries (e.g., "2aF1" → question "2a"),
+      //    but only if we're NOT in "requirements-only" mode.
+      if (!isRequirementsOnly) {
+        const restoredTextFeedback = {};
 
-      const newFollowupsData = {};
-      for (const [qid, entry] of Object.entries(answersData)) {
-        if (qid.endsWith('FA1')) newFollowupsData[qid] = entry.response;
+        for (const [key, entry] of Object.entries(answersData)) {
+          if (!key.endsWith('F1')) continue;      // keys like "2aF1"
+          const baseQid = key.slice(0, -2);       // "2aF1" → "2a"
+          const text = (entry?.response || '').trim();
+          if (text) {
+            restoredTextFeedback[baseQid] = text;
+          }
+        }
+
+        if (Object.keys(restoredTextFeedback).length > 0) {
+          setTextFeedbackShown((prev) => ({
+            ...prev,
+            ...restoredTextFeedback,
+          }));
+        }
       }
-      setFollowupAnswers((prev) => ({ ...prev, ...newFollowupsData }));
+
+      // 4) Restore stored follow-up *answers* (e.g., "2aFA1"), if you ever use them
+      const restoredFollowups = {};
+      for (const [key, entry] of Object.entries(answersData)) {
+        if (!key.endsWith('FA1')) continue;
+        const text = (entry?.response || '').trim();
+        if (text) {
+          restoredFollowups[key] = text;
+        }
+      }
+      if (Object.keys(restoredFollowups).length > 0) {
+        setFollowupAnswers((prev) => ({ ...prev, ...restoredFollowups }));
+      }
+
 
       // Parse Google Doc structure
       const docUrl = instanceData.sheet_url;
@@ -784,6 +843,7 @@ export default function RunActivityPage({
           studentlevel,
           aicodeguidance,
         }));
+
 
         const files = {};
         for (const block of blocks) {
@@ -1070,8 +1130,8 @@ export default function RunActivityPage({
     // DOM textareas
     const taCount = container
       ? container.querySelectorAll(
-          `textarea[data-response-key^="${qid}code"]`
-        ).length
+        `textarea[data-response-key^="${qid}code"]`
+      ).length
       : 0;
 
     // existing answers
@@ -1226,8 +1286,7 @@ export default function RunActivityPage({
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           alert(
-            `Test submission failed: ${
-              err.error || 'Unknown error submitting test.'
+            `Test submission failed: ${err.error || 'Unknown error submitting test.'
             }`
           );
           setIsSubmitting(false);
@@ -1538,25 +1597,30 @@ export default function RunActivityPage({
         if (aiSuggestion && aiSuggestion.trim()) {
           suggestion = aiSuggestion.trim();
 
-          // store suggestion in state for display
           setTextFeedbackShown((prev) => ({
             ...prev,
             [qid]: suggestion,
           }));
 
-          // Save as F1 for instructor / later use
-          await saveResponse(instanceId, `${qid}F1`, suggestion);
+          if (!isRequirementsOnly) {
+            await saveResponse(instanceId, `${qid}F1`, suggestion);
+          }
         } else {
-          // no suggestion → clear any previous one
           suggestion = null;
+
           setTextFeedbackShown((prev) => {
             const next = { ...prev };
             delete next[qid];
             return next;
           });
-          await saveResponse(instanceId, `${qid}F1`, '');
+
+          if (!isRequirementsOnly) {
+            await saveResponse(instanceId, `${qid}F1`, '');
+          }
         }
       }
+
+
 
       // ---- Completion for this question ----
       answers[`${qid}S`] = suggestion ? 'inprogress' : 'completed';
@@ -1588,7 +1652,6 @@ export default function RunActivityPage({
 
       const suggestion = textFeedbackShown[qid];
 
-      // Normalize status from memory or DB
       const status = normalizeStatus(
         answers[`${qid}S`] ?? existingAnswers[`${qid}S`]?.response
       );
@@ -1608,45 +1671,79 @@ export default function RunActivityPage({
 
       const attempts = Number(
         answers[`${qid}attempts`] ??
-          existingAnswers[`${qid}attempts`]?.response ??
-          0
+        existingAnswers[`${qid}attempts`]?.response ??
+        0
       );
       return attempts < 3;
     });
 
-    // Is this group set to "ignore AI gating"?
+    // In "requirements-only" mode, AI feedback is advisory, not a gate
+    const effectiveTextPending = isRequirementsOnly
+      ? false
+      : pendingTextFollowups;
+    const effectiveCodePending = isRequirementsOnly
+      ? false
+      : pendingCodeGates;
+
     const overrideThisGroup =
       forceOverride || !!overrideGroups[currentQuestionGroupIndex];
 
-    const groupState =
-      overrideThisGroup
+    const hasAIFromThisRun = unanswered.some((u) =>
+      /\(AI feedback\)/.test(u)
+    );
+
+    const computedState =
+      overrideThisGroup ||
+        (!pendingBase && !effectiveTextPending && !effectiveCodePending)
         ? 'completed'
-        : pendingBase || pendingTextFollowups || pendingCodeGates
-        ? 'inprogress'
-        : 'completed';
+        : 'inprogress';
 
     const stateKey = `${currentQuestionGroupIndex + 1}state`;
-    answers[stateKey] = groupState;
+    answers[stateKey] = computedState;
 
-    if (groupState === 'inprogress') {
-      const msg = unanswered.length
-        ? `Please complete: ${unanswered.join(', ')}`
-        : 'Please resolve the pending items in this group.';
-      alert(msg);
+    if (computedState === 'inprogress') {
+      const msgParts = [];
+
+      if (unanswered.length) {
+        msgParts.push(`Please complete: ${unanswered.join(', ')}.`);
+      }
+
+      if ((effectiveTextPending || hasAIFromThisRun) && !isRequirementsOnly) {
+        msgParts.push(
+          'There are AI suggestions (yellow boxes) for one or more questions. ' +
+          'You can revise your answers and submit again, or click ' +
+          '"Continue without fixing AI feedback" to move on.'
+        );
+      }
+
+      if (effectiveCodePending && !isRequirementsOnly) {
+        msgParts.push(
+          'One or more code questions still have issues according to the code checker. ' +
+          'Try improving your program and submit again, or ask your instructor about overriding.'
+        );
+      }
+
+      if (msgParts.length === 0) {
+        msgParts.push('There are still items to review in this group.');
+      }
+
+      alert(msgParts.join(' '));
       setIsSubmitting(false);
       return;
     }
 
     if (
-      groupState === 'completed' &&
+      computedState === 'completed' &&
       overrideThisGroup &&
       (pendingBase || pendingTextFollowups || pendingCodeGates)
     ) {
       alert(
         'You chose to continue without fixing AI feedback. ' +
-          'Your instructor may review this later.'
+        'Your instructor may review this later.'
       );
     }
+
+
 
     try {
       const response = await fetch(
@@ -1657,7 +1754,7 @@ export default function RunActivityPage({
           body: JSON.stringify({
             groupIndex: currentQuestionGroupIndex,
             studentId: user.id,
-            groupState,
+            groupState: computedState,
             answers,
           }),
         }
@@ -1668,6 +1765,19 @@ export default function RunActivityPage({
         alert(`Submission failed: ${errorData.error || 'Unknown error'}`);
       } else {
         await loadActivity();
+        if (!isTestMode && overrideThisGroup) {
+          // Clear any lingering AI suggestions for this group on the client side
+          const qBlocksForGroup = blocks.filter((b) => b.type === 'question');
+          setTextFeedbackShown((prev) => {
+            const next = { ...prev };
+            qBlocksForGroup.forEach((b) => {
+              const qid = `${b.groupId}${b.id}`;
+              delete next[qid];
+            });
+            return next;
+          });
+        }
+
         if (currentQuestionGroupIndex + 1 === groups.length) {
           await fetch(`${API_BASE_URL}/api/responses/mark-complete`, {
             method: 'POST',
@@ -1940,8 +2050,8 @@ export default function RunActivityPage({
           {activity?.title
             ? `Activity: ${activity.title}`
             : courseName
-            ? `Course: ${courseName}`
-            : 'Untitled Activity'}
+              ? `Course: ${courseName}`
+              : 'Untitled Activity'}
         </h2>
 
         {/* TEST STATUS BANNER */}
@@ -2010,6 +2120,8 @@ export default function RunActivityPage({
           localCode,
           onLocalCodeChange: updateLocalCode,
           prefill: existingAnswers,
+          fileContents,
+          setFileContents: handleUpdateFileContents,
         })}
 
         {groups.map((group, index) => {
@@ -2159,22 +2271,22 @@ export default function RunActivityPage({
                         maxResp > 0
                           ? `Written ${wEarn}/${maxResp}`
                           : respScore != null
-                          ? `Written ${wEarn}`
-                          : null;
+                            ? `Written ${wEarn}`
+                            : null;
 
                       const rBand =
                         maxRun > 0
                           ? `Run ${rEarn}/${maxRun}`
                           : runScore != null
-                          ? `Run ${rEarn}`
-                          : null;
+                            ? `Run ${rEarn}`
+                            : null;
 
                       const cBand =
                         maxCode > 0
                           ? `Code ${cEarn}/${maxCode}`
                           : codeScore != null
-                          ? `Code ${cEarn}`
-                          : null;
+                            ? `Code ${cEarn}`
+                            : null;
 
                       const bandSummary = [wBand, rBand, cBand]
                         .filter(Boolean)
@@ -2309,8 +2421,8 @@ export default function RunActivityPage({
           {Object.keys(fileContents).length === 0
             ? '(none)'
             : Object.entries(fileContents)
-                .map(([k, v]) => `${k}(${(v ?? '').length})`)
-                .join(', ')}
+              .map(([k, v]) => `${k}(${(v ?? '').length})`)
+              .join(', ')}
         </div>
       )}
     </>
