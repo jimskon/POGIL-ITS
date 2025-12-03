@@ -212,19 +212,6 @@ export default function RunActivityPage({
     return count;
   }, [existingAnswers, groups]);
 
-  // NEW: test mode detection
-  const isTestMode = useMemo(() => {
-    if (activity?.is_test) return true;
-    if (!groups || groups.length !== 1) return false;
-    return groups.some((g) =>
-      (g.content || []).some(
-        (b) =>
-          b?.type === 'question' &&
-          b.scores &&
-          Object.keys(b.scores).length > 0
-      )
-    );
-  }, [activity, groups]);
 
   // NEW: test mode detection
   const isTestMode = useMemo(() => {
