@@ -404,14 +404,25 @@ async function setupMultipleGroupInstances(req, res) {
       `SELECT is_test FROM pogil_activities WHERE id = ?`,
       [activityId]
     );
-    const isTest = !!activityRow?.is_test;
 
-    const effectiveTestStart =
-      isTest && testStartAt ? testStartAt : null;
+    // Treat either a DB flag *or* explicit timing info as "this is a test".
+    let isTest = !!activityRow?.is_test;
+    if (testStartAt && Number(testDurationMinutes) > 0) {
+      isTest = true;
+    }
+
+    const effectiveTestStart = isTest && testStartAt ? testStartAt : null;
     const effectiveDuration =
       isTest && Number(testDurationMinutes) > 0
         ? Number(testDurationMinutes)
         : 0;
+
+    // Keep pogil_activities.is_test in sync (no sheet parsing on the server).
+    await conn.query(
+      `UPDATE pogil_activities SET is_test = ? WHERE id = ?`,
+      [isTest ? 1 : 0, activityId]
+    );
+
 
     // Remove existing instances + members for this course+activity
     const [oldInstances] = await conn.query(

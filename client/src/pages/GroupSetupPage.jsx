@@ -20,6 +20,8 @@ export default function GroupSetupPage() {
   const [isTest, setIsTest] = useState(false);
   const [testStartAt, setTestStartAt] = useState('');          // datetime-local string
   const [testDurationMinutes, setTestDurationMinutes] = useState(30);
+  const [lockedBeforeStart, setLockedBeforeStart] = useState(true);
+  const [lockedAfterEnd, setLockedAfterEnd] = useState(true);
 
   // Load students
   useEffect(() => {
@@ -39,7 +41,7 @@ export default function GroupSetupPage() {
       .catch(err => console.error('❌ Failed to load students:', err));
   }, [courseId, activityId]);
 
-  // NEW: load activity meta to see if this is a test
+  // NEW: load activity meta and inspect sheet for \test
   useEffect(() => {
     async function fetchActivity() {
       try {
@@ -47,11 +49,30 @@ export default function GroupSetupPage() {
         if (!res.ok) return;
         const data = await res.json();
 
-        // assume backend returns is_test or isTest
-        const flag = data.is_test ?? data.isTest ?? false;
-        setIsTest(!!flag);
+        const sheetUrl = data.sheet_url;
+        let sheetHasTestTag = false;
 
-        // you could also prefill a default start time here if you want
+        if (sheetUrl && sheetUrl !== 'undefined') {
+          try {
+            const docRes = await fetch(
+              `${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(
+                sheetUrl
+              )}`
+            );
+            if (docRes.ok) {
+              const { lines } = await docRes.json();
+              sheetHasTestTag = Array.isArray(lines)
+                ? lines.some((line) => line.trim() === '\\test')
+                : false;
+            }
+          } catch (err) {
+            console.error('❌ Failed to inspect sheet for \\test:', err);
+          }
+        }
+
+        const dbFlag = data.is_test ?? data.isTest ?? false;
+        // Sheet is the truth; DB is just a fallback
+        setIsTest(sheetHasTestTag || !!dbFlag);
       } catch (err) {
         console.error('❌ Failed to load activity meta:', err);
       }
@@ -61,6 +82,7 @@ export default function GroupSetupPage() {
       fetchActivity();
     }
   }, [activityId]);
+
 
   // NEW: when this is a test, default to groups-of-1 and no roles
   useEffect(() => {
@@ -165,11 +187,14 @@ export default function GroupSetupPage() {
           activityId: Number(activityId),
           courseId: Number(courseId),
           groups,
-          // NEW: pass timing info to backend
+          // test timing + locks
           testStartAt: isTest ? testStartAt : null,
-          testDurationMinutes: isTest ? Number(testDurationMinutes) : 0
+          testDurationMinutes: isTest ? Number(testDurationMinutes) : 0,
+          lockedBeforeStart: isTest ? lockedBeforeStart : false,
+          lockedAfterEnd: isTest ? lockedAfterEnd : false,
         })
       });
+
 
       const data = await res.json();
 
@@ -256,6 +281,24 @@ export default function GroupSetupPage() {
                 min={1}
                 value={testDurationMinutes}
                 onChange={(e) => setTestDurationMinutes(Number(e.target.value) || 0)}
+              />
+            </Col>
+            <Col md={3} className="d-flex align-items-end">
+              <Form.Check
+                type="checkbox"
+                id="locked-before-start"
+                label="Lock before start time"
+                checked={lockedBeforeStart}
+                onChange={(e) => setLockedBeforeStart(e.target.checked)}
+              />
+            </Col>
+            <Col md={3} className="d-flex align-items-end">
+              <Form.Check
+                type="checkbox"
+                id="locked-after-end"
+                label="Lock after end of test"
+                checked={lockedAfterEnd}
+                onChange={(e) => setLockedAfterEnd(e.target.checked)}
               />
             </Col>
           </>

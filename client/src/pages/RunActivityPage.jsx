@@ -213,9 +213,19 @@ export default function RunActivityPage({
   }, [existingAnswers, groups]);
 
 
-  // NEW: test mode detection
   const isTestMode = useMemo(() => {
+    // Primary: any instance with a time window is a test
+    if (
+      activity?.test_start_at &&
+      Number(activity?.test_duration_minutes) > 0
+    ) {
+      return true;
+    }
+
+    // Secondary: explicit DB flag, once we start storing it
     if (activity?.is_test) return true;
+
+    // Fallback heuristic (only if we *really* don't know)
     if (!groups || groups.length !== 1) return false;
     return groups.some((g) =>
       (g.content || []).some(
@@ -226,6 +236,7 @@ export default function RunActivityPage({
       )
     );
   }, [activity, groups]);
+
 
   // NEW: compute test window from activity fields (if present)
   const testWindow = useMemo(() => {
@@ -253,60 +264,55 @@ export default function RunActivityPage({
     activity?.test_reopen_until,
   ]);
 
-  // NEW: drive lock state + countdown from testWindow (and backend hints if present)
-  useEffect(() => {
-    if (!isTestMode || !testWindow) {
-      setTestLockState({
-        lockedBefore: false,
-        lockedAfter: false,
-        remainingSeconds: null,
-      });
-      return;
+// NEW: drive lock state + countdown purely from testWindow + submitted_at
+useEffect(() => {
+  if (!isTestMode || !testWindow) {
+    setTestLockState({
+      lockedBefore: false,
+      lockedAfter: false,
+      remainingSeconds: null,
+    });
+    return;
+  }
+
+  const hasSubmitted = !!activity?.submitted_at;
+  const { start, end } = testWindow;
+
+  const update = () => {
+    const now = new Date();
+
+    let lockedBefore = false;
+    let lockedAfter = hasSubmitted;
+    let remainingSeconds = null;
+
+    if (!lockedAfter) {
+      if (now < start && !hasSubmitted) {
+        // Before start window
+        lockedBefore = true;
+        lockedAfter = false;
+        remainingSeconds = Math.floor(
+          (start.getTime() - now.getTime()) / 1000
+        );
+      } else {
+        // Inside or after window
+        const diff = Math.floor((end.getTime() - now.getTime()) / 1000);
+        remainingSeconds = diff > 0 ? diff : 0;
+        lockedBefore = false;
+        if (diff <= 0 || hasSubmitted) {
+          lockedAfter = true;
+        }
+      }
+    } else {
+      remainingSeconds = 0;
     }
 
-    const baseLockedBefore = !!activity?.locked_before_start;
-    const baseLockedAfter = !!activity?.locked_after_end;
-    const hasSubmitted = !!activity?.submitted_at;
-    const { start, end } = testWindow;
+    setTestLockState({ lockedBefore, lockedAfter, remainingSeconds });
+  };
 
-    const update = () => {
-      const now = new Date();
-      let lockedBefore = baseLockedBefore;
-      let lockedAfter = baseLockedAfter || hasSubmitted;
-      let remainingSeconds = null;
-
-      if (!lockedAfter) {
-        if (now < start && !hasSubmitted) {
-          lockedBefore = true;
-          lockedAfter = false;
-          remainingSeconds = Math.floor(
-            (start.getTime() - now.getTime()) / 1000
-          );
-        } else {
-          const diff = Math.floor((end.getTime() - now.getTime()) / 1000);
-          remainingSeconds = diff > 0 ? diff : 0;
-          lockedBefore = false;
-          if (diff <= 0 || hasSubmitted) {
-            lockedAfter = true;
-          }
-        }
-      } else {
-        remainingSeconds = 0;
-      }
-
-      setTestLockState({ lockedBefore, lockedAfter, remainingSeconds });
-    };
-
-    update();
-    const id = setInterval(update, 1000);
-    return () => clearInterval(id);
-  }, [
-    isTestMode,
-    testWindow,
-    activity?.locked_before_start,
-    activity?.locked_after_end,
-    activity?.submitted_at,
-  ]);
+  update();
+  const id = setInterval(update, 1000);
+  return () => clearInterval(id);
+}, [isTestMode, testWindow, activity?.submitted_at]);
 
   // NEW: if aicodeguidance says "Follow-ups: requirements-only", don't gate on AI feedback
   const isRequirementsOnly = useMemo(() => {
