@@ -4,6 +4,8 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Container, Row, Col, Button, Form, Card } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
+import { normalizeDbDatetime, utcToLocalInputValue, formatLocalDateTime } from '../utils/time';
+
 
 export default function GroupSetupPage() {
   const { courseId, activityId } = useParams();
@@ -178,7 +180,11 @@ export default function GroupSetupPage() {
         return;
       }
     }
-
+    // Convert local datetime-local string → UTC ISO before sending
+    const testStartAtUtc =
+      isTest && testStartAt
+        ? new Date(testStartAt).toISOString()
+        : null;
     try {
       const res = await fetch(`${API_BASE_URL}/api/activity-instances/setup-groups`, {
         method: 'POST',
@@ -188,7 +194,7 @@ export default function GroupSetupPage() {
           courseId: Number(courseId),
           groups,
           // test timing + locks
-          testStartAt: isTest ? testStartAt : null,
+          testStartAt: isTest ? testStartAtUtc : null,
           testDurationMinutes: isTest ? Number(testDurationMinutes) : 0,
           lockedBeforeStart: isTest ? lockedBeforeStart : false,
           lockedAfterEnd: isTest ? lockedAfterEnd : false,

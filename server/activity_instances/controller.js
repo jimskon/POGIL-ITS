@@ -411,18 +411,24 @@ async function setupMultipleGroupInstances(req, res) {
       isTest = true;
     }
 
-    const effectiveTestStart = isTest && testStartAt ? testStartAt : null;
-    const effectiveDuration =
-      isTest && Number(testDurationMinutes) > 0
-        ? Number(testDurationMinutes)
-        : 0;
+    // 🔹 Normalize incoming testStartAt (ISO) -> MySQL DATETIME string
+    let testStartForDb = null;
+    let effectiveDuration = 0;
+
+    if (isTest && testStartAt && Number(testDurationMinutes) > 0) {
+      const d = new Date(testStartAt);            // parses "2025-12-04T01:37:00.000Z" etc.
+      if (!Number.isNaN(d.getTime())) {
+        // store as UTC in "YYYY-MM-DD HH:MM:SS"
+        testStartForDb = d.toISOString().slice(0, 19).replace('T', ' ');
+        effectiveDuration = Number(testDurationMinutes);
+      }
+    }
 
     // Keep pogil_activities.is_test in sync (no sheet parsing on the server).
     await conn.query(
       `UPDATE pogil_activities SET is_test = ? WHERE id = ?`,
       [isTest ? 1 : 0, activityId]
     );
-
 
     // Remove existing instances + members for this course+activity
     const [oldInstances] = await conn.query(
@@ -455,8 +461,8 @@ async function setupMultipleGroupInstances(req, res) {
           courseId,
           activityId,
           group_number,
-          effectiveTestStart,
-          effectiveDuration
+          testStartForDb,      // ✅ MySQL-friendly string or null
+          effectiveDuration    // ✅ 0 if not a test
         ]
       );
       const instanceId = instanceResult.insertId;
@@ -465,10 +471,9 @@ async function setupMultipleGroupInstances(req, res) {
         for (const member of group.members) {
           if (!member.student_id) continue;
 
-          // Only accept known roles; everything else -> NULL
           const cleanRole =
             member.role &&
-            ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
+              ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
               ? member.role
               : null;
 
@@ -491,6 +496,7 @@ async function setupMultipleGroupInstances(req, res) {
     conn.release();
   }
 }
+
 
 
 async function submitGroupResponses(req, res) {
