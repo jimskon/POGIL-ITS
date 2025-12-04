@@ -3,7 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Container, Card, Spinner, Alert, Button, Row, Col, Form, Badge } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
 import { FaUserCheck, FaLaptop } from 'react-icons/fa';
-import { normalizeDbDatetime, utcToLocalInputValue, formatLocalDateTime } from '../utils/time';
+import { normalizeDbDatetime, utcToLocalInputValue, formatLocalDateTime, formatUtcToLocal } from '../utils/time';
 
 export default function ViewGroupsPage() {
   const { courseId, activityId } = useParams();
@@ -299,18 +299,18 @@ export default function ViewGroupsPage() {
                     {isTest && hasTiming && (
                       <div className="mb-2 small text-muted">
                         <div>
-                          <strong>Start:</strong> {normalizeDbDatetime(group.test_start_at)}
+                          <strong>Start:</strong> {formatUtcToLocal(group.test_start_at)}
                         </div>
                         <div>
                           <strong>Duration:</strong> {group.test_duration_minutes} minutes
                         </div>
                         <div>
                           <strong>Reopen until:</strong>{' '}
-                          {group.test_reopen_until ? formatLocalDateTime(group.test_reopen_until) : '—'}
+                          {group.test_reopen_until ? formatUtcToLocal(group.test_reopen_until) : '—'}
                         </div>
                         <div>
                           <strong>Submitted:</strong>{' '}
-                          {group.submitted_at ? formatLocalDateTime(group.submitted_at) : 'Not submitted'}
+                          {group.submitted_at ? formatUtcToLocal(group.submitted_at) : 'Not submitted'}
                         </div>
                       </div>
                     )}

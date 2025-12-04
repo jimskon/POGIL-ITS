@@ -10,6 +10,7 @@ import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
 import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
 import { io } from 'socket.io-client';
+import { parseUtcDbDatetime } from '../utils/time';
 
 // --- DEBUG ---
 const DEBUG_FILES = false;
@@ -238,33 +239,35 @@ export default function RunActivityPage({
   }, [activity, groups]);
 
 
-  // NEW: compute test window from activity fields (if present)
-  const testWindow = useMemo(() => {
-    if (!isTestMode) return null;
-    const startStr = activity?.test_start_at;
-    const dur = activity?.test_duration_minutes;
-    if (!startStr || !dur) return null;
+// NEW: compute test window from activity fields (if present)
+const testWindow = useMemo(() => {
+  if (!isTestMode) return null;
 
-    const start = new Date(startStr);
-    if (Number.isNaN(start.getTime())) return null;
+  const startStr = activity?.test_start_at;
+  const dur = activity?.test_duration_minutes;
+  if (!startStr || !dur) return null;
 
-    let end = new Date(start.getTime() + Number(dur) * 60 * 1000);
+  const start = parseUtcDbDatetime(startStr);
+  if (!start) return null;
 
-    if (activity?.test_reopen_until) {
-      const reopen = new Date(activity.test_reopen_until);
-      if (!Number.isNaN(reopen.getTime()) && reopen > end) {
-        end = reopen;
-      }
+  let end = new Date(start.getTime() + Number(dur) * 60 * 1000);
+
+  if (activity?.test_reopen_until) {
+    const reopen = parseUtcDbDatetime(activity.test_reopen_until);
+    if (reopen && reopen > end) {
+      end = reopen;
     }
-    return { start, end };
-  }, [
-    isTestMode,
-    activity?.test_start_at,
-    activity?.test_duration_minutes,
-    activity?.test_reopen_until,
-  ]);
+  }
 
-// NEW: drive lock state + countdown purely from testWindow + submitted_at
+  return { start, end };
+}, [
+  isTestMode,
+  activity?.test_start_at,
+  activity?.test_duration_minutes,
+  activity?.test_reopen_until,
+]);
+
+
 useEffect(() => {
   if (!isTestMode || !testWindow) {
     setTestLockState({
@@ -313,6 +316,7 @@ useEffect(() => {
   const id = setInterval(update, 1000);
   return () => clearInterval(id);
 }, [isTestMode, testWindow, activity?.submitted_at]);
+
 
   // NEW: if aicodeguidance says "Follow-ups: requirements-only", don't gate on AI feedback
   const isRequirementsOnly = useMemo(() => {

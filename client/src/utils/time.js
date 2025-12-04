@@ -25,15 +25,65 @@ export function formatLocalDateTime(utcString) {
   });
 }
 
-// Normalizes MySQL DATETIME to proper UTC ISO
+// Normalizes MySQL DATETIME to a JS-friendly local datetime
 export function normalizeDbDatetime(value) {
   if (!value) return '';
 
-  // MySQL DATETIME → treat as UTC
+  // MySQL DATETIME → treat as LOCAL time (NOT UTC)
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
-    return value.replace(' ', 'T') + 'Z';  // append Z to mark UTC
+    return value.replace(' ', 'T');  // NO 'Z'
   }
 
-  // Already ISO? return as-is
   return value;
+}
+
+
+// Input:  "2025-12-04 02:59:00"  (UTC)
+// Output: "2025-12-03 9:59PM"    (local time)
+export function formatUtcToLocal(utcString) {
+  if (!utcString) return '';
+
+  // Match "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DDTHH:MM:SS"
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(utcString);
+  if (!m) return '';
+
+  const [, year, month, day, hour, minute, second = '0'] = m.map(Number);
+
+  // Treat parsed values as UTC
+  const d = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  if (isNaN(d.getTime())) return '';
+
+  const pad2 = (n) => String(n).padStart(2, '0');
+
+  const localYear = d.getFullYear();
+  const localMonth = pad2(d.getMonth() + 1);
+  const localDay = pad2(d.getDate());
+
+  let localHour = d.getHours();
+  const localMinute = pad2(d.getMinutes());
+  const ampm = localHour >= 12 ? 'PM' : 'AM';
+
+  localHour = localHour % 12;
+  if (localHour === 0) localHour = 12; // 0 → 12AM / 12PM
+
+  return `${localYear}-${localMonth}-${localDay} ${localHour}:${localMinute}${ampm}`;
+}
+
+// Input:  "2025-12-04 02:59:00" or "2025-12-04T02:59:00"
+// Output: Date object (local representation, but constructed from UTC fields)
+export function parseUtcDbDatetime(utcString) {
+  if (!utcString) return null;
+
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(utcString);
+  if (!m) return null;
+
+  const year   = Number(m[1]);
+  const month  = Number(m[2]);
+  const day    = Number(m[3]);
+  const hour   = Number(m[4]);
+  const minute = Number(m[5]);
+  const second = m[6] ? Number(m[6]) : 0;
+
+  // Treat those fields as UTC:
+  return new Date(Date.UTC(year, month - 1, day, hour, minute, second));
 }
