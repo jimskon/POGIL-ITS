@@ -1639,6 +1639,7 @@ export function renderBlocks(blocks, options = {}) {
                   code={displayedCode}
                   blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}
                   editable={canEdit}
+                  localOnly={runMode === 'preview'}
                   responseKey={responseKey}
                   onCodeChange={(rk, code, extra) => {
                     if (showToggle && codeMode === 'local' && !isActive) {
@@ -1710,6 +1711,7 @@ export function renderBlocks(blocks, options = {}) {
                   code={displayedCode}
                   blockIndex={`cpp-${block.groupId}-${block.id}-${i}`}
                   editable={canEdit}
+                  localOnly={runMode === 'preview'} 
                   responseKey={responseKey}
                   onCodeChange={(rk, code, extra) => {
                     if (showToggle && codeMode === 'local' && !isActive) {
