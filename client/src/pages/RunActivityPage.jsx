@@ -301,10 +301,18 @@ useEffect(() => {
         const diff = Math.floor((end.getTime() - now.getTime()) / 1000);
         remainingSeconds = diff > 0 ? diff : 0;
         lockedBefore = false;
-        if (diff <= 0 || hasSubmitted) {
+
+        // IMPORTANT:
+        // - While time remains, we keep lockedAfter = false.
+        // - When time has run out (diff <= 0) *and* not yet submitted,
+        //   we leave lockedAfter = false but remainingSeconds = 0.
+        //   That gives the auto-submit effect a chance to run.
+        // - Once submitted (hasSubmitted true in a later tick), we lock it.
+        if (hasSubmitted) {
           lockedAfter = true;
         }
       }
+
     } else {
       remainingSeconds = 0;
     }

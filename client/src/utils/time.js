@@ -71,19 +71,18 @@ export function formatUtcToLocal(utcString) {
 
 // Input:  "2025-12-04 02:59:00" or "2025-12-04T02:59:00"
 // Output: Date object (local representation, but constructed from UTC fields)
-export function parseUtcDbDatetime(utcString) {
-  if (!utcString) return null;
+// Convert MySQL DATETIME (UTC) or ISO to a Date object (UTC)
+export function parseUtcDbDatetime(value) {
+  if (!value) return null;
 
-  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(utcString);
-  if (!m) return null;
+  // MySQL DATETIME: "YYYY-MM-DD HH:MM:SS" -> treat as UTC
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
+    const iso = value.replace(' ', 'T') + 'Z'; // mark as UTC
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
 
-  const year   = Number(m[1]);
-  const month  = Number(m[2]);
-  const day    = Number(m[3]);
-  const hour   = Number(m[4]);
-  const minute = Number(m[5]);
-  const second = m[6] ? Number(m[6]) : 0;
-
-  // Treat those fields as UTC:
-  return new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  // Already ISO or something Date can parse
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
 }

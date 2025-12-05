@@ -6,7 +6,7 @@ import ActivityEnvironment from '../components/activity/ActivityEnvironment';
 import ActivityPythonBlock from '../components/activity/ActivityPythonBlock';
 import { Form } from 'react-bootstrap';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';;
 
 import ActivityCppBlock from '../components/activity/ActivityCppBlock';
 import { Alert } from 'react-bootstrap';
@@ -118,6 +118,10 @@ export default function FileBlock({
 
   const [localValue, setLocalValue] = useState(effective);
 
+  // NEW: refs to manage caret position
+  const textareaRef = useRef(null);
+  const pendingSelectionRef = useRef(null);
+
   // Keep local in sync when parent state or initial content changes
   useEffect(() => {
     const next =
@@ -127,7 +131,7 @@ export default function FileBlock({
     setLocalValue(next);
   }, [fileContents, filename, initialContent]);
 
-  // 🔴 KEY: seed fileContents once so the runner sees authored files
+  // Seed fileContents once so the runner sees authored files
   useEffect(() => {
     if (
       setFileContents &&
@@ -141,6 +145,19 @@ export default function FileBlock({
     }
   }, [filename, initialContent, fileContents, setFileContents]);
 
+  // After we update localValue due to custom key handling, restore caret
+  useEffect(() => {
+    if (pendingSelectionRef.current && textareaRef.current) {
+      const { start, end } = pendingSelectionRef.current;
+      try {
+        textareaRef.current.setSelectionRange(start, end);
+      } catch {
+        // ignore
+      }
+      pendingSelectionRef.current = null;
+    }
+  }, [localValue]);
+
   const handleChange = (e) => {
     const updated = e.target.value;
     setLocalValue(updated);
@@ -153,16 +170,75 @@ export default function FileBlock({
     }
   };
 
+  // TAB inserts tab; ENTER auto-indents
+  const handleKeyDown = (e) => {
+    if (!editable) return;
+
+    const el = e.target;
+    const value = localValue;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? start;
+
+    // Tab: insert a tab instead of leaving the textarea
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const indent = '\t'; // or '    ' for 4 spaces
+      const newValue = value.slice(0, start) + indent + value.slice(end);
+      const newPos = start + indent.length;
+
+      setLocalValue(newValue);
+      if (setFileContents) {
+        setFileContents(prev => ({
+          ...prev,
+          [filename]: newValue,
+        }));
+      }
+
+      pendingSelectionRef.current = { start: newPos, end: newPos };
+      return;
+    }
+
+    // Enter: auto-indent based on current line's leading whitespace
+    if (e.key === 'Enter') {
+      e.preventDefault();
+
+      const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+      const line = value.slice(lineStart, start);
+      const indentMatch = line.match(/^[\t ]*/);
+      const indent = indentMatch ? indentMatch[0] : '';
+
+      const insert = '\n' + indent;
+      const newValue = value.slice(0, start) + insert + value.slice(end);
+      const newPos = start + insert.length;
+
+      setLocalValue(newValue);
+      if (setFileContents) {
+        setFileContents(prev => ({
+          ...prev,
+          [filename]: newValue,
+        }));
+      }
+
+      pendingSelectionRef.current = { start: newPos, end: newPos };
+      return;
+    }
+  };
+
+  // 👉 THIS is the `return (` I meant
   return (
     <div className="mb-3">
-      <strong>File: <code>{filename}</code></strong>
+      <strong>
+        File: <code>{filename}</code>
+      </strong>
       <Form.Control
         as="textarea"
         value={localValue}
         onChange={handleChange}
+        onKeyDown={handleKeyDown}
         rows={Math.max(4, localValue.split('\n').length)}
         readOnly={!editable}
         className="font-monospace bg-light mt-1"
+        ref={textareaRef}
       />
     </div>
   );
