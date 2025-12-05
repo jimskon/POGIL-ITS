@@ -350,14 +350,8 @@ export default function ActivityCppBlock({
     setIsRunning(true);
 
     try {
-      const payload = { code };
-
-      if (!localOnly) {
-        const filesPayload = buildFilesPayload();
-        if (filesPayload) {
-          payload.files = filesPayload;
-        }
-      }
+    const filesPayload = buildFilesPayload();
+    const payload = filesPayload ? { code, files: filesPayload } : { code };
 
       const compileController = new AbortController();
       const compileTimer = setTimeout(() => compileController.abort(), timeLimit);

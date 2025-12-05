@@ -2430,6 +2430,58 @@ useEffect(() => {
               .join(', ')}
         </div>
       )}
+      
+      {DEBUG_FILES && (
+        <div className="small text-muted" style={{ whiteSpace: 'pre-wrap' }}>
+          <strong>🧪 Files:</strong>{' '}
+          {Object.keys(fileContents).length === 0
+            ? '(none)'
+            : Object.entries(fileContents)
+                .map(([k, v]) => `${k}(${(v ?? '').length})`)
+                .join(', ')}
+        </div>
+      )}
+
+      {/* Floating test timer — always visible for students in test mode */}
+      {isTestMode && isStudent && testWindow && (
+        <div
+          style={{
+            position: 'fixed',
+            top: '70px',      // below the navbar
+            right: '16px',
+            zIndex: 1050,     // above page content but below modals
+          }}
+        >
+          <div className="bg-dark text-white px-3 py-2 rounded shadow-sm small">
+            {testLockState.lockedBefore && (
+              <>
+                <div className="fw-bold">Test starts in</div>
+                {testLockState.remainingSeconds != null && (
+                  <div>{formatRemainingSeconds(testLockState.remainingSeconds)}</div>
+                )}
+              </>
+            )}
+
+            {!testLockState.lockedBefore &&
+              !testLockState.lockedAfter &&
+              testLockState.remainingSeconds != null && (
+                <>
+                  <div className="fw-bold">Time remaining</div>
+                  <div>{formatRemainingSeconds(testLockState.remainingSeconds)}</div>
+                </>
+              )}
+
+            {testLockState.lockedAfter && (
+              <>
+                <div className="fw-bold">Test closed</div>
+                {activity?.submitted_at && (
+                  <div className="mt-1">Your test has been submitted.</div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </>
   );
 }
