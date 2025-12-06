@@ -1109,21 +1109,20 @@ export function renderBlocks(blocks, options = {}) {
       );
     }
 
-    if (block.type === 'file') {
-      const isReadonly = !!block.readonly;
+if (block.type === 'file') {
+  const isReadonly = !!block.readonly;
 
-      return (
-        <FileBlock
-          key={`file-${block.filename}-${index}`}
-          filename={block.filename}
-          initialContent={block.content || ''}
-          fileContents={fileContents}
-          setFileContents={setFileContents}
-          // readonly in the markup overrides everything
-          editable={!isReadonly && editable}
-        />
-      );
-    }
+  return (
+    <FileBlock
+      key={`file-${block.filename}-${index}`}
+      filename={block.filename}
+      initialContent={block.content || ''}
+      fileContents={fileContents}
+      setFileContents={setFileContents}
+      editable={!isReadonly}   // 👈 IGNORE global editable flag
+    />
+  );
+}
 
 
 
