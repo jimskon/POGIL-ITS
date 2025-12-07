@@ -264,6 +264,7 @@ export function parseSheetToBlocks(lines) {
   let inList = false;
   let listType = null;
   let listItems = [];
+  let listBelongsToQuestion = false;
   let inFileBlock = false;
   let currentFile = null;
   let inScoreBlock = false;
@@ -470,14 +471,34 @@ export function parseSheetToBlocks(lines) {
       inList = true;
       listType = trimmed.includes('itemize') ? 'ul' : 'ol';
       listItems = [];
+      // if we’re inside a question, this list should be part of that question
+      listBelongsToQuestion = !!currentQuestion;
       continue;
     }
 
     if (trimmed === '\\end{itemize}' || trimmed === '\\end{enumerate}') {
-      blocks.push({ type: 'list', listType, items: listItems.map(format) });
+      if (listBelongsToQuestion && currentQuestion) {
+        // list lives inside the current question: append HTML directly
+        const itemsHtml = listItems
+          .map(text => `<li>${format(text)}</li>`)
+          .join('');
+        const listHtml = `<${listType}>${itemsHtml}</${listType}>`;
+
+        // add a line break before the list to keep spacing reasonable
+        currentQuestion.prompt += '<br>' + listHtml;
+      } else {
+        // plain top-level list block (same behavior as before)
+        blocks.push({
+          type: 'list',
+          listType,
+          items: listItems.map(format),
+        });
+      }
+
       inList = false;
       listType = null;
       listItems = [];
+      listBelongsToQuestion = false;
       continue;
     }
 
@@ -1057,8 +1078,10 @@ export function renderBlocks(blocks, options = {}) {
       return (
         <ListTag key={`list-${index}`} className="my-2 list-disc list-inside">
           {block.items.map((item, i) => (
-            <li key={`list-item-${i}`}>{item}</li>
-          ))}
+            <li
+              key={`list-item-${i}`}
+              dangerouslySetInnerHTML={{ __html: item }}
+            />))}
         </ListTag>
       );
     }
@@ -1109,20 +1132,20 @@ export function renderBlocks(blocks, options = {}) {
       );
     }
 
-if (block.type === 'file') {
-  const isReadonly = !!block.readonly;
+    if (block.type === 'file') {
+      const isReadonly = !!block.readonly;
 
-  return (
-    <FileBlock
-      key={`file-${block.filename}-${index}`}
-      filename={block.filename}
-      initialContent={block.content || ''}
-      fileContents={fileContents}
-      setFileContents={setFileContents}
-      editable={!isReadonly}   // 👈 IGNORE global editable flag
-    />
-  );
-}
+      return (
+        <FileBlock
+          key={`file-${block.filename}-${index}`}
+          filename={block.filename}
+          initialContent={block.content || ''}
+          fileContents={fileContents}
+          setFileContents={setFileContents}
+          editable={!isReadonly}   // 👈 IGNORE global editable flag
+        />
+      );
+    }
 
 
 
@@ -1710,7 +1733,7 @@ if (block.type === 'file') {
                   code={displayedCode}
                   blockIndex={`cpp-${block.groupId}-${block.id}-${i}`}
                   editable={canEdit}
-                  localOnly={runMode === 'preview'} 
+                  localOnly={runMode === 'preview'}
                   responseKey={responseKey}
                   onCodeChange={(rk, code, extra) => {
                     if (showToggle && codeMode === 'local' && !isActive) {
