@@ -207,15 +207,3 @@ Place these inside:
 }
 ```
 
----
-
-This is the full cheat sheet **in raw Markdown form**, exactly as requested.
-
-If you want, I can also generate:
-
-- A compact one-page PDF version  
-- A GitHub README version  
-- A version with examples for every tag  
-- A validator script that checks POGIL markup for structural issues (missing questiongroups, unclosed tags, etc.)
-
-Just say the word.
