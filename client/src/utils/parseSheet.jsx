@@ -728,20 +728,34 @@ export function parseSheetToBlocks(lines) {
     // questiongroup: \questiongroup{...}
     if (trimmed.startsWith('\\questiongroup{')) {
       flushCurrentBlock();
-      groupNumber++;
-      inGroup = true;
-      questionLetterCode = 97;
+
       const m = trimmed.match(/\\questiongroup\{([\s\S]+?)\}/);
       const contentRaw = m ? m[1] : '';
       const content = format(contentRaw.trimStart());
-      blocks.push({ type: 'groupIntro', groupId: groupNumber, content }); continue;
+
+      if (isTest) {
+        // For tests: treat as a section header (no numbering)
+        blocks.push({ type: 'section', title: content });
+      } else {
+        // Original non-test behavior: group intro with lettered questions
+        groupNumber++;
+        inGroup = true;
+        questionLetterCode = 97;
+        blocks.push({ type: 'groupIntro', groupId: groupNumber, content });
+      }
+      continue;
     }
 
     if (trimmed === '\\endquestiongroup') {
-      blocks.push({ type: 'endGroup' });
-      inGroup = false;
+      if (!isTest) {
+        // Non-test: keep endGroup marker for group-based rendering
+        blocks.push({ type: 'endGroup' });
+        inGroup = false;
+      }
+      // Tests: ignore \endquestiongroup entirely
       continue;
     }
+
 
     if (trimmed.startsWith('\\question{')) {
       // grab everything between the first '{' and the LAST '}' on this line
@@ -971,8 +985,21 @@ export function parseSheetToBlocks(lines) {
   }
 
   flushCurrentBlock();
+
+  // For tests: renumber all questions sequentially: 1., 2., 3., ...
+  if (isTest) {
+    let q = 0;
+    for (const b of blocks) {
+      if (b.type === 'question') {
+        q += 1;
+        b.label = `${q}.`;
+      }
+    }
+  }
+
   return blocks;
 }
+
 
 // turn rich prompt HTML into plain text for the AI
 const stripHtml = (s = '') =>
