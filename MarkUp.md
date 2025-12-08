@@ -117,6 +117,7 @@ Notes:
 ## Code Blocks
 
 ### Python
+Supports optional timeout: `\python{50000}`
 ```
 \python
 # code here
