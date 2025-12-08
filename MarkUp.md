@@ -1,206 +1,221 @@
-# POGIL Markup Language Cheat Sheet 
+# POGIL Markup Language Cheat Sheet (Updated with Test + Scoring Tags)
+
 ## Document Metadata
-| Syntax             | Description                          | Example                          |
-|--------------------|--------------------------------------|----------------------------------|
-| `\title{...}`      | Title of the activity                 | `\title{Void Functions - V2.0}` |
-| `\name{...}`       | Unique identifier for the activity    | `\name{voidfunctions}`          |
-| `\section{...}`    | Section heading                       | `\section{Learning Objectives}` |
+| Syntax             | Description                                  | Example                          |
+|--------------------|----------------------------------------------|----------------------------------|
+| `\title{...}`      | Title of the activity                         | `\title{Greedy Algorithms Quiz}` |
+| `\name{...}`       | Unique ID/name for the activity               | `\name{greedyquiz}`             |
+| `\studentlevel{...}` | Target student audience                    | `\studentlevel{Second Year}`     |
+| `\activitycontext{...}` | Intro paragraph for students           | `\activitycontext{This quiz…}`   |
+| `\aicodeguidance{...}` | Instructions for the AI scoring engine | See AI Guidance section below    |
+| `\test`            | Marks activity as an **assessment** (quiz/test — no student hints) | `\test` |
+
+---
 
 ## Question Groups
 | Syntax                 | Description                                     | Example                            |
 |------------------------|-------------------------------------------------|------------------------------------|
-| `\questiongroup{...}`  | Starts a group of related questions with intro  | `\questiongroup{Explore output}`  |
-| `\endquestiongroup`    | Ends a question group                           | `\endquestiongroup`               |
+| `\questiongroup{...}`  | Starts a group of related questions             | `\questiongroup{Greedy Algorithms}`|
+| `\endquestiongroup`    | Ends the group                                   | `\endquestiongroup`               |
 
-## Text and Formatting
-| Syntax           | Description              | Example                                |
-|------------------|--------------------------|----------------------------------------|
-| `\text{...}`     | Plain inline paragraph   | `\text{This is an intro paragraph.}`   |
-| `\textbf{...}`   | Bold inline text         | `\textbf{Content}`                     |
-| `\textit{...}`   | Italic inline text       | `\textit{Remember this rule}`          |
-
-## Lists
-| Syntax               | Description              | Example                                |
-|----------------------|--------------------------|----------------------------------------|
-| `\begin{itemize}`    | Start bullet list        |                                        |
-| `\item ...`          | List item                | `\item Reuse code`                     |
-| `\end{itemize}`      | End bullet list          |                                        |
-| `\begin{enumerate}`  | Start numbered list      |                                        |
-| `\end{enumerate}`    | End numbered list        |                                        |
-
-# Table Blocks in POGIL Markup
-
-POGIL-ITS supports tables using a custom LaTeX-style syntax.  
-Tables are useful for presenting structured data, student responses, or fill-in exercises.
+**Important:**  
+All answerable items (`\question`, `\textresponse`, code blocks) must be inside a `\questiongroup` to be editable in RunActivity.
 
 ---
-
-## Table Structure
-
-A table is defined between `\table{}` and `\endtable`.
-
-- The **argument to `\table{}`** is an optional caption (shown above the table).
-- Each **row** of the table begins with `\row`.
-- Inside a row, **cells are separated with `&`**.
-- All rows should contain the **same number of cells** for proper rendering.
-
----
-
-## The `\row` Command
-
-- A `\row` starts a new row in the table.
-- Cell contents are separated by `&`.
-- You can use **plain text** for static cells, or **special commands** like `\tresponse` for input fields.
-- The **first row** is usually used for **headers**.
-
-### Basic Example
-
-```text
-\table{Example Table}
-\row Name & Age & Major
-\row Alice & 20 & \tresponse
-\row Bob   & 21 & Computer Science
-\endtable
-```
-
-## Python Code
-| Syntax        | Description                  | Example                                |
-|---------------|------------------------------|----------------------------------------|
-| `\python`     | Begin Python code block      | `\python`                              |
-| `\endpython`  | End Python code block        | `\endpython`                           |
 
 ## Questions and Responses
 | Syntax                      | Description                                                  | Example                                       |
 |-----------------------------|--------------------------------------------------------------|-----------------------------------------------|
-| `\question{...}`            | Start a question with inline prompt text                     | `\question{What does def mean?}`             |
-| `\endquestion`              | End the current question                                     | `\endquestion`                                |
-| `\textresponse{n}`          | Response box (n lines)                                       | `\textresponse{3}`                            |
-| `\sampleresponses{...}`     | Inline sample response                                       | `\sampleresponses{The keyword is \`def\`.}`   |
-| `\feedbackprompt{...}`      | Instructor feedback guidance.  Use "none" if you never want feedback | `\feedbackprompt{Check if they mention def}`  |
-| `\followupprompt{...}`      | Follow-up prompt to ask student a deeper question            | `\followupprompt{Ask about use of def}`       |
+| `\question{...}`            | Start a question; ends at `\endquestion`                     | `\question{What is a greedy algorithm?}`      |
+| `\endquestion`              | Ends the question, required if additional blocks follow      | `\endquestion`                                |
+| `\textresponse{n}`          | Student response box (n lines tall)                          | `\textresponse{4}`                            |
+| `\sampleresponses{...}`     | Sample instructor solution (hidden from students)            | `\sampleresponses{It chooses a local optimum.}` |
+| `\feedbackprompt{...}`      | AI grading guidance                                          | `\feedbackprompt{Check that they describe local choice.}` |
+| `\followupprompt{...}`      | AI follow-up hint (suppressed during tests)                  | `\followupprompt{Ask why local isn't always global.}` |
+
+---
+
+## Scoring Blocks (NEW SECTION)
+
+### Purpose
+`\score` blocks define how the AI grades a question in a quiz or test.  
+They always appear **after** the question they apply to.
+
+### Syntax
+
+| Syntax                  | Description                               | Example |
+|-------------------------|-------------------------------------------|---------|
+| `\score{points,type}`   | Begins a scoring rubric                   | `\score{6,response}` |
+| `\endscore`             | Ends the scoring block                    | `\endscore` |
+
+### Meaning of `type`
+
+| Type        | Meaning                                      |
+|-------------|------------------------------------------------|
+| `response`  | Scores a written text response                |
+| `code`      | Scores a student-written code block           |
+| `output`    | Scores output from a demo/test program        |
+| Other text  | Treated as custom metadata                    |
+
+### Example Scoring Block
+
+```
+\score{5,response}
+Grade the student’s explanation.
+
+Rubric:
+  - 5 points: Clear, correct, with example.
+  - 3–4 points: Mostly correct.
+  - 1–2 points: Some understanding but unclear.
+  - 0 points: Incorrect or missing.
+\endscore
+```
+
+---
+
+## Lists
+| Syntax               | Description              |
+|----------------------|--------------------------|
+| `\begin{itemize}`    | Begin bullet list        |
+| `\item ...`          | Bullet item              |
+| `\end{itemize}`      | End bullet list          |
+| `\begin{enumerate}`  | Begin numbered list      |
+| `\end{enumerate}`    | End numbered list        |
+
+---
+
+## Text and Formatting
+| Syntax           | Description              |
+|------------------|--------------------------|
+| `\text{...}`     | Paragraph (supports inline formatting) |
+| `\textbf{...}`   | Bold text                |
+| `\textit{...}`   | Italic text              |
+
+---
+
+## Tables
+A table is defined with `\table{caption}` and `\endtable`.
+
+### Structure
+
+```
+\table{Example Table}
+\row Name & Age & Major
+\row Alice & 20 & \tresponse
+\row Bob & 21 & Computer Science
+\endtable
+```
+
+Notes:
+- Each `\row` defines a row.
+- Cells are separated with `&`.
+- All rows should have the same number of cells.
+- You may use `\tresponse` inside any cell.
+
+---
+
+## Code Blocks
+
+### Python
+Supports optional timeout: `\python{50000}`
+```
+\python
+# code here
+\endpython
+```
+
+### C++  
+Supports optional timeout: `\cpp{50000}`
+
+```
+\cpp
+#include <iostream>
+int main() { }
+\endcpp
+```
+
+### File Blocks
+
+```
+\file{utils.hpp,readonly}
+// contents here
+\endfile
+```
+
+Flags:
+- `readonly` prevents editing.
+
+---
+
+## Images
+```
+\image{URL}
+\image{URL}{Caption}
+\image{URL}{Caption}{50%}
+```
+
+- Width can be a percentage or pixel value.
+- Google Drive links are auto-coerced.
+
+---
 
 ## Hyperlinks
-| Syntax                | Description             | Example                                                                            |
-| --------------------- | ----------------------- | ---------------------------------------------------------------------------------- |
-| \link{URL}{Link text} | Hyperlink to a web page | \link{https://pogil.org/roles}{POGIL} |
-
-## Images — Option A (Single-line)
-
-| Syntax                              | Description                      | Example                                                            |
-|-------------------------------------|----------------------------------|--------------------------------------------------------------------|
-| `\image{URL}`                       | Image with no caption            | `\image{https://example.com/diagram.png}`                          |
-| `\image{URL}{Alt or caption}`       | Image with caption               | `\image{https://example.com/diagram.png}{Program flow}`            |
-| `\image{URL}{Alt}{Size}`            | Caption + width (px or %)        | `\image{https://example.com/diagram.png}{Program flow}{50%}`       |
-
-**Notes**
-- **Size** can be a number (pixels), e.g. `300`, or a percentage, e.g. `60%`.
-- Allowed sources: `http(s)` and `data:image/...`.
-- Google Drive links like `https://drive.google.com/file/d/<ID>/view?...` are supported (converted to a viewable URL by the renderer).
----
-
-## Examples
-
-### Question Example
-
-```markdown
-\question{What Python keyword is used to indicate that a code segment is a function definition?}
-\textresponse{2}
-\sampleresponses{The keyword is `def`.}
-\feedbackprompt{Evaluate whether the student correctly identified `def` as the Python keyword to define functions.}
-\followupprompt{Ask the student to explain why a keyword like `def` is needed when defining functions.}
-\endquestion
 ```
-
-### Question Group Example
-
-```markdown
-\questiongroup{Analyze the following Python code to answer the questions.}
-
-\python
-def greet():
-    print("Hello!")
-greet()
-\endpython
-
-\question{What is the name of the function?}
-\textresponse{1}
-\sampleresponses{greet}
-\feedbackprompt{Check if the student correctly identifies the function name.}
-\followupprompt{Ask why we need to define a function before calling it.}
-\endquestion
-
-\question{What is the output of this program?}
-\textresponse{1}
-\sampleresponses{Hello!}
-\feedbackprompt{Did the student reproduce the output exactly?}
-\followupprompt{What would happen if the call to `greet()` was removed?}
-\endquestion
-
-\endquestiongroup
+\link{URL}{Text}
 ```
-
-### Python Example
-
-```markdown
-\python
-def say_hello():
-    print("Hi there!")
-\endpython
-```
-
-### List and Formatting Example
-
-```markdown
-\text{Before writing a function, remember the following:}
-
-\textbf{Steps to create a function}
-
-\begin{enumerate}
-\item Use the `def` keyword.
-\item Give the function a name.
-\item Add parentheses and a colon.
-\item Indent the function body.
-\end{enumerate}
-
-\textit{Tip: Use meaningful function names to improve readability.}
-```
-# AI Guidance for This System (Authoring Cheatsheet)
-
-| Guidance line to paste in `\aicodeguidance{...}` | Parsed flag (server) | Effect on feedback | Effect on follow-ups / gating | When to use / notes |
-|---|---|---|---|---|
-| **Follow-ups: none** | `followupGate = 'none'` | Model may give a 1-line hint (feedback), but **no follow-up questions** are ever shown. | **Never blocks** on follow-ups. Fatal errors still return feedback only. | Use for practice where you don’t want banners or extra questions. |
-| **Follow-ups: gibberish-only** | `followupGate = 'gibberish-only'` | Normal hints allowed; nitpicks filtered by other flags. | Follow-ups shown **only** if the answer is empty/gibberish/off-base. | Matches “don’t ask followups unless gibberish or way off.” |
-| **Follow-ups: default** | `followupGate = 'default'` | Normal hints allowed; nitpicks depend on other flags. | Model may ask a follow-up when it thinks it’s needed. | Stricter sessions (quizzes, checks for understanding). |
-| **Do not ask a follow up.** | `followupGate = 'none'` | Same as “Follow-ups: none”. | Same as “Follow-ups: none”. | Plain-English equivalent. |
-| **Requirements-only** | `requirementsOnly = true` | Filters **nitpicks**; feedback focuses on meeting the stated task only. | Combined with follow-up gate: doesn’t by itself block or allow. | Good for early courses; prevents scope creep. |
-| **Checker errors should not block progress (fail-open).** | `failOpen = true` | Suppresses non-fatal nags; treats small issues as **OK**. | With `gibberish-only`, only truly bad answers get a follow-up. | Lets partially-right work pass with a light hint. |
-| **Ignore spacing.** | `ignoreSpacing = true` | Hides spacing/formatting/style advice. | No effect on gating; just reduces noise. | Pair with “match sample output” only if you truly don’t care about spaces. |
-| **f-strings are unavailable; do not recommend them.** | `forbidFStrings = true` | Prevents suggestions to use f-strings. | No effect on gating. | Required for your Python runtime that lacks f-strings. |
-| **Do not require extra features.** | `noExtras = true` | Blocks “add feature/refactor/optimize” suggestions. | No effect on gating. | Keeps scope tight to the prompt. |
-| **Match the sample output exactly (labels and order).** | *(soft guidance)* | Encourages exact output; if **also** using “Ignore spacing”, spacing still won’t be enforced. | No direct effect; combine with stricter follow-ups if you want blocking. | For exams, omit “Ignore spacing” and use `Follow-ups: default`. |
-| **Use concise, single-sentence feedback only.** | *(soft guidance)* | Nudges the model to keep feedback short. | No direct effect. | Style preference; already aligned with server prompts. |
-| **No follow-up unless the answer is gibberish or off-prompt.** | → Prefer **“Follow-ups: gibberish-only”** | Same as that preset. | Same as that preset. | Write the explicit preset for guaranteed behavior. |
 
 ---
 
-## Preset Combos (copy/paste into `\aicodeguidance{...}`)
+## AI Guidance (Server Behavior Settings)
 
-### Practice (very light touch)
+Place these inside:
+
+```
+\aicodeguidance{
+   ...
+}
+```
+
+### Follow-up Behavior
+
+| Directive                         | Effect |
+|----------------------------------|--------|
+| `Follow-ups: none`               | No follow-up questions ever. |
+| `Follow-ups: gibberish-only`     | Follow-ups only for empty/off-track answers. |
+| `Follow-ups: default`            | AI may ask follow-up questions. |
+
+### Other AI Flags
+
+| Directive                                   | Effect |
+|----------------------------------------------|--------|
+| `Requirements-only`                          | Score only stated requirements; no scope creep. |
+| `Ignore spacing.`                            | Ignore whitespace differences. |
+| `Checker errors should not block progress.`  | Fail-open mode. |
+| `Do not require extra features.`             | Prevents feature creep. |
+| `f-strings are unavailable; do not recommend them.` | Blocks f-string suggestions. |
+
+### Example AI Guidance Block
+
+```
+\aicodeguidance{
     Follow-ups: gibberish-only
     Requirements-only
     Ignore spacing.
     Do not require extra features.
     f-strings are unavailable; do not recommend them.
-    Checker errors should not block progress (fail-open).
+    Checker errors should not block progress.
+}
+```
 
-### Quiz (moderate)
-    Follow-ups: default
-    Requirements-only
-    Do not require extra features.
-    f-strings are unavailable; do not recommend them.
+---
 
-### Exam (strict output)
-    Follow-ups: default
-    Match the sample output exactly (labels and order).
-    Do not require extra features.
-    f-strings are unavailable; do not recommend them.
+This is the full cheat sheet **in raw Markdown form**, exactly as requested.
+
+If you want, I can also generate:
+
+- A compact one-page PDF version  
+- A GitHub README version  
+- A version with examples for every tag  
+- A validator script that checks POGIL markup for structural issues (missing questiongroups, unclosed tags, etc.)
+
+Just say the word.
