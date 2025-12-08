@@ -21,8 +21,9 @@ app.use(express.json());
 const allowedOrigins = new Set([
   "https://colearn-ai.com",
   "https://www.colearn-ai.com",
-    "https://jimskon.com",
-    "https://csits.kenyon.edu"
+  "https://jimskon.com",
+  "https://csits.kenyon.edu"
+
 ]);
 
 app.use(cors({

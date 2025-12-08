@@ -92,15 +92,28 @@ CREATE TABLE IF NOT EXISTS activity_instances (
   id INT AUTO_INCREMENT PRIMARY KEY,
   activity_id INT NOT NULL,
   course_id INT NOT NULL,
-  status ENUM('in_progress','completed') DEFAULT 'in_progress',
+
+  status ENUM('in_progress','completed') NOT NULL DEFAULT 'in_progress',
+
   active_student_id INT DEFAULT NULL,
   group_number INT,
-  start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  start_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   total_groups INT DEFAULT NULL,
+
+  -- NEW: timed-test fields
+  test_start_at DATETIME DEFAULT NULL COMMENT 'Scheduled start time for timed tests',
+  test_duration_minutes INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Time limit in minutes (0 = no limit)',
+  test_reopen_until DATETIME DEFAULT NULL COMMENT 'Optional reopen-until time for this instance',
+
+  -- Optional but very useful for both tests and regular activities
+  submitted_at DATETIME DEFAULT NULL COMMENT 'Timestamp when the instance was finally submitted',
+
   FOREIGN KEY (activity_id) REFERENCES pogil_activities(id) ON DELETE CASCADE,
   FOREIGN KEY (course_id) REFERENCES courses(id) ON DELETE CASCADE,
   FOREIGN KEY (active_student_id) REFERENCES users(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB
+  DEFAULT CHARSET=utf8mb4
+  COLLATE=utf8mb4_unicode_ci;
 
 -- Group membership with roles
 CREATE TABLE IF NOT EXISTS group_members (
