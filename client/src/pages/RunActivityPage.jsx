@@ -165,14 +165,7 @@ export default function RunActivityPage({
 
   const isLockedFU = (qid) => qidsNoFURef.current?.has(qid);
 
-  // compute isActive first…
-  const isActive = user && user.id === activeStudentId;
-  const isObserver = !isActive;
-  const isInstructor =
-    user?.role === 'instructor' ||
-    user?.role === 'root' ||
-    user?.role === 'creator';
-  const isStudent = user?.role === 'student';
+
 
   const toggleCodeViewMode = (rk, next) =>
     setCodeViewMode((prev) => ({ ...prev, [rk]: next }));
@@ -238,92 +231,113 @@ export default function RunActivityPage({
     );
   }, [activity, groups]);
 
+  useEffect(() => {
+    console.log('[RUN] isTestMode:', isTestMode);
+  }, [isTestMode]);
 
-// NEW: compute test window from activity fields (if present)
-const testWindow = useMemo(() => {
-  if (!isTestMode) return null;
+  const isInstructor =
+    user?.role === 'instructor' ||
+    user?.role === 'root' ||
+    user?.role === 'creator';
+  const isStudent = user?.role === 'student';
 
-  const startStr = activity?.test_start_at;
-  const dur = activity?.test_duration_minutes;
-  if (!startStr || !dur) return null;
+  // In test mode, every student is their own "active" user.
+  // In POGIL mode, only the activeStudentId is editable.
+  const isActive =
+    !!user &&
+    (
+      (isTestMode && isStudent) ||
+      (activeStudentId != null && String(user.id) === String(activeStudentId))
+    );
 
-  const start = parseUtcDbDatetime(startStr);
-  if (!start) return null;
+  const isObserver = !isActive;
+  // NEW: compute test window from activity fields (if present)
+  const testWindow = useMemo(() => {
+    if (!isTestMode) return null;
 
-  let end = new Date(start.getTime() + Number(dur) * 60 * 1000);
+    const startStr = activity?.test_start_at;
+    const dur = activity?.test_duration_minutes;
+    if (!startStr || !dur) return null;
 
-  if (activity?.test_reopen_until) {
-    const reopen = parseUtcDbDatetime(activity.test_reopen_until);
-    if (reopen && reopen > end) {
-      end = reopen;
-    }
-  }
+    const start = parseUtcDbDatetime(startStr);
+    if (!start) return null;
 
-  return { start, end };
-}, [
-  isTestMode,
-  activity?.test_start_at,
-  activity?.test_duration_minutes,
-  activity?.test_reopen_until,
-]);
+    let end = new Date(start.getTime() + Number(dur) * 60 * 1000);
 
-
-useEffect(() => {
-  if (!isTestMode || !testWindow) {
-    setTestLockState({
-      lockedBefore: false,
-      lockedAfter: false,
-      remainingSeconds: null,
-    });
-    return;
-  }
-
-  const hasSubmitted = !!activity?.submitted_at;
-  const { start, end } = testWindow;
-
-  const update = () => {
-    const now = new Date();
-
-    let lockedBefore = false;
-    let lockedAfter = hasSubmitted;
-    let remainingSeconds = null;
-
-    if (!lockedAfter) {
-      if (now < start && !hasSubmitted) {
-        // Before start window
-        lockedBefore = true;
-        lockedAfter = false;
-        remainingSeconds = Math.floor(
-          (start.getTime() - now.getTime()) / 1000
-        );
-      } else {
-        // Inside or after window
-        const diff = Math.floor((end.getTime() - now.getTime()) / 1000);
-        remainingSeconds = diff > 0 ? diff : 0;
-        lockedBefore = false;
-
-        // IMPORTANT:
-        // - While time remains, we keep lockedAfter = false.
-        // - When time has run out (diff <= 0) *and* not yet submitted,
-        //   we leave lockedAfter = false but remainingSeconds = 0.
-        //   That gives the auto-submit effect a chance to run.
-        // - Once submitted (hasSubmitted true in a later tick), we lock it.
-        if (hasSubmitted) {
-          lockedAfter = true;
-        }
+    if (activity?.test_reopen_until) {
+      const reopen = parseUtcDbDatetime(activity.test_reopen_until);
+      if (reopen && reopen > end) {
+        end = reopen;
       }
-
-    } else {
-      remainingSeconds = 0;
     }
 
-    setTestLockState({ lockedBefore, lockedAfter, remainingSeconds });
-  };
+    return { start, end };
+  }, [
+    isTestMode,
+    activity?.test_start_at,
+    activity?.test_duration_minutes,
+    activity?.test_reopen_until,
+  ]);
+  useEffect(() => {
+    console.log('[RUN] testWindow:', testWindow);
+  }, [testWindow]);
 
-  update();
-  const id = setInterval(update, 1000);
-  return () => clearInterval(id);
-}, [isTestMode, testWindow, activity?.submitted_at]);
+  /* useEffect(() => {
+     if (!isTestMode || !testWindow) {
+       setTestLockState({
+         lockedBefore: false,
+         lockedAfter: false,
+         remainingSeconds: null,
+       });
+       return;
+     }
+ 
+     const hasSubmitted = !!activity?.submitted_at;
+     const { start, end } = testWindow;
+ 
+     const update = () => {
+       const now = new Date();
+ 
+       let lockedBefore = false;
+       let lockedAfter = hasSubmitted;
+       let remainingSeconds = null;
+ 
+       if (!lockedAfter) {
+         if (now < start && !hasSubmitted) {
+           // Before start window
+           lockedBefore = true;
+           lockedAfter = false;
+           remainingSeconds = Math.floor(
+             (start.getTime() - now.getTime()) / 1000
+           );
+         } else {
+           // Inside or after window
+           const diff = Math.floor((end.getTime() - now.getTime()) / 1000);
+           remainingSeconds = diff > 0 ? diff : 0;
+           lockedBefore = false;
+ 
+           // IMPORTANT:
+           // - While time remains, we keep lockedAfter = false.
+           // - When time has run out (diff <= 0) *and* not yet submitted,
+           //   we leave lockedAfter = false but remainingSeconds = 0.
+           //   That gives the auto-submit effect a chance to run.
+           // - Once submitted (hasSubmitted true in a later tick), we lock it.
+           if (hasSubmitted) {
+             lockedAfter = true;
+           }
+         }
+ 
+       } else {
+         remainingSeconds = 0;
+       }
+ 
+       setTestLockState({ lockedBefore, lockedAfter, remainingSeconds });
+     };
+ 
+     update();
+     const id = setInterval(update, 1000);
+     return () => clearInterval(id);
+   }, [isTestMode, testWindow, activity?.submitted_at]);*/
 
 
   // NEW: if aicodeguidance says "Follow-ups: requirements-only", don't gate on AI feedback
@@ -621,7 +635,7 @@ useEffect(() => {
   }, [user?.id, activeStudentId]);
 
   // NEW: auto-submit at time 0 for active student in test mode
-  useEffect(() => {
+  /*useEffect(() => {
     if (!isTestMode) return;
     if (!isStudent) return;
     if (!isActive) return;
@@ -648,7 +662,86 @@ useEffect(() => {
     testLockState.remainingSeconds,
     testLockState.lockedAfter,
     autoSubmitted,
+  ]);*/
+
+  useEffect(() => {
+    // If this isn’t a test or we don’t know the window yet, clear any locks.
+    if (!isTestMode || !testWindow) {
+      setTestLockState({
+        lockedBefore: false,
+        lockedAfter: false,
+        remainingSeconds: null,
+      });
+      return;
+    }
+
+    // Only students care about lock state + auto-submit.
+    // Instructors can see everything regardless.
+    const isSubmitted = !!activity?.submitted_at;
+    const { start, end } = testWindow;
+
+    let autoFired = false;
+
+    const tick = async () => {
+      const now = new Date();
+
+      let lockedBefore = false;
+      let lockedAfter = isSubmitted;
+      let remainingSeconds = null;
+
+      if (!isSubmitted) {
+        if (now < start) {
+          // Before the test window opens
+          lockedBefore = true;
+          lockedAfter = false;
+          remainingSeconds = Math.floor((start.getTime() - now.getTime()) / 1000);
+        } else {
+          // During or after the test window
+          const diff = Math.floor((end.getTime() - now.getTime()) / 1000);
+          remainingSeconds = diff > 0 ? diff : 0;
+
+          // Time’s up: trigger auto-submit once for the active student
+          if (diff <= 0 && !autoFired && isStudent && isActive && !autoSubmitted) {
+            autoFired = true;
+            setAutoSubmitted(true);
+            try {
+              await handleSubmit(false);
+            } catch (err) {
+              console.error('Auto-submit failed:', err);
+            }
+          }
+
+          // After end of window, lock the test
+          if (diff <= 0 || autoSubmitted || activity?.submitted_at) {
+            lockedAfter = true;
+          }
+        }
+      } else {
+        // Already submitted; fully locked
+        lockedAfter = true;
+        remainingSeconds = 0;
+      }
+
+      setTestLockState({ lockedBefore, lockedAfter, remainingSeconds });
+    };
+
+    // Run once immediately and then every second
+    tick();
+    const id = setInterval(() => {
+      // We intentionally ignore the promise returned by tick here
+      tick();
+    }, 1000);
+
+    return () => clearInterval(id);
+  }, [
+    isTestMode,
+    testWindow,
+    isStudent,
+    isActive,
+    autoSubmitted,
+    activity?.submitted_at,
   ]);
+
 
   if (loading) {
     return (
@@ -2042,11 +2135,8 @@ useEffect(() => {
     };
   }
 
-  // Convenience flags for student test locking
-  const testLockedForStudent =
-    isTestMode &&
-    isStudent &&
-    (testLockState.lockedBefore || testLockState.lockedAfter);
+  const isSubmitted = !!activity?.submitted_at;
+
 
   return (
     <>
@@ -2066,8 +2156,8 @@ useEffect(() => {
               testLockState.lockedAfter
                 ? 'secondary'
                 : testLockState.lockedBefore
-                ? 'warning'
-                : 'info'
+                  ? 'warning'
+                  : 'info'
             }
             className="mt-2"
           >
@@ -2133,22 +2223,39 @@ useEffect(() => {
           const stateKey = `${index + 1}state`;
           const rawState = existingAnswers[stateKey]?.response;
           const isComplete = normalizeStatus(rawState) === 'complete';
-
           const isCurrent = index === currentQuestionGroupIndex;
 
-          // For students in test mode, no editing when locked or after end
-          const editable =
-            isActive &&
-            isCurrent &&
-            !isComplete &&
-            !(isTestMode && isStudent && (testLockState.lockedBefore || testLockState.lockedAfter));
+          // In test mode: editable as long as the student is active and the test isn't locked
+          const testEditable =
+            isTestMode &&
+            isStudent &&
+            !testLockState.lockedBefore &&
+            !testLockState.lockedAfter;
 
+          const editable = isTestMode
+            ? (isStudent && !isSubmitted)
+            : (isActive && isCurrent && !isComplete);
+
+
+          console.debug('[RUN] group', index, {
+            stateKey,
+            rawState,
+            isComplete,
+            isCurrent,
+            isTestMode,
+            isSubmitted,
+            isActive,
+            editable,
+          });
           // For students before start, hide groups completely
-          if (isTestMode && isStudent && testLockState.lockedBefore && !isInstructor) {
-            return null;
-          }
-
-          const showGroup = isInstructor || isComplete || isCurrent;
+          //if (isTestMode && isStudent && testLockState.lockedBefore && !isInstructor) {
+          //  return null;
+          //}
+          const showGroup =
+            isInstructor ||
+            (isTestMode && isStudent) ||
+            isComplete ||
+            isCurrent;
           if (!showGroup) return null;
 
           // does this group currently have AI feedback/guidance?
@@ -2430,15 +2537,15 @@ useEffect(() => {
               .join(', ')}
         </div>
       )}
-      
+
       {DEBUG_FILES && (
         <div className="small text-muted" style={{ whiteSpace: 'pre-wrap' }}>
           <strong>🧪 Files:</strong>{' '}
           {Object.keys(fileContents).length === 0
             ? '(none)'
             : Object.entries(fileContents)
-                .map(([k, v]) => `${k}(${(v ?? '').length})`)
-                .join(', ')}
+              .map(([k, v]) => `${k}(${(v ?? '').length})`)
+              .join(', ')}
         </div>
       )}
 
