@@ -726,6 +726,7 @@ export function parseSheetToBlocks(lines) {
     }
 
     // questiongroup: \questiongroup{...}
+    // questiongroup: \questiongroup{...}
     if (trimmed.startsWith('\\questiongroup{')) {
       flushCurrentBlock();
 
@@ -733,26 +734,19 @@ export function parseSheetToBlocks(lines) {
       const contentRaw = m ? m[1] : '';
       const content = format(contentRaw.trimStart());
 
-      if (isTest) {
-        // For tests: treat as a section header (no numbering)
-        blocks.push({ type: 'section', title: content });
-      } else {
-        // Original non-test behavior: group intro with lettered questions
-        groupNumber++;
-        inGroup = true;
-        questionLetterCode = 97;
-        blocks.push({ type: 'groupIntro', groupId: groupNumber, content });
-      }
+      // Always create a group intro (tests and non-tests)
+      groupNumber++;
+      inGroup = true;
+      questionLetterCode = 97;  // reset per group if you want a,b,c,...
+      blocks.push({ type: 'groupIntro', groupId: groupNumber, content });
+
       continue;
     }
 
     if (trimmed === '\\endquestiongroup') {
-      if (!isTest) {
-        // Non-test: keep endGroup marker for group-based rendering
-        blocks.push({ type: 'endGroup' });
-        inGroup = false;
-      }
-      // Tests: ignore \endquestiongroup entirely
+      // Always close the group (tests and non-tests)
+      blocks.push({ type: 'endGroup' });
+      inGroup = false;
       continue;
     }
 
@@ -778,7 +772,9 @@ export function parseSheetToBlocks(lines) {
         samples: [],
         feedback: [],
         followups: [],
-        codeBlocks: []
+        codeBlocks: [],
+        // per-question scoring metadata
+        scores: {},   // e.g. { response: {points, instructionsHtml, instructionsRaw}, ... }
       };
       continue;
     }
@@ -807,33 +803,6 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    if (trimmed.startsWith('\\question{')) {
-      // grab everything between the first '{' and the LAST '}' on this line
-      const open = trimmed.indexOf('{');
-      const close = trimmed.lastIndexOf('}');
-      const raw = (open >= 0 && close > open)
-        ? trimmed.slice(open + 1, close)
-        : trimmed.slice(open + 1);
-
-      const id = String.fromCharCode(questionLetterCode++);
-      const rawClean = raw.trimStart();
-      currentQuestion = {
-        type: 'question',
-        id,
-        groupId: groupNumber,
-        label: `${id}.`,
-        responseId: responseId++,
-        prompt: format(rawClean),
-        responseLines: 1,
-        samples: [],
-        feedback: [],
-        followups: [],
-        codeBlocks: [],
-        // NEW: per-question scoring metadata
-        scores: {},   // e.g. { response: {points, instructionsHtml, instructionsRaw}, ... }
-      };
-      continue;
-    }
 
     // --- scoring blocks: \score{n,type} ... \endscore ---
     // type is one of: response, code, output

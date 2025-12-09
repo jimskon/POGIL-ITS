@@ -2228,16 +2228,15 @@ export default function RunActivityPage({
           // In test mode: editable as long as the student is active and the test isn't locked
           const testEditable =
             isTestMode &&
-            isStudent &&
+            isStudent && 
             !testLockState.lockedBefore &&
             !testLockState.lockedAfter;
 
           const editable = isTestMode
             ? (isStudent && !isSubmitted)
             : (isActive && isCurrent && !isComplete);
-
-
-          console.debug('[RUN] group', index, {
+          
+          console.log('[RUN] group', index, {
             stateKey,
             rawState,
             isComplete,
