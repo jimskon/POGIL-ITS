@@ -1,5 +1,5 @@
 -- ============================================
--- POGIL-ITS Cleaned Database Schema (v2025)
+-- coLearn-AI Cleaned Database Schema (v2025)
 -- One activity_instance per group model
 -- ============================================
 
