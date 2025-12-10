@@ -12,6 +12,11 @@ import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
 import { io } from 'socket.io-client';
 import { parseUtcDbDatetime } from '../utils/time';
 
+import RunActivityTestStatusBanner from '../components/RunActivityTestStatusBanner';
+import RunActivityFloatingTimer from '../components/RunActivityFloatingTimer';
+import QuestionScorePanel from '../components/QuestionScorePanel';
+
+
 // --- DEBUG ---
 const DEBUG_FILES = false;
 const PAGE_TAG = 'RUN';
@@ -1381,87 +1386,97 @@ if (Object.keys(savedFiles).length > 0) {
     return generic || detectLanguageFromCode(studentCode) || 'python';
   }
 
-  function buildTestSubmissionPayload(blocks, container) {
-    const answers = {};
-    const questions = [];
+function buildTestSubmissionPayload(blocks, container) {
+  const answers = {};
+  const questions = [];
 
-    for (const block of blocks) {
-      if (block.type !== 'question') continue;
+  for (const block of blocks) {
+    if (block.type !== 'question') continue;
 
-      const qid = `${block.groupId}${block.id}`;
-      const questionText = getQuestionText(block, qid);
+    const qid = `${block.groupId}${block.id}`;
+    const questionText = getQuestionText(block, qid);
 
-      // 1) Base written/text response (if any)
-      const textEl = container.querySelector(`[data-question-id="${qid}"]`);
-      const baseAnswer = textEl?.value?.trim() || '';
-      if (baseAnswer) {
-        answers[qid] = baseAnswer;
-      }
+    // 1) Base written/text response (if any)
+    const textEl = container.querySelector(`[data-question-id="${qid}"]`);
+    const baseAnswer = textEl?.value?.trim() || '';
 
-      // 2) Code cells
-      const domCodeCells = getCodeTextareaValues(container, qid);
-      const codeCells = domCodeCells.map((code, idx) => {
-        const key = `${qid}code${idx + 1}`;
-        answers[key] = code || '';
-        return { key, code: code || '' };
-      });
+    // 2) Table inputs (if any)
+    let tableHasInput = false;
+    let tableMarkdown = '';
 
-      if (codeCells.length === 0) {
-        const prefix = `${qid}code`;
-        const existingKeys = Object.keys(existingAnswers)
-          .filter((k) => k.startsWith(prefix))
-          .sort((a, b) => {
-            const ai = Number(a.replace(prefix, '')) || 0;
-            const bi = Number(b.replace(prefix, '')) || 0;
-            return ai - bi;
-          });
+    if (block.tableBlocks?.length > 0) {
+      for (let t = 0; t < block.tableBlocks.length; t++) {
+        const table = block.tableBlocks[t];
 
-        existingKeys.forEach((key) => {
-          const code = existingAnswers[key]?.response || '';
-          answers[key] = code;
-          codeCells.push({ key, code });
-        });
-      }
-
-      const combinedCode = codeCells.map((c) => c.code).join('\n\n').trim();
-
-      // 3) Harness output — gather *all* mirrors like 1aoutput1, 1aoutput2, ...
-      const outputEls = container.querySelectorAll(
-        `[data-output-key^="${qid}output"]`
-      );
-
-      let combinedOutput = '';
-      outputEls.forEach((el) => {
-        const text = (el.textContent || '').trim();
-        if (text) {
-          combinedOutput += (combinedOutput ? '\n' : '') + text;
+        for (let row = 0; row < table.rows.length; row++) {
+          for (let col = 0; col < table.rows[row].length; col++) {
+            const cell = table.rows[row][col];
+            if (cell.type === 'input') {
+              const key = `${qid}table${t}cell${row}_${col}`;
+              const val =
+                container.querySelector(`[data-question-id="${key}"]`)
+                  ?.value?.trim() || '';
+              if (val !== '') {
+                answers[key] = val;
+                tableHasInput = true;
+              }
+            }
+          }
         }
-      });
-
-      const outputKey = `${qid}output`;
-      const outputText =
-        combinedOutput ||
-        (existingAnswers[outputKey]?.response || '').trim();
-
-      if (outputText) {
-        answers[outputKey] = outputText;
       }
 
-      // 4) Question object for grader
-      questions.push({
-        qid,
-        questionText,
-        scores: block.scores || {},
-        responseText: answers[qid] || '',
-        codeCells,
-        code: combinedCode,
-        outputText,
-        output: outputText,
-      });
+      if (tableHasInput) {
+        // Build a markdown snapshot of the student's table for grading
+        tableMarkdown = buildMarkdownTableFromBlock(block, container);
+      }
     }
 
-    return { answers, questions };
+    // 3) Harness output — gather mirrors like 1aoutput1, 1aoutput2, ...
+    const outputEls = container.querySelectorAll(
+      `[data-output-key^="${qid}output"]`
+    );
+
+    let combinedOutput = '';
+    outputEls.forEach((el) => {
+      const text = (el.textContent || '').trim();
+      if (text) {
+        combinedOutput += (combinedOutput ? '\n' : '') + text;
+      }
+    });
+
+    const outputKey = `${qid}output`;
+    const outputText =
+      combinedOutput ||
+      (existingAnswers[outputKey]?.response || '').trim();
+
+    if (outputText) {
+      answers[outputKey] = outputText;
+    }
+
+    // 4) Decide what becomes the "responseText" for grading
+    //    Priority: written -> table -> output
+    const finalResponse = baseAnswer || tableMarkdown || outputText || '';
+
+    if (finalResponse) {
+      // Store main response for this question under its qid
+      answers[qid] = finalResponse;
+    }
+
+    // 5) Minimal question object for the test grader
+    questions.push({
+      qid,
+      questionText,
+      scores: block.scores || {},
+      responseText: finalResponse,
+      // NOTE: We intentionally do NOT send code or big blobs here.
+      // Code is already stored via /api/responses/code and can be
+      // fetched server-side if needed.
+    });
   }
+
+  return { answers, questions };
+}
+
 
   async function handleSubmit(forceOverride = false) {
     if (isSubmitting) return;
@@ -2019,6 +2034,66 @@ if (Object.keys(savedFiles).length > 0) {
     }
   }
 
+    // Instructor override: save edited per-question scores & feedback
+  async function handleSaveQuestionScores(qid, local) {
+    if (!activity || !instanceId || !user?.id) return;
+
+    const answers = {};
+
+    // Normalize numeric scores (allow blank to mean "no score")
+    const toNumOrNull = (val) => {
+      if (val === '' || val == null) return '';
+      const n = Number(val);
+      return Number.isNaN(n) ? '' : String(n);
+    };
+
+    answers[`${qid}ResponseScore`] = toNumOrNull(local.respScore);
+    answers[`${qid}RunScore`] = toNumOrNull(local.runScore);
+    answers[`${qid}CodeScore`] = toNumOrNull(local.codeScore);
+
+    // Free-text feedback
+    answers[`${qid}ResponseFeedback`] = local.respExplain ?? '';
+    answers[`${qid}RunFeedback`] = local.runExplain ?? '';
+    answers[`${qid}CodeFeedback`] = local.codeExplain ?? '';
+
+    try {
+      // Persist overrides to DB
+      await fetch(`${API_BASE_URL}/api/responses/bulk-save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          instanceId,
+          userId: user.id,
+          answers,
+        }),
+      });
+
+      // Update local state so UI reflects changes immediately
+      setExistingAnswers((prev) => {
+        const next = { ...prev };
+
+        Object.entries(answers).forEach(([key, value]) => {
+          next[key] = {
+            ...(next[key] || {}),
+            response: value,
+            type: 'text',
+          };
+        });
+
+        return next;
+      });
+
+      // Optionally you could recompute overall totals or reload activity,
+      // but typically this is enough:
+      // await loadActivity();   // <- if you want to be extra sure
+
+      alert(`Saved updated scores/feedback for ${qid}.`);
+    } catch (err) {
+      console.error('Failed to save question scores:', err);
+      alert('Error saving updated scores. Please try again.');
+    }
+  }
+
   async function handleCodeChange(responseKey, updatedCode, meta = {}) {
     setLastEditTs(Date.now());
     if (!isActive) return;
@@ -2277,58 +2352,15 @@ if (Object.keys(savedFiles).length > 0) {
               : 'Untitled Activity'}
         </h2>
 
-        {/* TEST STATUS BANNER */}
-        {isTestMode && (
-          <Alert
-            variant={
-              testLockState.lockedAfter
-                ? 'secondary'
-                : testLockState.lockedBefore
-                  ? 'warning'
-                  : 'info'
-            }
-            className="mt-2"
-          >
-            <div>
-              <strong>This is a timed test.</strong>
-            </div>
-            {testWindow && (
-              <div className="small mt-1">
-                Start:{' '}
-                <strong>{testWindow.start.toLocaleString()}</strong> &nbsp;–&nbsp;
-                End:{' '}
-                <strong>{testWindow.end.toLocaleString()}</strong>
-              </div>
-            )}
+         <RunActivityTestStatusBanner
+          isTestMode={isTestMode}
+          testWindow={testWindow}
+          testLockState={testLockState}
+          isStudent={isStudent}
+          submittedAt={activity?.submitted_at}
+          formatRemainingSeconds={formatRemainingSeconds}
+        />
 
-            {isStudent && testLockState.lockedBefore && (
-              <div className="small mt-1">
-                The test has not started yet. It will unlock at the start time.
-              </div>
-            )}
-
-            {isStudent &&
-              !testLockState.lockedBefore &&
-              !testLockState.lockedAfter &&
-              testLockState.remainingSeconds != null && (
-                <div className="small mt-1">
-                  Time remaining:{' '}
-                  <strong>
-                    {formatRemainingSeconds(testLockState.remainingSeconds)}
-                  </strong>
-                </div>
-              )}
-
-            {isStudent && testLockState.lockedAfter && (
-              <div className="small mt-1">
-                The test window is closed
-                {activity?.submitted_at
-                  ? ' and your test has been submitted.'
-                  : '.'}
-              </div>
-            )}
-          </Alert>
-        )}
 
         {renderBlocks(preamble, {
           editable: false,
@@ -2434,167 +2466,88 @@ if (Object.keys(savedFiles).length > 0) {
                   )
                 )}
 
-              {renderBlocks(group.content, {
-                editable,
-                isActive,
-                mode: 'run',
-                prefill: existingAnswers,
-                currentGroupIndex: index,
-                followupsShown,
-                textFeedbackShown,
-                socket,
-                instanceId,
-                answeredBy: user?.id,
-                fileContents,
-                setFileContents: handleUpdateFileContents,
-                onFileChange: handleFileChange,
-                onCodeChange: handleCodeChange,
-                codeFeedbackShown,
-                isInstructor,
-                allowLocalToggle: true,
-                isObserver,
-                codeViewMode,
-                onToggleViewMode: toggleCodeViewMode,
-                localCode,
-                onLocalCodeChange: updateLocalCode,
-                onTextChange: (responseKey, value) => {
-                  // no special FA1 handling; we store anything as text
-                  setExistingAnswers((prev) => ({
-                    ...prev,
-                    [responseKey]: {
-                      ...prev[responseKey],
-                      response: value,
-                      type: 'text',
-                    },
-                  }));
-                  if (isActive && socket) {
-                    socket.emit('response:update', {
-                      instanceId,
-                      responseKey,
-                      value,
-                      answeredBy: user.id,
-                    });
-                  }
-                  setLastEditTs(Date.now());
-                },
+              {group.content.map((block, bIndex) => {
+                // Render this block as usual
+                const renderedBlock = renderBlocks([block], {
+                  editable,
+                  isActive,
+                  mode: 'run',
+                  prefill: existingAnswers,
+                  currentGroupIndex: index,
+                  followupsShown,
+                  textFeedbackShown,
+                  socket,
+                  instanceId,
+                  answeredBy: user?.id,
+                  fileContents,
+                  setFileContents: handleUpdateFileContents,
+                  onFileChange: handleFileChange,
+                  onCodeChange: handleCodeChange,
+                  codeFeedbackShown,
+                  isInstructor,
+                  allowLocalToggle: true,
+                  isObserver,
+                  codeViewMode,
+                  onToggleViewMode: toggleCodeViewMode,
+                  localCode,
+                  onLocalCodeChange: updateLocalCode,
+                  onTextChange: (responseKey, value) => {
+                    // no special FA1 handling; we store anything as text
+                    setExistingAnswers((prev) => ({
+                      ...prev,
+                      [responseKey]: {
+                        ...prev[responseKey],
+                        response: value,
+                        type: 'text',
+                      },
+                    }));
+                    if (isActive && socket) {
+                      socket.emit('response:update', {
+                        instanceId,
+                        responseKey,
+                        value,
+                        answeredBy: user.id,
+                      });
+                    }
+                    setLastEditTs(Date.now());
+                  },
+                });
+
+                // If not test mode or not a question block, just return it
+                if (!isTestMode || block.type !== 'question') {
+                  return (
+                    <div key={`group-${index}-block-${bIndex}`}>
+                      {renderedBlock}
+                    </div>
+                  );
+                }
+
+                // Question block in test mode: attach scores panel right under it
+                const qid = `${block.groupId}${block.id}`;
+                globalQuestionCounter += 1;
+                const scores = getQuestionScores(qid, block);
+
+                const allowEdit =
+                  isTestMode && isInstructor && isSubmitted;
+
+                return (
+                  <div
+                    key={`group-${index}-block-${bIndex}`}
+                    className="mb-2"
+                  >
+                    {renderedBlock}
+
+                    <QuestionScorePanel
+                      qid={qid}
+                      displayNumber={globalQuestionCounter}
+                      scores={scores}
+                      allowEdit={allowEdit}
+                      onSave={handleSaveQuestionScores}
+                    />
+                  </div>
+                );
               })}
 
-              {/* Show per-question scores + AI explanations in TEST MODE */}
-              {isTestMode && (
-                <div className="mt-3">
-                  {group.content
-                    .filter((b) => b.type === 'question')
-                    .map((b) => {
-                      const qid = `${b.groupId}${b.id}`;
-                      globalQuestionCounter += 1;                 // 👈 NEW
-                      const displayNumber = globalQuestionCounter; // e.g., 1, 2, 3, ...
-                      const {
-                        hasAnyScore,
-                        respScore,
-                        codeScore,
-                        runScore,
-                        respExplain,
-                        codeExplain,
-                        runExplain,
-                        maxCode,
-                        maxRun,
-                        maxResp,
-                        earnedTotal,
-                        maxTotal,
-                      } = getQuestionScores(qid, b);
-
-                      if (!hasAnyScore) return null;
-
-                      // Safe numeric fallbacks
-                      const wEarn = Number.isFinite(respScore) ? respScore : 0;
-                      const rEarn = Number.isFinite(runScore) ? runScore : 0;
-                      const cEarn = Number.isFinite(codeScore) ? codeScore : 0;
-
-                      const wBand =
-                        maxResp > 0
-                          ? `Written ${wEarn}/${maxResp}`
-                          : respScore != null
-                            ? `Written ${wEarn}`
-                            : null;
-
-                      const rBand =
-                        maxRun > 0
-                          ? `Run ${rEarn}/${maxRun}`
-                          : runScore != null
-                            ? `Run ${rEarn}`
-                            : null;
-
-                      const cBand =
-                        maxCode > 0
-                          ? `Code ${cEarn}/${maxCode}`
-                          : codeScore != null
-                            ? `Code ${cEarn}`
-                            : null;
-
-                      const bandSummary = [wBand, rBand, cBand]
-                        .filter(Boolean)
-                        .join(' · ');
-
-                      const totalEarn = Number.isFinite(earnedTotal)
-                        ? earnedTotal
-                        : 0;
-                      const totalMax = Number.isFinite(maxTotal) ? maxTotal : 0;
-
-                      const totalSummary =
-                        totalMax > 0
-                          ? `${totalEarn}/${totalMax}`
-                          : `${totalEarn}`;
-
-                      return (
-                        <div
-                          key={`${qid}-scores`}
-                          className="mt-2 p-2 border rounded bg-light"
-                        >
-                          <div>
-                            <strong>Question {displayNumber} – Total: </strong>
-                            {totalSummary}
-                          </div>
-
-                          {bandSummary && (
-                            <div className="small">
-                              <strong>Components:</strong>{' '}
-                              <span style={{ whiteSpace: 'pre-wrap' }}>
-                                {bandSummary}
-                              </span>
-                            </div>
-                          )}
-
-                          {respExplain && (
-                            <div className="mt-1 small">
-                              <strong>Written feedback:</strong>{' '}
-                              <span style={{ whiteSpace: 'pre-wrap' }}>
-                                {respExplain}
-                              </span>
-                            </div>
-                          )}
-
-                          {runExplain && (
-                            <div className="mt-1 small">
-                              <strong>Run/output feedback:</strong>{' '}
-                              <span style={{ whiteSpace: 'pre-wrap' }}>
-                                {runExplain}
-                              </span>
-                            </div>
-                          )}
-
-                          {codeExplain && (
-                            <div className="mt-1 small">
-                              <strong>Code feedback:</strong>{' '}
-                              <span style={{ whiteSpace: 'pre-wrap' }}>
-                                {codeExplain}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                </div>
-              )}
 
               {editable && (
                 <div className="mt-2">
@@ -2669,57 +2622,15 @@ if (Object.keys(savedFiles).length > 0) {
         </div>
       )}
 
-      {DEBUG_FILES && (
-        <div className="small text-muted" style={{ whiteSpace: 'pre-wrap' }}>
-          <strong>🧪 Files:</strong>{' '}
-          {Object.keys(fileContents).length === 0
-            ? '(none)'
-            : Object.entries(fileContents)
-              .map(([k, v]) => `${k}(${(v ?? '').length})`)
-              .join(', ')}
-        </div>
-      )}
+      <RunActivityFloatingTimer
+        isTestMode={isTestMode}
+        isStudent={isStudent}
+        testWindow={testWindow}
+        testLockState={testLockState}
+        submittedAt={activity?.submitted_at}
+        formatRemainingSeconds={formatRemainingSeconds}
+      />
 
-      {/* Floating test timer — always visible for students in test mode */}
-      {isTestMode && isStudent && testWindow && (
-        <div
-          style={{
-            position: 'fixed',
-            top: '70px',      // below the navbar
-            right: '16px',
-            zIndex: 1050,     // above page content but below modals
-          }}
-        >
-          <div className="bg-dark text-white px-3 py-2 rounded shadow-sm small">
-            {testLockState.lockedBefore && (
-              <>
-                <div className="fw-bold">Test starts in</div>
-                {testLockState.remainingSeconds != null && (
-                  <div>{formatRemainingSeconds(testLockState.remainingSeconds)}</div>
-                )}
-              </>
-            )}
-
-            {!testLockState.lockedBefore &&
-              !testLockState.lockedAfter &&
-              testLockState.remainingSeconds != null && (
-                <>
-                  <div className="fw-bold">Time remaining</div>
-                  <div>{formatRemainingSeconds(testLockState.remainingSeconds)}</div>
-                </>
-              )}
-
-            {testLockState.lockedAfter && (
-              <>
-                <div className="fw-bold">Test closed</div>
-                {activity?.submitted_at && (
-                  <div className="mt-1">Your test has been submitted.</div>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-      )}
     </>
   );
 }
