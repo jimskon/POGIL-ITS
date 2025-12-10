@@ -8,6 +8,8 @@ export async function runSkulptCode({
   turtleTargetId = null,
   turtleWidth = 600,
   turtleHeight = 400,
+  // 👇 NEW: callback that lets the caller broadcast file writes
+  onFileWrite = null,
 }) {
   setOutput('');
 
@@ -105,11 +107,22 @@ def open(filename, mode='r'):
         if (spaceIndex !== -1) {
           const filename = payload.slice(0, spaceIndex);
           const content = payload.slice(spaceIndex + 1);
+
+          // ✅ update local fileContents for this client
           if (setFileContents) {
             setFileContents((prev) => ({
               ...prev,
               [filename]: content,
             }));
+          }
+
+          // ✅ NEW: let caller broadcast / mirror to others (no DB)
+          if (typeof onFileWrite === 'function') {
+            try {
+              onFileWrite(filename, content);
+            } catch (err) {
+              console.error('onFileWrite error:', err);
+            }
           }
         }
       } else {

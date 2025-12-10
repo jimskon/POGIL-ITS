@@ -509,11 +509,11 @@ async function submitGroupResponses(req, res) {
 
   try {
     const responseMap = new Map();
-
     const grouped = {};
 
+    // Group answers by base question id (e.g., 2a from 2aFA1)
     for (const [qid, value] of Object.entries(answers)) {
-      const baseMatch = qid.match(/^([0-9]+[a-zA-Z])/); // e.g., 2a from 2aFA1
+      const baseMatch = qid.match(/^([0-9]+[a-zA-Z])/); // 2a from 2aFA1
       const base = baseMatch ? baseMatch[1] : null;
       if (!base) continue;
 
@@ -521,6 +521,7 @@ async function submitGroupResponses(req, res) {
       grouped[base][qid] = value;
     }
 
+    // Build response map + per-question state (2aS) + group state (2state, 3state, ...)
     for (const [base, group] of Object.entries(grouped)) {
       let hasMain = false;
       let allFollowupsAnswered = true;
@@ -528,7 +529,9 @@ async function submitGroupResponses(req, res) {
       for (const [qid, value] of Object.entries(group)) {
         responseMap.set(qid, value);
 
-        if (qid === base && value.trim().length > 0) hasMain = true;
+        if (qid === base && value.trim().length > 0) {
+          hasMain = true;
+        }
 
         const fMatch = qid.match(/^([0-9]+[a-zA-Z])F(\d+)$/);
         if (fMatch) {
@@ -542,8 +545,10 @@ async function submitGroupResponses(req, res) {
 
       const isComplete = hasMain && allFollowupsAnswered;
 
+      // Per-question completion marker (e.g., 2aS)
       responseMap.set(`${base}S`, isComplete ? 'completed' : 'inprogress');
 
+      // Per-group completion marker (e.g., 2state)
       const groupNum = base.match(/^(\d+)/)?.[1];
       if (groupNum) {
         const groupStateKey = `${groupNum}state`;
@@ -555,6 +560,7 @@ async function submitGroupResponses(req, res) {
       }
     }
 
+    // Upsert all responses
     for (const [qid, response] of responseMap.entries()) {
       await db.query(
         `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
@@ -564,6 +570,53 @@ async function submitGroupResponses(req, res) {
       );
     }
 
+    // 🔹 NEW: recompute cached group progress for this instance
+    // This is per-instance only, so cheap even if we hit responses.
+    const [[meta]] = await db.query(
+      `SELECT total_groups FROM activity_instances WHERE id = ?`,
+      [instanceId]
+    );
+
+    const totalGroups = meta?.total_groups || 0;
+
+    let completedGroups = 0;
+    if (totalGroups > 0) {
+      const [stateRows] = await db.query(
+        `SELECT question_id, response
+         FROM responses
+         WHERE activity_instance_id = ?
+           AND question_id REGEXP '^[0-9]+state$'`,
+        [instanceId]
+      );
+
+      const stateMap = new Map(
+        stateRows.map(r => [r.question_id, r.response])
+      );
+
+      for (let i = 1; i <= totalGroups; i++) {
+        const key = `${i}state`;
+        if (stateMap.get(key) === 'completed') {
+          completedGroups++;
+        } else {
+          // Assume groups are sequential; stop at first incomplete
+          break;
+        }
+      }
+    }
+
+    let progressStatus = 'in_progress';
+    if (totalGroups > 0 && completedGroups >= totalGroups) {
+      progressStatus = 'completed';
+    }
+
+    await db.query(
+      `UPDATE activity_instances
+       SET completed_groups = ?, progress_status = ?
+       WHERE id = ?`,
+      [completedGroups, progressStatus, instanceId]
+    );
+
+    // 🔄 Rotate active student among connected members (unchanged)
     const [connected] = await db.query(
       `SELECT student_id FROM group_members WHERE activity_instance_id = ? AND connected = true`,
       [instanceId]
@@ -586,6 +639,7 @@ async function submitGroupResponses(req, res) {
     res.status(500).json({ error: 'Failed to save responses' });
   }
 }
+
 
 async function getInstanceGroups(req, res) {
   const { instanceId } = req.params;
@@ -1114,12 +1168,17 @@ async function submitTest(req, res) {
     await upsertTotal('testMaxScore', totalMaxPoints);
     await upsertTotal('testSummary', summaryText);
 
-    // NEW: mark instance as submitted
+    // NEW: cache overall scores on the activity_instance itself
     await conn.query(
       `UPDATE activity_instances
-       SET submitted_at = NOW()
+       SET
+         points_earned    = ?,
+         points_possible  = ?,
+         progress_status  = 'completed',
+         is_test          = 1,
+         submitted_at     = NOW()
        WHERE id = ?`,
-      [instanceId]
+      [totalEarnedPoints, totalMaxPoints, instanceId]
     );
 
     await conn.commit();
@@ -1138,6 +1197,7 @@ async function submitTest(req, res) {
     conn.release();
   }
 }
+
 
 
 // Export it as part of the module

@@ -21,9 +21,8 @@ import ForgotPasswordPage from '../pages/ForgotPasswordPage';
 import ResetPasswordPage from '../pages/ResetPasswordPage';
 import ManageCourseStudentsPage from '../pages/ManageCourseStudentsPage';
 import ManageCourseProgressPage from '../pages/ManageCourseProgressPage';
+import ManageCourseTestsPage from '../pages/ManageCourseTestsPage'; // 👈 NEW
 import { useLocation } from 'react-router-dom';
-
-
 
 function AppRoutes() {
   const { user } = useUser();
@@ -34,7 +33,6 @@ function AppRoutes() {
   const [statusText, setStatusText] = React.useState("");
   const [groupMembers, setGroupMembers] = React.useState([]);
   const [activeStudentId, setActiveStudentId] = React.useState(null);
-
 
   return (
     <>
@@ -57,7 +55,19 @@ function AppRoutes() {
         <Route path="/preview/:activityId" element={<ActivityPreview />} />
         <Route path="/admin/users" element={<AdminUsersPage />} />
         <Route path="/courses/:courseId/activities" element={<CourseActivitiesPage />} />
-        <Route path="/run/:instanceId" element={<RunActivityPage setRoleLabel={setRoleLabel} setStatusText={setStatusText} groupMembers={groupMembers} setGroupMembers={setGroupMembers} activeStudentId={activeStudentId} setActiveStudentId={setActiveStudentId} />} />
+        <Route
+          path="/run/:instanceId"
+          element={
+            <RunActivityPage
+              setRoleLabel={setRoleLabel}
+              setStatusText={setStatusText}
+              groupMembers={groupMembers}
+              setGroupMembers={setGroupMembers}
+              activeStudentId={activeStudentId}
+              setActiveStudentId={setActiveStudentId}
+            />
+          }
+        />
         <Route path="/setup-groups/:courseId/:activityId" element={<GroupSetupPage />} />
         <Route path="/view-groups/:courseId/:activityId" element={<ViewGroupsPage />} />
         <Route path="/editor/:activityId" element={<ActivityEditor />} />
@@ -66,7 +76,7 @@ function AppRoutes() {
         <Route path="/reset-password" element={<ResetPasswordPage />} />
         <Route path="/courses/:courseId/students" element={<ManageCourseStudentsPage />} />
         <Route path="/courses/:courseId/progress" element={<ManageCourseProgressPage />} />
-
+        <Route path="/courses/:courseId/tests" element={<ManageCourseTestsPage />} /> {/* 👈 NEW */}
       </Routes>
     </>
   );

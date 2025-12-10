@@ -109,6 +109,7 @@ export default function FileBlock({
   fileContents,
   editable,
   setFileContents,
+  onFileChange,           // 👈 NEW
 }) {
   // Use live value from fileContents if present, otherwise fall back to initialContent
   const effective =
@@ -168,6 +169,11 @@ export default function FileBlock({
         [filename]: updated,
       }));
     }
+
+    // 👇 NEW: notify parent so it can broadcast / persist
+    if (onFileChange) {
+      onFileChange(updated);
+    }
   };
 
   // TAB inserts tab; ENTER auto-indents
@@ -224,7 +230,6 @@ export default function FileBlock({
     }
   };
 
-  // 👉 THIS is the `return (` I meant
   return (
     <div className="mb-3">
       <strong>
@@ -243,9 +248,6 @@ export default function FileBlock({
     </div>
   );
 }
-
-
-
 
 
 
@@ -1000,6 +1002,7 @@ export function renderBlocks(blocks, options = {}) {
     fileContents,
     setFileContents,
     textFeedbackShown = {},
+    onFileChange = null,
   } = options;
 
   let standaloneCodeCounter = 1;
@@ -1131,17 +1134,36 @@ export function renderBlocks(blocks, options = {}) {
     if (block.type === 'file') {
       const isReadonly = !!block.readonly;
 
+      // All file editing is local-only, per user.
+      // fileContents/setFileContents live only in this client,
+      // are NOT synced via socket or saved to the DB.
+      const filename = block.filename;
+      const canonicalContents = fileContents || {};
+      const initialContent = block.content || '';
+
+      // What this user currently has in memory
+      const effectiveContent =
+        Object.prototype.hasOwnProperty.call(canonicalContents, filename)
+          ? canonicalContents[filename]
+          : initialContent;
+
+      // Everyone can edit non-readonly files, regardless of active/observer
+      const canEdit = !isReadonly;
+
       return (
-        <FileBlock
-          key={`file-${block.filename}-${index}`}
-          filename={block.filename}
-          initialContent={block.content || ''}
-          fileContents={fileContents}
-          setFileContents={setFileContents}
-          editable={!isReadonly}   // 👈 IGNORE global editable flag
-        />
+        <div key={`file-wrap-${block.filename}-${index}`} className="mb-3">
+          <FileBlock
+            filename={block.filename}
+            initialContent={effectiveContent}
+            fileContents={canonicalContents}
+            setFileContents={setFileContents}
+            editable={canEdit}
+            // no onFileChange → files remain local-only, never broadcast/persisted
+          />
+        </div>
       );
     }
+
 
 
 

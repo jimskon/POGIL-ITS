@@ -349,7 +349,7 @@ async function getCourseProgress(req, res) {
 
   try {
     // 1) Get enrolled students
-    const [students] = await db.query(
+    const [studentsRows] = await db.query(
       `SELECT u.id, u.name, u.email
        FROM course_enrollments ce
        JOIN users u ON ce.student_id = u.id
@@ -357,168 +357,130 @@ async function getCourseProgress(req, res) {
       [courseId]
     );
 
-    // 2) Get all activities for the course (via class_id), include is_test flag
-    const [activities] = await db.query(
+    // 2) Get NON-TEST activities for this course's class_id
+    const [activitiesRows] = await db.query(
       `SELECT id, name, COALESCE(is_test, 0) AS is_test
        FROM pogil_activities
        WHERE class_id = (
          SELECT class_id FROM courses WHERE id = ?
        )
+         AND COALESCE(is_test, 0) = 0   -- only regular activities
        ORDER BY order_index`,
       [courseId]
     );
 
-    // 3) Pull instances + group membership + responses for this course
-    const [rows] = await db.query(
+    // 3) Pull cached instance progress for these activities in this course
+    const [instanceRows] = await db.query(
       `
       SELECT
-        ai.id            AS instance_id,
-        ai.activity_id   AS activity_id,
-        ai.total_groups  AS total_groups,
-        a.is_test        AS is_test,
-        gm.student_id    AS student_id,
-        r.question_id    AS question_id,
-        r.response       AS response
+        ai.activity_id,
+        ai.total_groups,
+        ai.completed_groups,
+        ai.progress_status,
+        gm.student_id
       FROM activity_instances ai
       JOIN pogil_activities a ON a.id = ai.activity_id
       JOIN group_members gm   ON gm.activity_instance_id = ai.id
-      LEFT JOIN responses r   ON r.activity_instance_id = ai.id
       WHERE ai.course_id = ?
+        AND COALESCE(a.is_test, 0) = 0
       `,
       [courseId]
     );
 
-    // 4) Initialize per-student structure
+    // 4) Build per-student structure
     const progressByStudent = new Map();
-    for (const s of students) {
+    for (const s of studentsRows) {
       progressByStudent.set(s.id, {
         id: s.id,
         name: s.name,
         email: s.email,
         completeCount: 0,
         partialCount: 0,
-        // activityId -> { status, isTest, completedGroups, totalGroups, pointsEarned, pointsPossible }
+        // activityId -> { status, completedGroups, totalGroups }
         progress: {}
       });
     }
 
-    const ensureStudentActivity = (studentId, activityId, isTest, totalGroups) => {
-      const student = progressByStudent.get(studentId);
-      if (!student) return null;
-
-      if (!student.progress[activityId]) {
-        student.progress[activityId] = {
-          status: 'not_started',
-          isTest: !!isTest,
-          completedGroups: 0,
-          totalGroups: totalGroups || 0,
-          pointsEarned: 0,
-          pointsPossible: 0
-        };
-      } else {
-        // If we didn't know totalGroups yet, fill it in from this instance
-        if (!student.progress[activityId].totalGroups && totalGroups) {
-          student.progress[activityId].totalGroups = totalGroups;
-        }
-      }
-      return student.progress[activityId];
+    // Helper to choose the "better" progress if we ever see multiple instances
+    const statusRank = {
+      not_started: 0,
+      in_progress: 1,
+      completed: 2,
     };
 
-    // 5) Aggregate group-state + test scores from responses
-    for (const row of rows) {
+    function betterProgress(a, b) {
+      if (!a) return b;
+      if (!b) return a;
+      const ra = statusRank[a.status] ?? 0;
+      const rb = statusRank[b.status] ?? 0;
+      if (rb > ra) return b;
+      if (rb < ra) return a;
+      // same status: prefer the one with more completedGroups
+      if ((b.completedGroups || 0) > (a.completedGroups || 0)) return b;
+      return a;
+    }
+
+    // 5) Fill per-student per-activity from cached instance rows
+    for (const row of instanceRows) {
       const {
         student_id,
         activity_id,
-        is_test,
         total_groups,
-        question_id,
-        response,
+        completed_groups,
+        progress_status,
       } = row;
 
-      const prog = ensureStudentActivity(
-        student_id,
-        activity_id,
-        is_test,
-        total_groups
-      );
-      if (!prog || !question_id || response == null) continue;
+      const student = progressByStudent.get(student_id);
+      if (!student) continue;
 
-      // For non-test activities: group completion markers like "1state", "2state", ...
-      const groupStateMatch = question_id.match(/^(\d+)state$/);
-      if (groupStateMatch) {
-        if (response === 'completed') {
-          prog.completedGroups += 1;
-        }
-        continue;
-      }
+      const status =
+        progress_status ||
+        (completed_groups && total_groups && completed_groups >= total_groups
+          ? 'completed'
+          : completed_groups > 0
+          ? 'in_progress'
+          : 'not_started');
 
-      // For tests: store overall totals written by submitTest()
-      if (question_id === 'testTotalScore') {
-        const pts = Number(response) || 0;
-        prog.pointsEarned = Math.max(prog.pointsEarned, pts);
-        continue;
-      }
-      if (question_id === 'testMaxScore') {
-        const pts = Number(response) || 0;
-        prog.pointsPossible = Math.max(prog.pointsPossible, pts);
-        continue;
-      }
+      const entry = {
+        status,
+        completedGroups: completed_groups || 0,
+        totalGroups: total_groups || 0,
+      };
+
+      const existing = student.progress[activity_id];
+      student.progress[activity_id] = betterProgress(existing, entry);
     }
 
-    // 6) Derive status + complete/partial counters per student & activity
-    //    We also make sure every activity appears for every student.
+    // 6) Ensure every activity has an entry for every student,
+    //    and compute complete/partial counts.
     for (const student of progressByStudent.values()) {
-      for (const a of activities) {
+      for (const a of activitiesRows) {
         const actId = a.id;
-        const isTest = !!a.is_test;
-        const prog = student.progress[actId];
+        let prog = student.progress[actId];
 
         if (!prog) {
-          // default slot for not-started activity
-          student.progress[actId] = {
+          prog = {
             status: 'not_started',
-            isTest,
             completedGroups: 0,
             totalGroups: 0,
-            pointsEarned: 0,
-            pointsPossible: 0
           };
-          continue;
+          student.progress[actId] = prog;
         }
 
-        prog.isTest = isTest;
-
-        if (isTest) {
-          if (prog.pointsPossible > 0) {
-            // If the test was graded at all, treat it as "completed"
-            prog.status = 'completed';
-            student.completeCount += 1;
-          } else {
-            prog.status = 'not_started';
-          }
-        } else {
-          const tg = prog.totalGroups || 0;
-          const cg = prog.completedGroups || 0;
-
-          if (tg > 0 && cg >= tg) {
-            prog.status = 'completed';
-            student.completeCount += 1;
-          } else if (cg > 0) {
-            prog.status = 'in_progress';
-            student.partialCount += 1;
-          } else {
-            prog.status = 'not_started';
-          }
+        if (prog.status === 'completed') {
+          student.completeCount += 1;
+        } else if (prog.status === 'in_progress') {
+          student.partialCount += 1;
         }
       }
     }
 
     // 7) Shape response
     res.json({
-      activities: activities.map(a => ({
+      activities: activitiesRows.map(a => ({
         id: a.id,
         name: a.name,
-        isTest: !!a.is_test
+        isTest: false, // we filtered them out
       })),
       students: Array.from(progressByStudent.values()),
     });
@@ -527,6 +489,170 @@ async function getCourseProgress(req, res) {
     res.status(500).json({ error: "Failed to get student progress" });
   }
 }
+// GET test results for a course (only test activities)
+// Shape:
+// {
+//   tests: [{ id, name }],
+//   students: [
+//     {
+//       id, name, email,
+//       scores: {
+//         [testId]: { status, pointsEarned, pointsPossible }
+//       }
+//     }
+//   ]
+// }
+async function getCourseTestResults(req, res) {
+  const { courseId } = req.params;
+
+  try {
+    // 1) Enrolled students
+    const [studentsRows] = await db.query(
+      `SELECT u.id, u.name, u.email
+       FROM course_enrollments ce
+       JOIN users u ON ce.student_id = u.id
+       WHERE ce.course_id = ?`,
+      [courseId]
+    );
+
+    // 2) Test activities for this course's class_id
+    const [testsRows] = await db.query(
+      `SELECT id, name, COALESCE(is_test, 0) AS is_test
+       FROM pogil_activities
+       WHERE class_id = (
+         SELECT class_id FROM courses WHERE id = ?
+       )
+         AND COALESCE(is_test, 0) = 1
+       ORDER BY order_index`,
+      [courseId]
+    );
+
+    if (testsRows.length === 0) {
+      return res.json({ tests: [], students: [] });
+    }
+
+    // 3) Pull cached test instance scores for this course
+    const [instanceRows] = await db.query(
+      `
+      SELECT
+        ai.activity_id,
+        ai.points_earned,
+        ai.points_possible,
+        ai.progress_status,
+        gm.student_id
+      FROM activity_instances ai
+      JOIN pogil_activities a ON a.id = ai.activity_id
+      JOIN group_members gm   ON gm.activity_instance_id = ai.id
+      WHERE ai.course_id = ?
+        AND COALESCE(a.is_test, 0) = 1
+      `,
+      [courseId]
+    );
+
+    // 4) Build per-student structure
+    const resultsByStudent = new Map();
+    for (const s of studentsRows) {
+      resultsByStudent.set(s.id, {
+        id: s.id,
+        name: s.name,
+        email: s.email,
+        // testId -> { status, pointsEarned, pointsPossible }
+        scores: {}
+      });
+    }
+
+    const statusRank = {
+      not_started: 0,
+      in_progress: 1,
+      completed: 2,
+    };
+
+    function betterScore(a, b) {
+      if (!a) return b;
+      if (!b) return a;
+
+      const ra = statusRank[a.status] ?? 0;
+      const rb = statusRank[b.status] ?? 0;
+
+      if (rb > ra) return b;
+      if (rb < ra) return a;
+
+      // Same status: prefer the one with higher pointsEarned
+      const aEarned = a.pointsEarned ?? 0;
+      const bEarned = b.pointsEarned ?? 0;
+      if (bEarned > aEarned) return b;
+
+      // As a tie-breaker, prefer higher pointsPossible (fully graded)
+      const aPossible = a.pointsPossible ?? 0;
+      const bPossible = b.pointsPossible ?? 0;
+      if (bPossible > aPossible) return b;
+
+      return a;
+    }
+
+    // 5) Fill per-student per-test from cached instance rows
+    for (const row of instanceRows) {
+      const {
+        student_id,
+        activity_id,
+        points_earned,
+        points_possible,
+        progress_status,
+      } = row;
+
+      const student = resultsByStudent.get(student_id);
+      if (!student) continue;
+
+      let status = progress_status || 'not_started';
+
+      // If we have pointsPossible > 0, treat as graded/complete
+      if (!status || status === 'in_progress') {
+        if (points_possible && points_possible > 0) {
+          status = 'completed';
+        } else if (points_earned && points_earned > 0) {
+          status = 'in_progress';
+        } else {
+          status = 'not_started';
+        }
+      }
+
+      const entry = {
+        status,
+        pointsEarned: points_earned != null ? Number(points_earned) : null,
+        pointsPossible: points_possible != null ? Number(points_possible) : null,
+      };
+
+      const existing = student.scores[activity_id];
+      student.scores[activity_id] = betterScore(existing, entry);
+    }
+
+    // 6) Ensure every test has a slot for every student
+    for (const student of resultsByStudent.values()) {
+      for (const t of testsRows) {
+        const testId = t.id;
+        if (!student.scores[testId]) {
+          student.scores[testId] = {
+            status: 'not_started',
+            pointsEarned: null,
+            pointsPossible: null,
+          };
+        }
+      }
+    }
+
+    res.json({
+      tests: testsRows.map(t => ({
+        id: t.id,
+        name: t.name,
+      })),
+      students: Array.from(resultsByStudent.values()),
+    });
+  } catch (err) {
+    console.error("❌ Failed to load test results:", err);
+    res.status(500).json({ error: "Failed to get test results" });
+  }
+}
+
 
 module.exports = {
   getAllCourses,
@@ -539,5 +665,6 @@ module.exports = {
   getStudentsForCourse,
   unenrollStudentFromCourse,
   getCourseInfo,
-  getCourseProgress    // ← this must be listed
+  getCourseProgress,
+  getCourseTestResults
 };

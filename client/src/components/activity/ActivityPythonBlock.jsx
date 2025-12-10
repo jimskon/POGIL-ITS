@@ -158,17 +158,26 @@ export default function ActivityPythonBlock({
     const currentFiles = { ...fileContents };
 
     runSkulptCode({
-      code: finalCode,
-      fileContents: currentFiles,
-      setOutput: setOutputText,
+      code: finalCode,          // ← use merged code
+      fileContents,
+      setOutput: setOutputText, // ← FIX: pass the actual setter
       setFileContents,
-      execLimit: timeLimit || 50000,
+      execLimit: timeLimit,
       turtleTargetId,
       turtleWidth,
       turtleHeight,
+      onFileWrite: (filename, content) => {
+        if (socket && instanceId) {
+          socket.emit('file:update', {
+            instanceId,
+            fileKey: `file:${filename}`,
+            filename,
+            value: content,
+          });
+        }
+      },
     });
   };
-
 
 
   const handleDoneEditing = () => {

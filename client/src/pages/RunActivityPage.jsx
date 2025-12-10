@@ -282,6 +282,32 @@ export default function RunActivityPage({
     console.log('[RUN] testWindow:', testWindow);
   }, [testWindow]);
 
+  useEffect(() => {
+    if (!socket || !instanceId) return;
+
+    const handleFileUpdate = ({ instanceId: msgId, filename, value }) => {
+      if (String(msgId) !== String(instanceId)) return;
+
+      setFileContents((prev) => {
+        const updated = { ...prev, [filename]: value };
+        fileContentsRef.current = updated;
+
+        if (DEBUG_FILES) {
+          console.debug(
+            `[${PAGE_TAG}] socket file:update → ${filename}: ${(prev[filename] ?? '').length}→${(value ?? '').length}`
+          );
+        }
+
+        return updated;
+      });
+    };
+
+    socket.on('file:update', handleFileUpdate);
+    return () => {
+      socket.off('file:update', handleFileUpdate);
+    };
+  }, [socket, instanceId]);
+
   /* useEffect(() => {
      if (!isTestMode || !testWindow) {
        setTestLockState({
@@ -377,17 +403,89 @@ export default function RunActivityPage({
       const after = Object.fromEntries(
         Object.entries(updated).map(([k, v]) => [k, (v ?? '').length])
       );
+
+      const changed = Object.keys(after).filter((k) => before[k] !== after[k]);
+
       if (DEBUG_FILES) {
-        const changed = Object.keys(after).filter((k) => before[k] !== after[k]);
         console.debug(
           `[${PAGE_TAG}] handleUpdateFileContents → changed:`,
           changed.map((k) => `${k}: ${before[k] ?? 0}→${after[k]}`)
         );
       }
+
       fileContentsRef.current = updated;
+
+      // 🔄 Broadcast programmatic changes (Python writes)
+      if (isActive && socket && instanceId && changed.length > 0) {
+        changed.forEach((filename) => {
+          socket.emit('file:update', {
+            instanceId,
+            fileKey: `file:${filename}`,
+            filename,
+            value: updated[filename] ?? '',
+          });
+        });
+      }
+
+      // 💾 NEW: persist programmatic writes too
+      if (isActive && instanceId && user?.id && changed.length > 0) {
+        const answers = {};
+        changed.forEach((filename) => {
+          answers[`file:${filename}`] = updated[filename] ?? '';
+        });
+
+        fetch(`${API_BASE_URL}/api/responses/bulk-save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            instanceId,
+            userId: user.id,
+            answers,
+          }),
+        }).catch(() => { });
+      }
+
       return updated;
     });
   };
+
+  // For manual edits in <FileBlock> textareas
+  // For manual edits in <FileBlock> textareas
+  const handleFileChange = (fileKey, newText, meta = {}) => {
+    const filename = meta.filename || fileKey;
+
+    // Update local canonical file contents
+    setFileContents((prev) => {
+      const updated = { ...prev, [filename]: newText };
+      fileContentsRef.current = updated;
+
+      if (DEBUG_FILES) {
+        console.debug(
+          `[${PAGE_TAG}] handleFileChange → ${filename}: ${(prev[filename] ?? '').length}→${(newText ?? '').length}`
+        );
+      }
+
+      return updated;
+    });
+
+    // 🔄 Broadcast live to observers (if your server handles 'file:update')
+    if (isActive && socket && instanceId) {
+      socket.emit('file:update', {
+        instanceId,
+        fileKey,
+        filename,
+        value: newText,
+      });
+    }
+
+    // 💾 NEW: persist file contents in responses table
+    if (isActive && instanceId && user?.id) {
+      // question_id pattern: file:<filename>
+      saveResponse(instanceId, `file:${filename}`, newText).catch(() => { });
+    }
+  };
+
+
 
   useEffect(() => {
     fileContentsRef.current = fileContents;
@@ -678,6 +776,9 @@ export default function RunActivityPage({
     // Only students care about lock state + auto-submit.
     // Instructors can see everything regardless.
     const isSubmitted = !!activity?.submitted_at;
+    let globalQuestionCounter = 0;  // used only for test-mode display labels
+    const displayNumber = globalQuestionCounter; // e.g., 1, 2, 3, ...
+
     const { start, end } = testWindow;
 
     let autoFired = false;
@@ -853,6 +954,32 @@ export default function RunActivityPage({
 
       // 1) Merge into existingAnswers so renderBlocks can prefill
       setExistingAnswers((prev) => ({ ...prev, ...answersData }));
+
+      // 💾 NEW: hydrate fileContents from saved file:<filename> responses
+const savedFiles = {};
+for (const [key, entry] of Object.entries(answersData)) {
+  if (!key.startsWith('file:')) continue;
+  const filename = key.slice('file:'.length);
+  if (!filename) continue;
+  savedFiles[filename] = entry?.response ?? '';
+}
+
+if (Object.keys(savedFiles).length > 0) {
+  setFileContents((prev) => {
+    const updated = { ...prev, ...savedFiles };
+    fileContentsRef.current = updated;
+
+    if (DEBUG_FILES) {
+      console.debug(
+        `[${PAGE_TAG}] hydrate files from DB:`,
+        Object.entries(savedFiles).map(([k, v]) => `${k}(${(v ?? '').length})`)
+      );
+    }
+
+    return updated;
+  });
+}
+
 
       // 2) Restore code feedback (per-code-cell feedback from backend)
       setCodeFeedbackShown((prev) => {
@@ -2136,6 +2263,7 @@ export default function RunActivityPage({
   }
 
   const isSubmitted = !!activity?.submitted_at;
+  let globalQuestionCounter = 0;
 
 
   return (
@@ -2217,6 +2345,7 @@ export default function RunActivityPage({
           prefill: existingAnswers,
           fileContents,
           setFileContents: handleUpdateFileContents,
+          onFileChange: handleFileChange,
         })}
 
         {groups.map((group, index) => {
@@ -2228,14 +2357,14 @@ export default function RunActivityPage({
           // In test mode: editable as long as the student is active and the test isn't locked
           const testEditable =
             isTestMode &&
-            isStudent && 
+            isStudent &&
             !testLockState.lockedBefore &&
             !testLockState.lockedAfter;
 
           const editable = isTestMode
             ? (isStudent && !isSubmitted)
             : (isActive && isCurrent && !isComplete);
-          
+
           console.log('[RUN] group', index, {
             stateKey,
             rawState,
@@ -2318,6 +2447,7 @@ export default function RunActivityPage({
                 answeredBy: user?.id,
                 fileContents,
                 setFileContents: handleUpdateFileContents,
+                onFileChange: handleFileChange,
                 onCodeChange: handleCodeChange,
                 codeFeedbackShown,
                 isInstructor,
@@ -2356,6 +2486,8 @@ export default function RunActivityPage({
                     .filter((b) => b.type === 'question')
                     .map((b) => {
                       const qid = `${b.groupId}${b.id}`;
+                      globalQuestionCounter += 1;                 // 👈 NEW
+                      const displayNumber = globalQuestionCounter; // e.g., 1, 2, 3, ...
                       const {
                         hasAnyScore,
                         respScore,
@@ -2419,7 +2551,7 @@ export default function RunActivityPage({
                           className="mt-2 p-2 border rounded bg-light"
                         >
                           <div>
-                            <strong>Question {qid} – Total: </strong>
+                            <strong>Question {displayNumber} – Total: </strong>
                             {totalSummary}
                           </div>
 
