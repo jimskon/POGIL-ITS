@@ -1,4 +1,4 @@
-//server/activity_instances/controller.js
+// server/activity_instances/controller.js
 const db = require('../db');
 const fetch = require('node-fetch');
 const { JSDOM } = require('jsdom');
@@ -86,22 +86,48 @@ function parseGoogleDocHTML(html) {
   return blocks;
 }
 
+
+// ======== Helpers for timed tests ========
+
+function computeTestWindow(instance) {
+  const { test_start_at, test_duration_minutes, test_reopen_until } = instance || {};
+  if (!test_start_at || !test_duration_minutes) return null;
+
+  const now = new Date();
+  const start = new Date(test_start_at);
+  const baseEnd = new Date(start.getTime() + test_duration_minutes * 60000);
+
+  let end = baseEnd;
+  if (test_reopen_until) {
+    const reopenUntil = new Date(test_reopen_until);
+    if (reopenUntil > end) end = reopenUntil;
+  }
+
+  return { now, start, end };
+}
+
+
 // ========== ROUTE CONTROLLERS ==========
 
-// add near other handlers
+// Clear all responses for an instance and reset submission/reopen info
 async function clearResponsesForInstance(req, res) {
   const instanceId = Number(req.params.instanceId);
   if (!instanceId) return res.status(400).json({ error: 'Bad instance id' });
 
   try {
-    // Delete all saved answers (main, followups, states) for this group (instance)
     const [del] = await db.query(
       `DELETE FROM responses WHERE activity_instance_id = ?`,
       [instanceId]
     );
 
-    // If you keep any cached progress fields, reset them here (optional)
-    // e.g. await db.query(`UPDATE activity_instances SET progress = NULL WHERE id = ?`, [instanceId]);
+    // Reset submission + reopen state so instructor can restart
+    await db.query(
+      `UPDATE activity_instances
+       SET submitted_at = NULL,
+           test_reopen_until = NULL
+       WHERE id = ?`,
+      [instanceId]
+    );
 
     res.json({ ok: true, cleared: del.affectedRows || 0 });
   } catch (e) {
@@ -163,21 +189,40 @@ async function createActivityInstance(req, res) {
 
 async function getActivityInstanceById(req, res) {
   const { id } = req.params;
+
   try {
     const [[instance]] = await db.query(
-      `SELECT ai.id, ai.course_id, ai.activity_id, ai.group_number, a.title AS title, a.name AS activity_name, a.sheet_url
+      `SELECT
+         ai.id,
+         ai.course_id,
+         ai.activity_id,
+         ai.group_number,
+         ai.status,
+         ai.total_groups,
+         ai.test_start_at,
+         ai.test_duration_minutes,
+         ai.test_reopen_until,
+         ai.submitted_at,
+         a.title       AS title,
+         a.name        AS activity_name,
+         a.sheet_url
        FROM activity_instances ai
        JOIN pogil_activities a ON ai.activity_id = a.id
        WHERE ai.id = ?`,
       [id]
     );
-    if (!instance) return res.status(404).json({ error: 'Instance not found' });
+
+    if (!instance) {
+      return res.status(404).json({ error: 'Instance not found' });
+    }
+
     res.json(instance);
   } catch (err) {
-    console.error("❌ Failed to fetch activity instance:", err);
+    console.error('❌ Failed to fetch activity instance:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 }
+
 
 async function getEnrolledStudents(req, res) {
   const { id } = req.params;
@@ -206,7 +251,6 @@ async function recordHeartbeat(req, res) {
   const ACTIVE_WINDOW_SEC = 60; // presence window
 
   try {
-    // 1) Must be a student & a member of THIS instance
     const [[userRow]] = await db.query(`SELECT role FROM users WHERE id = ?`, [userId]);
     if (!userRow || userRow.role !== 'student') {
       return res.json({ success: true, becameActive: false });
@@ -221,7 +265,6 @@ async function recordHeartbeat(req, res) {
       return res.json({ success: true, becameActive: false });
     }
 
-    // 2) Record heartbeat for THIS instance only
     await db.query(
       `UPDATE group_members
        SET last_heartbeat = NOW(), connected = TRUE
@@ -229,14 +272,12 @@ async function recordHeartbeat(req, res) {
       [instanceId, userId]
     );
 
-    // 3) Current active
     const [[inst]] = await db.query(
       `SELECT active_student_id FROM activity_instances WHERE id = ?`,
       [instanceId]
     );
     if (!inst) return res.status(404).json({ error: 'Instance not found' });
 
-    // 4) Is the current active present (fresh heartbeat)?
     let activePresent = false;
     if (inst.active_student_id) {
       const [[row]] = await db.query(
@@ -248,9 +289,7 @@ async function recordHeartbeat(req, res) {
       activePresent = !!row?.present;
     }
 
-    // 5) Only (re)assign when there is no active OR the active is NOT present
     if (!inst.active_student_id || !activePresent) {
-      // Prefer the heartbeating user; otherwise pick any present member
       const [[presentCaller]] = await db.query(
         `SELECT student_id FROM group_members
          WHERE activity_instance_id = ?
@@ -282,17 +321,12 @@ async function recordHeartbeat(req, res) {
       }
     }
 
-    // Otherwise keep the current active as-is
     return res.json({ success: true, becameActive: false, activeStudentId: inst.active_student_id });
   } catch (err) {
     console.error("❌ recordHeartbeat error:", err);
     return res.status(500).json({ error: 'Failed to record heartbeat' });
   }
 }
-
-
-
-
 
 
 // In getActiveStudent function in controller.js
@@ -326,7 +360,7 @@ async function rotateActiveStudent(req, res) {
 
   const [members] = await db.query(
     `SELECT student_id FROM group_members
-   WHERE activity_instance_id = ? AND connected = TRUE`,
+     WHERE activity_instance_id = ? AND connected = TRUE`,
     [instanceId]
   );
 
@@ -344,13 +378,18 @@ async function rotateActiveStudent(req, res) {
     console.error("❌ rotateActiveStudent:", err);
     res.status(500).json({ error: 'Failed to rotate' });
   }
-
-
 }
 
-// Body: { activityId, courseId, groups: [ { members: [ { student_id, role } ] } ] }
+
+// Body: { activityId, courseId, groups: [ { members: [ { student_id, role } ] } ], testStartAt?, testDurationMinutes? }
 async function setupMultipleGroupInstances(req, res) {
-  const { activityId, courseId, groups } = req.body;
+  const {
+    activityId,
+    courseId,
+    groups,
+    testStartAt,
+    testDurationMinutes
+  } = req.body;
 
   if (!activityId || !courseId || !Array.isArray(groups)) {
     return res.status(400).json({ error: 'activityId, courseId, and groups are required' });
@@ -359,6 +398,37 @@ async function setupMultipleGroupInstances(req, res) {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+
+    // Look up whether this activity is a test
+    const [[activityRow]] = await conn.query(
+      `SELECT is_test FROM pogil_activities WHERE id = ?`,
+      [activityId]
+    );
+
+    // Treat either a DB flag *or* explicit timing info as "this is a test".
+    let isTest = !!activityRow?.is_test;
+    if (testStartAt && Number(testDurationMinutes) > 0) {
+      isTest = true;
+    }
+
+    // 🔹 Normalize incoming testStartAt (ISO) -> MySQL DATETIME string
+    let testStartForDb = null;
+    let effectiveDuration = 0;
+
+    if (isTest && testStartAt && Number(testDurationMinutes) > 0) {
+      const d = new Date(testStartAt);            // parses "2025-12-04T01:37:00.000Z" etc.
+      if (!Number.isNaN(d.getTime())) {
+        // store as UTC in "YYYY-MM-DD HH:MM:SS"
+        testStartForDb = d.toISOString().slice(0, 19).replace('T', ' ');
+        effectiveDuration = Number(testDurationMinutes);
+      }
+    }
+
+    // Keep pogil_activities.is_test in sync (no sheet parsing on the server).
+    await conn.query(
+      `UPDATE pogil_activities SET is_test = ? WHERE id = ?`,
+      [isTest ? 1 : 0, activityId]
+    );
 
     // Remove existing instances + members for this course+activity
     const [oldInstances] = await conn.query(
@@ -384,9 +454,16 @@ async function setupMultipleGroupInstances(req, res) {
       const group_number = i + 1;
 
       const [instanceResult] = await conn.query(
-        `INSERT INTO activity_instances (course_id, activity_id, status, group_number)
-         VALUES (?, ?, 'in_progress', ?)`,
-        [courseId, activityId, group_number]
+        `INSERT INTO activity_instances
+           (course_id, activity_id, status, group_number, test_start_at, test_duration_minutes)
+         VALUES (?, ?, 'in_progress', ?, ?, ?)`,
+        [
+          courseId,
+          activityId,
+          group_number,
+          testStartForDb,      // ✅ MySQL-friendly string or null
+          effectiveDuration    // ✅ 0 if not a test
+        ]
       );
       const instanceId = instanceResult.insertId;
 
@@ -394,7 +471,6 @@ async function setupMultipleGroupInstances(req, res) {
         for (const member of group.members) {
           if (!member.student_id) continue;
 
-          // Only accept known roles; everything else -> NULL
           const cleanRole =
             member.role &&
               ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
@@ -422,6 +498,7 @@ async function setupMultipleGroupInstances(req, res) {
 }
 
 
+
 async function submitGroupResponses(req, res) {
   const { instanceId } = req.params;
   const { studentId, answers } = req.body;
@@ -432,12 +509,11 @@ async function submitGroupResponses(req, res) {
 
   try {
     const responseMap = new Map();
-
-    // Group answers by base question (e.g., 2a)
     const grouped = {};
 
+    // Group answers by base question id (e.g., 2a from 2aFA1)
     for (const [qid, value] of Object.entries(answers)) {
-      const baseMatch = qid.match(/^([0-9]+[a-zA-Z])/); // e.g., 2a from 2aFA1
+      const baseMatch = qid.match(/^([0-9]+[a-zA-Z])/); // 2a from 2aFA1
       const base = baseMatch ? baseMatch[1] : null;
       if (!base) continue;
 
@@ -445,6 +521,7 @@ async function submitGroupResponses(req, res) {
       grouped[base][qid] = value;
     }
 
+    // Build response map + per-question state (2aS) + group state (2state, 3state, ...)
     for (const [base, group] of Object.entries(grouped)) {
       let hasMain = false;
       let allFollowupsAnswered = true;
@@ -452,7 +529,9 @@ async function submitGroupResponses(req, res) {
       for (const [qid, value] of Object.entries(group)) {
         responseMap.set(qid, value);
 
-        if (qid === base && value.trim().length > 0) hasMain = true;
+        if (qid === base && value.trim().length > 0) {
+          hasMain = true;
+        }
 
         const fMatch = qid.match(/^([0-9]+[a-zA-Z])F(\d+)$/);
         if (fMatch) {
@@ -464,17 +543,15 @@ async function submitGroupResponses(req, res) {
         }
       }
 
-      // Determine per-question and per-group state
       const isComplete = hasMain && allFollowupsAnswered;
 
-      // Per-question status (e.g., 2aS)
+      // Per-question completion marker (e.g., 2aS)
       responseMap.set(`${base}S`, isComplete ? 'completed' : 'inprogress');
 
-      // Per-group status (e.g., 2state)
+      // Per-group completion marker (e.g., 2state)
       const groupNum = base.match(/^(\d+)/)?.[1];
       if (groupNum) {
         const groupStateKey = `${groupNum}state`;
-        // If no prior state, or if previously inprogress, upgrade if now complete
         if (!responseMap.has(groupStateKey)) {
           responseMap.set(groupStateKey, isComplete ? 'completed' : 'inprogress');
         } else if (responseMap.get(groupStateKey) !== 'completed' && isComplete) {
@@ -483,17 +560,63 @@ async function submitGroupResponses(req, res) {
       }
     }
 
-    // Perform UPSERT for each response
+    // Upsert all responses
     for (const [qid, response] of responseMap.entries()) {
       await db.query(
         `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-       VALUES (?, ?, 'text', ?, ?)
-       ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
+         VALUES (?, ?, 'text', ?, ?)
+         ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
         [instanceId, qid, response, studentId]
       );
     }
 
-    // Rotate to next student (if someone is connected)
+    // 🔹 NEW: recompute cached group progress for this instance
+    // This is per-instance only, so cheap even if we hit responses.
+    const [[meta]] = await db.query(
+      `SELECT total_groups FROM activity_instances WHERE id = ?`,
+      [instanceId]
+    );
+
+    const totalGroups = meta?.total_groups || 0;
+
+    let completedGroups = 0;
+    if (totalGroups > 0) {
+      const [stateRows] = await db.query(
+        `SELECT question_id, response
+         FROM responses
+         WHERE activity_instance_id = ?
+           AND question_id REGEXP '^[0-9]+state$'`,
+        [instanceId]
+      );
+
+      const stateMap = new Map(
+        stateRows.map(r => [r.question_id, r.response])
+      );
+
+      for (let i = 1; i <= totalGroups; i++) {
+        const key = `${i}state`;
+        if (stateMap.get(key) === 'completed') {
+          completedGroups++;
+        } else {
+          // Assume groups are sequential; stop at first incomplete
+          break;
+        }
+      }
+    }
+
+    let progressStatus = 'in_progress';
+    if (totalGroups > 0 && completedGroups >= totalGroups) {
+      progressStatus = 'completed';
+    }
+
+    await db.query(
+      `UPDATE activity_instances
+       SET completed_groups = ?, progress_status = ?
+       WHERE id = ?`,
+      [completedGroups, progressStatus, instanceId]
+    );
+
+    // 🔄 Rotate active student among connected members (unchanged)
     const [connected] = await db.query(
       `SELECT student_id FROM group_members WHERE activity_instance_id = ? AND connected = true`,
       [instanceId]
@@ -510,15 +633,13 @@ async function submitGroupResponses(req, res) {
       );
     }
 
-    //console.log("✅ Responses submitted for instance:", instanceId);
-    //console.table([...responseMap.entries()]);
-
     res.json({ success: true });
   } catch (err) {
     console.error("❌ submitGroupResponses:", err);
     res.status(500).json({ error: 'Failed to save responses' });
   }
 }
+
 
 async function getInstanceGroups(req, res) {
   const { instanceId } = req.params;
@@ -562,7 +683,14 @@ async function getInstancesForActivityInCourse(req, res) {
     const activityTitle = activity?.title || '';
 
     const [instances] = await db.query(
-      `SELECT id AS instance_id, group_number, active_student_id, total_groups
+      `SELECT id AS instance_id,
+              group_number,
+              active_student_id,
+              total_groups,
+              test_start_at,
+              test_duration_minutes,
+              test_reopen_until,
+              submitted_at
        FROM activity_instances
        WHERE course_id = ? AND activity_id = ?
        ORDER BY group_number`,
@@ -579,7 +707,6 @@ async function getInstancesForActivityInCourse(req, res) {
          ORDER BY gm.role`,
         [inst.instance_id]
       );
-      // Ensure active belongs to this instance; if not, fix it.
       const memberIds = new Set(members.map(m => m.student_id));
       let activeId = inst.active_student_id;
 
@@ -620,8 +747,12 @@ async function getInstancesForActivityInCourse(req, res) {
       groups.push({
         instance_id: inst.instance_id,
         group_number: inst.group_number,
-        active_student_id: inst.active_student_id,
+        active_student_id: activeId,
         progress,
+        test_start_at: inst.test_start_at,
+        test_duration_minutes: inst.test_duration_minutes,
+        test_reopen_until: inst.test_reopen_until,
+        submitted_at: inst.submitted_at,
         members: members.map(m => ({
           student_id: m.student_id,
           name: m.student_name,
@@ -629,7 +760,6 @@ async function getInstancesForActivityInCourse(req, res) {
           role: roleLabels[m.role] || m.role,
           connected: !!m.connected
         }))
-
       });
     }
 
@@ -669,42 +799,126 @@ async function getInstanceResponses(req, res) {
 
 async function refreshTotalGroups(req, res) {
   const { instanceId } = req.params;
-  try {
-    const [[row]] = await db.query(`
-      SELECT a.sheet_url
-      FROM activity_instances ai
-      JOIN pogil_activities a ON ai.activity_id = a.id
-      WHERE ai.id = ?
-    `, [instanceId]);
 
-    if (!row?.sheet_url) {
-      return res.status(404).json({ error: 'Missing sheet_url' });
+  try {
+    // 1) Look up the activity + sheet_url for this instance
+    const [[row]] = await db.query(
+      `SELECT ai.activity_id, a.sheet_url
+       FROM activity_instances ai
+       JOIN pogil_activities a ON ai.activity_id = a.id
+       WHERE ai.id = ?`,
+      [instanceId]
+    );
+
+    if (!row) {
+      return res.status(404).json({ error: 'Activity instance not found' });
+    }
+
+    if (!row.sheet_url) {
+      await db.query(
+        `UPDATE activity_instances SET total_groups = 1 WHERE id = ?`,
+        [instanceId]
+      );
+      return res.json({ success: true, groupCount: 1, isTest: false });
     }
 
     const docId = row.sheet_url.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1];
-    if (!docId) throw new Error('Invalid sheet_url');
+    if (!docId) {
+      throw new Error(`Invalid sheet_url for instance ${instanceId}: ${row.sheet_url}`);
+    }
 
     const auth = authorize();
     const docs = google.docs({ version: 'v1', auth });
     const doc = await docs.documents.get({ documentId: docId });
 
-    const lines = doc.data.body.content
+    const lines = (doc.data.body?.content || [])
       .map(block => {
         if (!block.paragraph?.elements) return null;
-        return block.paragraph.elements.map(e => e.textRun?.content || '').join('').trim();
+        return block.paragraph.elements
+          .map(e => e.textRun?.content || '')
+          .join('')
+          .trim();
       })
       .filter(Boolean);
 
-    const groupCount = lines.filter(line => line.startsWith('\\questiongroup')).length;
+    let groupCount = lines.filter(line => line.startsWith('\\questiongroup')).length;
+    if (groupCount <= 0) groupCount = 1;
 
-    await db.query(`UPDATE activity_instances SET total_groups = ? WHERE id = ?`, [groupCount, instanceId]);
+    const isTest = lines.some(line => line.trim() === '\\test');
 
-    res.json({ success: true, groupCount });
+    await db.query(
+      `UPDATE activity_instances
+       SET total_groups = ?
+       WHERE id = ?`,
+      [groupCount, instanceId]
+    );
+
+    // NEW: update pogil_activities.is_test based on \test tag
+    await db.query(
+      `UPDATE pogil_activities
+       SET is_test = ?
+       WHERE id = ?`,
+      [isTest ? 1 : 0, row.activity_id]
+    );
+
+    return res.json({ success: true, groupCount, isTest });
   } catch (err) {
-    console.error("❌ refreshTotalGroups:", err);
-    res.status(500).json({ error: 'Failed to refresh total_groups' });
+    console.error('❌ refreshTotalGroups:', err);
+    return res.status(500).json({ error: 'Failed to refresh total_groups' });
   }
 }
+
+
+// NEW: Reopen a timed test for an instance
+async function reopenInstance(req, res) {
+  const { instanceId } = req.params;   // ✅ correct param
+  const { minutes } = req.body || {};  // optional override
+
+  if (!instanceId) {
+    return res.status(400).json({ error: 'Missing instanceId' });
+  }
+
+  try {
+    const [[instance]] = await db.query(
+      `SELECT test_start_at, test_duration_minutes, test_reopen_until, submitted_at
+       FROM activity_instances
+       WHERE id = ?`,
+      [instanceId]
+    );
+
+    if (!instance) {
+      return res.status(404).json({ error: 'Instance not found' });
+    }
+
+    if (!instance.test_start_at || !instance.test_duration_minutes) {
+      return res.status(400).json({ error: 'Not a timed test instance' });
+    }
+
+    // If you want to block reopen when already submitted, enforce here
+    if (instance.submitted_at) {
+      return res.status(400).json({ error: 'Test already submitted; clear answers to reopen.' });
+    }
+
+    const extendMinutes =
+      minutes && minutes > 0 ? minutes : instance.test_duration_minutes;
+
+    const now = new Date();
+    const reopenUntil = new Date(now.getTime() + extendMinutes * 60000);
+
+    await db.query(
+      `UPDATE activity_instances
+       SET test_reopen_until = ?
+       WHERE id = ?`,
+      [reopenUntil, instanceId]
+    );
+
+    return res.json({ ok: true, test_reopen_until: reopenUntil });
+  } catch (err) {
+    console.error('❌ reopenInstance error:', err);
+    return res.status(500).json({ error: 'Failed to reopen test.' });
+  }
+}
+
 
 async function submitTest(req, res) {
   const { instanceId } = req.params;
@@ -729,18 +943,15 @@ async function submitTest(req, res) {
     const questionResults = [];
 
     for (const q of questions) {
-      // --- Strict: question id must be provided by the client ---
       const baseId = q.id || q.qid;
       if (!baseId) {
         console.error('❌ submitTest: question missing id:', q);
-        // Skip this question instead of guessing
         continue;
       }
 
       const text = q.text || '';
-      const scores = q.scores || {}; // { code, output, response }
+      const scores = q.scores || {};
 
-      // --- Interpret score blocks (code/output/response) ---
       const bucketPoints = (bucket) => {
         if (!bucket) return 0;
         if (typeof bucket === 'number') return bucket;
@@ -762,12 +973,8 @@ async function submitTest(req, res) {
         maxRespPts,
       });
 
-      // --- Extract student artifacts from answers using ONLY baseId ---
-
-      // 1) Written response (if any) — key: "1a"
       const written = (answers[baseId] || '').trim();
 
-      // 2) Code cells — keys: "1acode1", "1acode2", ...
       const codeCells = [];
       const codePrefix = (baseId + 'code').toLowerCase();
 
@@ -777,18 +984,16 @@ async function submitTest(req, res) {
         const lowerKey = key.toLowerCase();
         if (!lowerKey.startsWith(codePrefix)) continue;
 
-        // extract numeric suffix for labeling, e.g. "code1"
         const labelMatch = key.match(/code(\d+)$/i);
         const label = labelMatch ? labelMatch[1] : key;
 
         codeCells.push({
           code: String(value),
-          lang: 'cpp',          // you can refine this per question if needed
+          lang: 'cpp',
           label: `code ${label}`,
         });
       }
 
-      // 3) Program output — keys: "1aoutput", "1aoutput1", ...
       let outputText = '';
       const outputPrefix = (baseId + 'output').toLowerCase();
 
@@ -806,7 +1011,6 @@ async function submitTest(req, res) {
         hasOutput: !!outputText,
       });
 
-      // If there are no points configured, skip this question.
       if (maxCodePts <= 0 && maxRunPts <= 0 && maxRespPts <= 0) {
         console.log(
           '⚠️ No points configured for question',
@@ -816,7 +1020,6 @@ async function submitTest(req, res) {
         continue;
       }
 
-      // --- Call AI grader with a clean, deterministic payload ---
       const {
         codeScore,
         codeFeedback,
@@ -826,11 +1029,11 @@ async function submitTest(req, res) {
         responseFeedback,
       } = await gradeTestQuestion({
         questionText: text,
-        scores,          // { code, output, response }
+        scores,
         responseText: written,
         codeCells,
         outputText,
-        rubric: scores,  // full rubric, including instructions
+        rubric: scores,
       });
 
       console.log('✅ Test grading result:', {
@@ -868,7 +1071,6 @@ async function submitTest(req, res) {
         responseFeedback: responseFeedback || '',
       });
 
-      // --- Save per-question scores/feedback into responses table ---
       const upsert = async (qid, value) => {
         if (value == null || value === '') return;
         await conn.query(
@@ -884,7 +1086,6 @@ async function submitTest(req, res) {
         );
       };
 
-      // 3-band storage: Code, Run, Response
       await upsert(`${baseId}CodeScore`, codeScore);
       await upsert(`${baseId}CodeFeedback`, codeFeedback);
 
@@ -895,7 +1096,6 @@ async function submitTest(req, res) {
       await upsert(`${baseId}ResponseFeedback`, responseFeedback);
     }
 
-    // --- Build human-readable 3-band summary text ---
     const lines = [];
 
     for (const qr of questionResults) {
@@ -920,13 +1120,11 @@ async function submitTest(req, res) {
       const qMax = maxCodePts + maxRunPts + maxRespPts;
       const qScore = codeScore + runScore + responseScore;
 
-      // Question header line
       lines.push(`Question ${qid} – Total ${qScore}/${qMax}`);
       if (bandParts.length) {
         lines.push(`  ${bandParts.join(' · ')}`);
       }
 
-      // Only include AI explanations when NOT full credit in that band
       if (maxCodePts > 0 && codeScore < maxCodePts && codeFeedback) {
         lines.push(`  Code feedback: ${codeFeedback}`);
       }
@@ -937,10 +1135,9 @@ async function submitTest(req, res) {
         lines.push(`  Response feedback: ${responseFeedback}`);
       }
 
-      lines.push(''); // blank line between questions
+      lines.push('');
     }
 
-    // Overall total
     lines.push(`Overall: ${totalEarnedPoints}/${totalMaxPoints}`);
 
     const summaryText = lines.join('\n');
@@ -967,10 +1164,22 @@ async function submitTest(req, res) {
       );
     };
 
-    // store overall test totals
     await upsertTotal('testTotalScore', totalEarnedPoints);
     await upsertTotal('testMaxScore', totalMaxPoints);
     await upsertTotal('testSummary', summaryText);
+
+    // NEW: cache overall scores on the activity_instance itself
+    await conn.query(
+      `UPDATE activity_instances
+       SET
+         points_earned    = ?,
+         points_possible  = ?,
+         progress_status  = 'completed',
+         is_test          = 1,
+         submitted_at     = NOW()
+       WHERE id = ?`,
+      [totalEarnedPoints, totalMaxPoints, instanceId]
+    );
 
     await conn.commit();
     return res.json({
@@ -991,8 +1200,6 @@ async function submitTest(req, res) {
 
 
 
-
-
 // Export it as part of the module
 module.exports = {
   clearResponsesForInstance,
@@ -1009,5 +1216,6 @@ module.exports = {
   getInstancesForActivityInCourse,
   getInstanceResponses,
   refreshTotalGroups,
+  reopenInstance,   // NEW
   submitTest,
 };

@@ -31,6 +31,7 @@ export default function ActivityPythonBlock({
   const gutterRef = useRef(null);
   const codeScrollRef = useRef(null);
   const [outputText, setOutputText] = useState('');
+  const selectionRef = useRef(null);
 
   // --- NEW: outputKey derived from responseKey, same rule as C++ ---
   const outputKey = useMemo(() => {
@@ -45,9 +46,19 @@ export default function ActivityPythonBlock({
   const lastSentRef = useRef(initialCode ?? '');
   const pendingRemoteRef = useRef(null);
 
+
   useEffect(() => {
     if (!isEditing && codeRef.current) Prism.highlightElement(codeRef.current);
   }, [isEditing, code]);
+
+  useEffect(() => {
+    if (!isEditing || !taRef.current || !selectionRef.current) return;
+    const { start, end } = selectionRef.current;
+    try {
+      taRef.current.setSelectionRange(start, end);
+    } catch { }
+    selectionRef.current = null;
+  }, [code, isEditing]);
 
   useEffect(() => {
     const next = initialCode ?? '';
@@ -114,25 +125,24 @@ export default function ActivityPythonBlock({
   };
 
   const buildMergedCode = () => {
-  if (!includeFiles || includeFiles.length === 0) {
-    return code;
-  }
+    if (!includeFiles || includeFiles.length === 0) {
+      return code;
+    }
 
-  let prelude = '';
+    let prelude = '';
 
-  includeFiles.forEach((fname) => {
-    const src = fileContents?.[fname];
-    if (!src) return; // silently skip missing file for now
+    includeFiles.forEach((fname) => {
+      const src = fileContents?.[fname];
+      if (!src) return; // silently skip missing file for now
 
-    prelude += `# ===== BEGIN ${fname} =====\n`;
-    prelude += src;
-    if (!src.endsWith('\n')) prelude += '\n';
-    prelude += `# ===== END ${fname} =====\n\n`;
-  });
+      prelude += `# ===== BEGIN ${fname} =====\n`;
+      prelude += src;
+      if (!src.endsWith('\n')) prelude += '\n';
+      prelude += `# ===== END ${fname} =====\n\n`;
+    });
 
-  return prelude + code;
-};
-
+    return prelude + code;
+  };
 
   const runPython = () => {
     if (editable && code !== savedCode) {
@@ -148,17 +158,26 @@ export default function ActivityPythonBlock({
     const currentFiles = { ...fileContents };
 
     runSkulptCode({
-      code: finalCode,
-      fileContents: currentFiles,
-      setOutput: setOutputText,
+      code: finalCode,          // ← use merged code
+      fileContents,
+      setOutput: setOutputText, // ← FIX: pass the actual setter
       setFileContents,
-      execLimit: timeLimit || 50000,
+      execLimit: timeLimit,
       turtleTargetId,
       turtleWidth,
       turtleHeight,
+      onFileWrite: (filename, content) => {
+        if (socket && instanceId) {
+          socket.emit('file:update', {
+            instanceId,
+            fileKey: `file:${filename}`,
+            filename,
+            value: content,
+          });
+        }
+      },
     });
   };
-
 
 
   const handleDoneEditing = () => {
@@ -172,6 +191,48 @@ export default function ActivityPythonBlock({
       setSavedCode(code);
     }
     flushPendingRemoteIfAny();
+  };
+
+  // NEW: Tab + auto-indent handler
+  const handleKeyDown = (e) => {
+    if (!isEditing || !editable) return;
+
+    const el = e.target;
+    const value = code;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? start;
+
+    // TAB → insert spaces instead of leaving the textarea
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const indent = '    '; // or '\t' if you prefer
+      const newValue = value.slice(0, start) + indent + value.slice(end);
+      const newPos = start + indent.length;
+
+      setCode(newValue);
+      if (editable) scheduleBroadcast(newValue);
+      selectionRef.current = { start: newPos, end: newPos };
+      return;
+    }
+
+    // ENTER → keep indentation from current line
+    if (e.key === 'Enter') {
+      e.preventDefault();
+
+      const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+      const line = value.slice(lineStart, start);
+      const match = line.match(/^[\t ]*/);
+      const indent = match ? match[0] : '';
+
+      const insert = '\n' + indent;
+      const newValue = value.slice(0, start) + insert + value.slice(end);
+      const newPos = start + insert.length;
+
+      setCode(newValue);
+      if (editable) scheduleBroadcast(newValue);
+      selectionRef.current = { start: newPos, end: newPos };
+      return;
+    }
   };
 
   const mono =
@@ -264,9 +325,9 @@ export default function ActivityPythonBlock({
             isEditing
               ? handleDoneEditing
               : () => {
-                  setIsEditing(true);
-                  flushPendingRemoteIfAny?.();
-                }
+                setIsEditing(true);
+                flushPendingRemoteIfAny?.();
+              }
           }
         >
           {isEditing ? 'Done Editing' : 'Edit Code'}
@@ -296,6 +357,7 @@ export default function ActivityPythonBlock({
               setCode(v);
               if (editable) scheduleBroadcast(v);
             }}
+            onKeyDown={handleKeyDown}
             onBlur={handleDoneEditing}
             onScroll={onTextareaScroll}
             rows={Math.max(6, code.split('\n').length)}

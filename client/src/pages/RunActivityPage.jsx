@@ -10,6 +10,7 @@ import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
 import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
 import { io } from 'socket.io-client';
+import { parseUtcDbDatetime } from '../utils/time';
 
 // --- DEBUG ---
 const DEBUG_FILES = false;
@@ -19,6 +20,10 @@ const PAGE_TAG = 'RUN';
 const roleLabels = {
   qc: 'Quality Control',
 };
+
+// Normalize question / group status strings
+const normalizeStatus = (raw) =>
+  raw === 'completed' ? 'complete' : (raw || 'inprogress');
 
 function isNoAI(val) {
   return String(val ?? '').trim().toLowerCase() === 'none';
@@ -103,6 +108,16 @@ function isCodeOnlyByBlock(block) {
   return anyCode && !hasText && !hasTable;
 }
 
+// NEW: pretty formatting for countdown
+function formatRemainingSeconds(sec) {
+  if (sec == null || sec < 0) return '';
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m <= 0) return `${s}s`;
+  if (s === 0) return `${m}m`;
+  return `${m}m ${s}s`;
+}
+
 export default function RunActivityPage({
   setRoleLabel,
   setStatusText,
@@ -135,26 +150,28 @@ export default function RunActivityPage({
   const [existingAnswers, setExistingAnswers] = useState({});
   const [skulptLoaded, setSkulptLoaded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [textFeedbackShown, setTextFeedbackShown] = useState({});
 
   // per-group “ignore AI, let me continue” overrides
   const [overrideGroups, setOverrideGroups] = useState({});
 
+  // NEW: test timing lock state + auto-submit guard
+  const [testLockState, setTestLockState] = useState({
+    lockedBefore: false,
+    lockedAfter: false,
+    remainingSeconds: null,
+  });
+  const [autoSubmitted, setAutoSubmitted] = useState(false);
+
   const isLockedFU = (qid) => qidsNoFURef.current?.has(qid);
 
-  // compute isActive first…
-  const isActive = user && user.id === activeStudentId;
-  const isObserver = !isActive;
+
 
   const toggleCodeViewMode = (rk, next) =>
     setCodeViewMode((prev) => ({ ...prev, [rk]: next }));
 
   const updateLocalCode = (rk, code) =>
     setLocalCode((prev) => ({ ...prev, [rk]: code }));
-
-  const isInstructor =
-    user?.role === 'instructor' ||
-    user?.role === 'root' ||
-    user?.role === 'creator';
 
   const userRoles = groupMembers
     .filter((m) => String(m.student_id) === String(user.id))
@@ -177,18 +194,32 @@ export default function RunActivityPage({
   const currentQuestionGroupIndex = useMemo(() => {
     if (!existingAnswers || Object.keys(existingAnswers).length === 0) return 0;
     let count = 0;
-    while (
-      count < groups.length &&
-      existingAnswers[`${count + 1}state`]?.response === 'completed'
-    ) {
+
+    while (count < groups.length) {
+      const raw = existingAnswers[`${count + 1}state`]?.response;
+      const status = normalizeStatus(raw);
+
+      if (status !== 'complete') break;
       count++;
     }
+
     return count;
   }, [existingAnswers, groups]);
 
-  // NEW: test mode detection
+
   const isTestMode = useMemo(() => {
+    // Primary: any instance with a time window is a test
+    if (
+      activity?.test_start_at &&
+      Number(activity?.test_duration_minutes) > 0
+    ) {
+      return true;
+    }
+
+    // Secondary: explicit DB flag, once we start storing it
     if (activity?.is_test) return true;
+
+    // Fallback heuristic (only if we *really* don't know)
     if (!groups || groups.length !== 1) return false;
     return groups.some((g) =>
       (g.content || []).some(
@@ -200,6 +231,169 @@ export default function RunActivityPage({
     );
   }, [activity, groups]);
 
+  useEffect(() => {
+    console.log('[RUN] isTestMode:', isTestMode);
+  }, [isTestMode]);
+
+  const isInstructor =
+    user?.role === 'instructor' ||
+    user?.role === 'root' ||
+    user?.role === 'creator';
+  const isStudent = user?.role === 'student';
+
+  // In test mode, every student is their own "active" user.
+  // In POGIL mode, only the activeStudentId is editable.
+  const isActive =
+    !!user &&
+    (
+      (isTestMode && isStudent) ||
+      (activeStudentId != null && String(user.id) === String(activeStudentId))
+    );
+
+  const isObserver = !isActive;
+  // NEW: compute test window from activity fields (if present)
+  const testWindow = useMemo(() => {
+    if (!isTestMode) return null;
+
+    const startStr = activity?.test_start_at;
+    const dur = activity?.test_duration_minutes;
+    if (!startStr || !dur) return null;
+
+    const start = parseUtcDbDatetime(startStr);
+    if (!start) return null;
+
+    let end = new Date(start.getTime() + Number(dur) * 60 * 1000);
+
+    if (activity?.test_reopen_until) {
+      const reopen = parseUtcDbDatetime(activity.test_reopen_until);
+      if (reopen && reopen > end) {
+        end = reopen;
+      }
+    }
+
+    return { start, end };
+  }, [
+    isTestMode,
+    activity?.test_start_at,
+    activity?.test_duration_minutes,
+    activity?.test_reopen_until,
+  ]);
+  useEffect(() => {
+    console.log('[RUN] testWindow:', testWindow);
+  }, [testWindow]);
+
+  useEffect(() => {
+    if (!socket || !instanceId) return;
+
+    const handleFileUpdate = ({ instanceId: msgId, filename, value }) => {
+      if (String(msgId) !== String(instanceId)) return;
+
+      setFileContents((prev) => {
+        const updated = { ...prev, [filename]: value };
+        fileContentsRef.current = updated;
+
+        if (DEBUG_FILES) {
+          console.debug(
+            `[${PAGE_TAG}] socket file:update → ${filename}: ${(prev[filename] ?? '').length}→${(value ?? '').length}`
+          );
+        }
+
+        return updated;
+      });
+    };
+
+    socket.on('file:update', handleFileUpdate);
+    return () => {
+      socket.off('file:update', handleFileUpdate);
+    };
+  }, [socket, instanceId]);
+
+  /* useEffect(() => {
+     if (!isTestMode || !testWindow) {
+       setTestLockState({
+         lockedBefore: false,
+         lockedAfter: false,
+         remainingSeconds: null,
+       });
+       return;
+     }
+ 
+     const hasSubmitted = !!activity?.submitted_at;
+     const { start, end } = testWindow;
+ 
+     const update = () => {
+       const now = new Date();
+ 
+       let lockedBefore = false;
+       let lockedAfter = hasSubmitted;
+       let remainingSeconds = null;
+ 
+       if (!lockedAfter) {
+         if (now < start && !hasSubmitted) {
+           // Before start window
+           lockedBefore = true;
+           lockedAfter = false;
+           remainingSeconds = Math.floor(
+             (start.getTime() - now.getTime()) / 1000
+           );
+         } else {
+           // Inside or after window
+           const diff = Math.floor((end.getTime() - now.getTime()) / 1000);
+           remainingSeconds = diff > 0 ? diff : 0;
+           lockedBefore = false;
+ 
+           // IMPORTANT:
+           // - While time remains, we keep lockedAfter = false.
+           // - When time has run out (diff <= 0) *and* not yet submitted,
+           //   we leave lockedAfter = false but remainingSeconds = 0.
+           //   That gives the auto-submit effect a chance to run.
+           // - Once submitted (hasSubmitted true in a later tick), we lock it.
+           if (hasSubmitted) {
+             lockedAfter = true;
+           }
+         }
+ 
+       } else {
+         remainingSeconds = 0;
+       }
+ 
+       setTestLockState({ lockedBefore, lockedAfter, remainingSeconds });
+     };
+ 
+     update();
+     const id = setInterval(update, 1000);
+     return () => clearInterval(id);
+   }, [isTestMode, testWindow, activity?.submitted_at]);*/
+
+
+  // NEW: if aicodeguidance says "Follow-ups: requirements-only", don't gate on AI feedback
+  const isRequirementsOnly = useMemo(() => {
+    const g = activity?.aicodeguidance || '';
+    return /follow-ups:\s*requirements-only/i.test(g);
+  }, [activity?.aicodeguidance]);
+
+  // ✅ NEW: overall totals useMemo
+  const overallTestTotals = useMemo(() => {
+    if (!isTestMode || !groups || groups.length === 0) {
+      return { earned: 0, max: 0 };
+    }
+
+    let earned = 0;
+    let max = 0;
+
+    for (const g of groups) {
+      for (const b of g.content || []) {
+        if (b?.type !== 'question') continue;
+        const qid = `${b.groupId}${b.id}`;
+        const { hasAnyScore, earnedTotal, maxTotal } = getQuestionScores(qid, b);
+        if (!hasAnyScore) continue;
+        if (Number.isFinite(earnedTotal)) earned += earnedTotal;
+        if (Number.isFinite(maxTotal)) max += maxTotal;
+      }
+    }
+    return { earned, max };
+  }, [isTestMode, groups, existingAnswers]);
+
   const handleUpdateFileContents = (updaterFn) => {
     setFileContents((prev) => {
       const before = Object.fromEntries(
@@ -209,17 +403,89 @@ export default function RunActivityPage({
       const after = Object.fromEntries(
         Object.entries(updated).map(([k, v]) => [k, (v ?? '').length])
       );
+
+      const changed = Object.keys(after).filter((k) => before[k] !== after[k]);
+
       if (DEBUG_FILES) {
-        const changed = Object.keys(after).filter((k) => before[k] !== after[k]);
         console.debug(
           `[${PAGE_TAG}] handleUpdateFileContents → changed:`,
           changed.map((k) => `${k}: ${before[k] ?? 0}→${after[k]}`)
         );
       }
+
       fileContentsRef.current = updated;
+
+      // 🔄 Broadcast programmatic changes (Python writes)
+      if (isActive && socket && instanceId && changed.length > 0) {
+        changed.forEach((filename) => {
+          socket.emit('file:update', {
+            instanceId,
+            fileKey: `file:${filename}`,
+            filename,
+            value: updated[filename] ?? '',
+          });
+        });
+      }
+
+      // 💾 NEW: persist programmatic writes too
+      if (isActive && instanceId && user?.id && changed.length > 0) {
+        const answers = {};
+        changed.forEach((filename) => {
+          answers[`file:${filename}`] = updated[filename] ?? '';
+        });
+
+        fetch(`${API_BASE_URL}/api/responses/bulk-save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            instanceId,
+            userId: user.id,
+            answers,
+          }),
+        }).catch(() => { });
+      }
+
       return updated;
     });
   };
+
+  // For manual edits in <FileBlock> textareas
+  // For manual edits in <FileBlock> textareas
+  const handleFileChange = (fileKey, newText, meta = {}) => {
+    const filename = meta.filename || fileKey;
+
+    // Update local canonical file contents
+    setFileContents((prev) => {
+      const updated = { ...prev, [filename]: newText };
+      fileContentsRef.current = updated;
+
+      if (DEBUG_FILES) {
+        console.debug(
+          `[${PAGE_TAG}] handleFileChange → ${filename}: ${(prev[filename] ?? '').length}→${(newText ?? '').length}`
+        );
+      }
+
+      return updated;
+    });
+
+    // 🔄 Broadcast live to observers (if your server handles 'file:update')
+    if (isActive && socket && instanceId) {
+      socket.emit('file:update', {
+        instanceId,
+        fileKey,
+        filename,
+        value: newText,
+      });
+    }
+
+    // 💾 NEW: persist file contents in responses table
+    if (isActive && instanceId && user?.id) {
+      // question_id pattern: file:<filename>
+      saveResponse(instanceId, `file:${filename}`, newText).catch(() => { });
+    }
+  };
+
+
 
   useEffect(() => {
     fileContentsRef.current = fileContents;
@@ -321,7 +587,7 @@ export default function RunActivityPage({
     }
   }, [socket, instanceId]);
 
-  // NOTE: findQuestionBlockByQid moved *inside* component so it can see `groups`
+  // NOTE: findQuestionBlockByQid moved inside component so it can see `groups`
   function findQuestionBlockByQid(qid) {
     for (const g of groups) {
       for (const b of [g.intro, ...(g.content || [])]) {
@@ -336,24 +602,16 @@ export default function RunActivityPage({
 
     const handleUpdate = ({ responseKey, value, followupPrompt, answeredBy }) => {
       if (answeredBy && String(answeredBy) === String(user?.id)) return;
-      if (responseKey.endsWith('FA1')) {
-        const qid = responseKey.replace('FA1', '');
-        if (isLockedFU(qid)) return;
-        setFollowupAnswers((prev) => ({ ...prev, [responseKey]: value }));
-        setFollowupsShown((prev) => ({
-          ...prev,
-          [qid]: followupPrompt || prev[qid] || 'Follow-up question',
-        }));
-      } else {
-        setExistingAnswers((prev) => ({
-          ...prev,
-          [responseKey]: {
-            ...prev[responseKey],
-            response: value,
-            type: 'text',
-          },
-        }));
-      }
+
+      // Just mirror base text answers (no more FA1 special-casing)
+      setExistingAnswers((prev) => ({
+        ...prev,
+        [responseKey]: {
+          ...prev[responseKey],
+          response: value,
+          type: 'text',
+        },
+      }));
     };
 
     socket.on('response:update', handleUpdate);
@@ -474,6 +732,118 @@ export default function RunActivityPage({
     };
   }, [user?.id, activeStudentId]);
 
+  // NEW: auto-submit at time 0 for active student in test mode
+  /*useEffect(() => {
+    if (!isTestMode) return;
+    if (!isStudent) return;
+    if (!isActive) return;
+    if (!testWindow) return;
+    if (autoSubmitted) return;
+
+    if (testLockState.lockedAfter) return;
+    if (testLockState.remainingSeconds !== 0) return;
+
+    (async () => {
+      try {
+        setAutoSubmitted(true);
+        await handleSubmit(false);
+      } catch (err) {
+        console.error('Auto-submit failed:', err);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isTestMode,
+    isStudent,
+    isActive,
+    testWindow,
+    testLockState.remainingSeconds,
+    testLockState.lockedAfter,
+    autoSubmitted,
+  ]);*/
+
+  useEffect(() => {
+    // If this isn’t a test or we don’t know the window yet, clear any locks.
+    if (!isTestMode || !testWindow) {
+      setTestLockState({
+        lockedBefore: false,
+        lockedAfter: false,
+        remainingSeconds: null,
+      });
+      return;
+    }
+
+    // Only students care about lock state + auto-submit.
+    // Instructors can see everything regardless.
+    const isSubmitted = !!activity?.submitted_at;
+    let globalQuestionCounter = 0;  // used only for test-mode display labels
+    const displayNumber = globalQuestionCounter; // e.g., 1, 2, 3, ...
+
+    const { start, end } = testWindow;
+
+    let autoFired = false;
+
+    const tick = async () => {
+      const now = new Date();
+
+      let lockedBefore = false;
+      let lockedAfter = isSubmitted;
+      let remainingSeconds = null;
+
+      if (!isSubmitted) {
+        if (now < start) {
+          // Before the test window opens
+          lockedBefore = true;
+          lockedAfter = false;
+          remainingSeconds = Math.floor((start.getTime() - now.getTime()) / 1000);
+        } else {
+          // During or after the test window
+          const diff = Math.floor((end.getTime() - now.getTime()) / 1000);
+          remainingSeconds = diff > 0 ? diff : 0;
+
+          // Time’s up: trigger auto-submit once for the active student
+          if (diff <= 0 && !autoFired && isStudent && isActive && !autoSubmitted) {
+            autoFired = true;
+            setAutoSubmitted(true);
+            try {
+              await handleSubmit(false);
+            } catch (err) {
+              console.error('Auto-submit failed:', err);
+            }
+          }
+
+          // After end of window, lock the test
+          if (diff <= 0 || autoSubmitted || activity?.submitted_at) {
+            lockedAfter = true;
+          }
+        }
+      } else {
+        // Already submitted; fully locked
+        lockedAfter = true;
+        remainingSeconds = 0;
+      }
+
+      setTestLockState({ lockedBefore, lockedAfter, remainingSeconds });
+    };
+
+    // Run once immediately and then every second
+    tick();
+    const id = setInterval(() => {
+      // We intentionally ignore the promise returned by tick here
+      tick();
+    }, 1000);
+
+    return () => clearInterval(id);
+  }, [
+    isTestMode,
+    testWindow,
+    isStudent,
+    isActive,
+    autoSubmitted,
+    activity?.submitted_at,
+  ]);
+
+
   if (loading) {
     return (
       <Container className="mt-4">
@@ -582,23 +952,84 @@ export default function RunActivityPage({
       );
       const answersData = await answersRes.json();
 
+      // 1) Merge into existingAnswers so renderBlocks can prefill
+      setExistingAnswers((prev) => ({ ...prev, ...answersData }));
+
+      // 💾 NEW: hydrate fileContents from saved file:<filename> responses
+const savedFiles = {};
+for (const [key, entry] of Object.entries(answersData)) {
+  if (!key.startsWith('file:')) continue;
+  const filename = key.slice('file:'.length);
+  if (!filename) continue;
+  savedFiles[filename] = entry?.response ?? '';
+}
+
+if (Object.keys(savedFiles).length > 0) {
+  setFileContents((prev) => {
+    const updated = { ...prev, ...savedFiles };
+    fileContentsRef.current = updated;
+
+    if (DEBUG_FILES) {
+      console.debug(
+        `[${PAGE_TAG}] hydrate files from DB:`,
+        Object.entries(savedFiles).map(([k, v]) => `${k}(${(v ?? '').length})`)
+      );
+    }
+
+    return updated;
+  });
+}
+
+
+      // 2) Restore code feedback (per-code-cell feedback from backend)
       setCodeFeedbackShown((prev) => {
         const merged = { ...prev };
-        for (const [qid, entry] of Object.entries(answersData)) {
-          if ('python_feedback' in entry && entry.python_feedback !== undefined) {
-            merged[qid] = entry.python_feedback;
+        for (const [key, entry] of Object.entries(answersData)) {
+          if (
+            entry &&
+            Object.prototype.hasOwnProperty.call(entry, 'python_feedback')
+          ) {
+            merged[key] = entry.python_feedback;
           }
         }
         return merged;
       });
 
-      setExistingAnswers((prev) => ({ ...prev, ...answersData }));
+      // 3) Restore text AI guidance from saved F1 entries (e.g., "2aF1" → question "2a"),
+      //    but only if we're NOT in "requirements-only" mode.
+      if (!isRequirementsOnly) {
+        const restoredTextFeedback = {};
 
-      const newFollowupsData = {};
-      for (const [qid, entry] of Object.entries(answersData)) {
-        if (qid.endsWith('FA1')) newFollowupsData[qid] = entry.response;
+        for (const [key, entry] of Object.entries(answersData)) {
+          if (!key.endsWith('F1')) continue;      // keys like "2aF1"
+          const baseQid = key.slice(0, -2);       // "2aF1" → "2a"
+          const text = (entry?.response || '').trim();
+          if (text) {
+            restoredTextFeedback[baseQid] = text;
+          }
+        }
+
+        if (Object.keys(restoredTextFeedback).length > 0) {
+          setTextFeedbackShown((prev) => ({
+            ...prev,
+            ...restoredTextFeedback,
+          }));
+        }
       }
-      setFollowupAnswers((prev) => ({ ...prev, ...newFollowupsData }));
+
+      // 4) Restore stored follow-up *answers* (e.g., "2aFA1"), if you ever use them
+      const restoredFollowups = {};
+      for (const [key, entry] of Object.entries(answersData)) {
+        if (!key.endsWith('FA1')) continue;
+        const text = (entry?.response || '').trim();
+        if (text) {
+          restoredFollowups[key] = text;
+        }
+      }
+      if (Object.keys(restoredFollowups).length > 0) {
+        setFollowupAnswers((prev) => ({ ...prev, ...restoredFollowups }));
+      }
+
 
       // Parse Google Doc structure
       const docUrl = instanceData.sheet_url;
@@ -637,6 +1068,7 @@ export default function RunActivityPage({
           studentlevel,
           aicodeguidance,
         }));
+
 
         const files = {};
         for (const block of blocks) {
@@ -729,7 +1161,7 @@ export default function RunActivityPage({
     studentAnswer,
     { forceFollowup = false } = {}
   ) {
-    // NEW: no AI follow-ups during tests
+    // NEW: no AI feedback during tests
     if (isTestMode) return null;
 
     const qid = `${questionBlock.groupId}${questionBlock.id}`;
@@ -740,10 +1172,10 @@ export default function RunActivityPage({
     ) {
       return null;
     }
+
     const codeContext =
-      (questionBlock.pythonBlocks
-        ?.map((py) => py.content)
-        .join('\n\n')) || '';
+      (questionBlock.pythonBlocks?.map((py) => py.content).join('\n\n')) || '';
+
     const body = {
       questionText: questionBlock.prompt,
       studentAnswer,
@@ -771,7 +1203,14 @@ export default function RunActivityPage({
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      return data.followupQuestion || null;
+
+      // Treat either feedback or followupQuestion as a single feedback blob
+      const feedback =
+        (data.feedback && String(data.feedback).trim()) ||
+        (data.followupQuestion && String(data.followupQuestion).trim()) ||
+        '';
+
+      return feedback || null;
     } catch {
       return null;
     }
@@ -1024,9 +1463,6 @@ export default function RunActivityPage({
     return { answers, questions };
   }
 
-
-
-
   async function handleSubmit(forceOverride = false) {
     if (isSubmitting) return;
     setIsSubmitting(true);
@@ -1054,7 +1490,10 @@ export default function RunActivityPage({
     // ---------- TEST MODE PATH ----------
     if (isTestMode) {
       try {
-        const { answers, questions } = buildTestSubmissionPayload(blocks, container);
+        const { answers, questions } = buildTestSubmissionPayload(
+          blocks,
+          container
+        );
 
         const res = await fetch(
           `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-test`,
@@ -1313,10 +1752,12 @@ export default function RunActivityPage({
       }
 
       // ---------- TEXT/TABLE PATH ----------
+
       const el = container.querySelector(`[data-question-id="${qid}"]`);
       const baseAnswer = el?.value?.trim() || '';
       const tableMarkdown = buildMarkdownTableFromBlock(block, container);
 
+      // ---- Gather table inputs & save them ----
       let tableHasInput = false;
       if (block.tableBlocks?.length > 0) {
         for (let t = 0; t < block.tableBlocks.length; t++) {
@@ -1339,12 +1780,32 @@ export default function RunActivityPage({
         }
       }
 
-      const hasExistingFU = !!existingAnswers[`${qid}F1`]?.response;
+      // Determine what gets evaluated as the "answer"
       let aiInput = baseAnswer;
       if (block.hasTableResponse && tableHasInput) {
         aiInput = tableMarkdown;
-        answers[qid] = tableMarkdown;
       }
+
+      // If nothing at all was entered → required
+      if (!aiInput) {
+        unanswered.push(`${qid} (base)`);
+        answers[`${qid}S`] = 'inprogress';
+
+        // also clear any old suggestion
+        setTextFeedbackShown((prev) => {
+          const next = { ...prev };
+          delete next[qid];
+          return next;
+        });
+
+        continue;
+      }
+
+      // Save the main answer (text or table) to DB payload
+      answers[qid] = baseAnswer || tableMarkdown;
+
+      // ---- AI suggestion gating ----
+      let suggestion = textFeedbackShown[qid] || null;
 
       const looksCodeOnlyNow = isCodeOnlyQuestion(
         block,
@@ -1352,75 +1813,46 @@ export default function RunActivityPage({
         container,
         existingAnswers
       );
-      if (
-        !looksCodeOnlyNow &&
-        aiInput &&
-        !followupsShown[qid] &&
-        !isLockedFU(qid) &&
-        !hasExistingFU
-      ) {
-        const aiFollowup = await evaluateResponseWithAI(block, aiInput, {
+
+      if (!looksCodeOnlyNow && !isLockedFU(qid) && !isTestMode) {
+        const aiSuggestion = await evaluateResponseWithAI(block, aiInput, {
           forceFollowup: false,
         });
-        if (aiFollowup) {
-          const baseToSave =
-            baseAnswer || (tableHasInput ? tableMarkdown : '');
-          if (baseToSave) answers[qid] = baseToSave;
 
-          await saveResponse(instanceId, `${qid}F1`, aiFollowup);
-          await saveResponse(instanceId, `${qid}S`, 'inprogress');
+        if (aiSuggestion && aiSuggestion.trim()) {
+          suggestion = aiSuggestion.trim();
 
-          setFollowupsShown((prev) => ({ ...prev, [qid]: aiFollowup }));
+          setTextFeedbackShown((prev) => ({
+            ...prev,
+            [qid]: suggestion,
+          }));
 
-          if (socket && instanceId) {
-            socket.emit('response:update', {
-              instanceId,
-              responseKey: `${qid}F1`,
-              value: aiFollowup,
-              followupPrompt: aiFollowup,
-            });
+          if (!isRequirementsOnly) {
+            await saveResponse(instanceId, `${qid}F1`, suggestion);
           }
-
-          alert(`A follow-up question has been added for ${qid}. Please answer it.`);
-          setIsSubmitting(false);
-          return;
-        }
-      } else {
-        setFollowupsShown((prev) => {
-          const next = { ...prev };
-          delete next[qid];
-          return next;
-        });
-      }
-
-      const followupPrompt = followupsShown[qid];
-      const followupKey = `${qid}FA1`;
-      const followupAnswer = (followupAnswers[followupKey] || '').trim();
-
-      let missingBase = false;
-      let missingFU = false;
-
-      if (baseAnswer) {
-        answers[qid] = baseAnswer;
-      } else if (tableHasInput) {
-        answers[qid] = tableMarkdown;
-      } else {
-        missingBase = true;
-        unanswered.push(`${qid} (base)`);
-      }
-
-      if (followupPrompt) {
-        answers[`${qid}F1`] = followupPrompt;
-        if (followupAnswer) {
-          answers[followupKey] = followupAnswer;
         } else {
-          missingFU = true;
-          unanswered.push(`${qid} (follow-up)`);
+          suggestion = null;
+
+          setTextFeedbackShown((prev) => {
+            const next = { ...prev };
+            delete next[qid];
+            return next;
+          });
+
+          if (!isRequirementsOnly) {
+            await saveResponse(instanceId, `${qid}F1`, '');
+          }
         }
       }
 
-      answers[`${qid}S`] =
-        missingBase || missingFU ? 'inprogress' : 'completed';
+
+
+      // ---- Completion for this question ----
+      answers[`${qid}S`] = suggestion ? 'inprogress' : 'completed';
+
+      if (suggestion) {
+        unanswered.push(`${qid} (AI feedback)`);
+      }
     }
 
     // ---- completion logic ----
@@ -1438,63 +1870,106 @@ export default function RunActivityPage({
 
     const pendingBase = unanswered.length > 0;
 
+    // TEXT AI gating: use textFeedbackShown instead of followupsShown
     const pendingTextFollowups = qBlocks.some((b) => {
       const qid = `${b.groupId}${b.id}`;
       if (isCodeOnlyMap[qid]) return false;
-      const fuShown = !!followupsShown[qid];
-      if (!fuShown) return false;
-      const fuAns = (
-        followupAnswers[`${qid}FA1`] ||
-        existingAnswers[`${qid}FA1`]?.response ||
-        ''
-      ).trim();
-      return fuShown && !fuAns;
+
+      const suggestion = textFeedbackShown[qid];
+
+      const status = normalizeStatus(
+        answers[`${qid}S`] ?? existingAnswers[`${qid}S`]?.response
+      );
+
+      // Pending if there is an AI suggestion and the question isn't marked complete
+      return !!suggestion && status !== 'complete';
     });
 
     const pendingCodeGates = qBlocks.some((b) => {
       const qid = `${b.groupId}${b.id}`;
       if (!isCodeOnlyMap[qid]) return false;
-      const status =
-        answers[`${qid}S`] ||
-        existingAnswers[`${qid}S`]?.response ||
-        'inprogress';
-      if (status === 'completed') return false;
+
+      const status = normalizeStatus(
+        answers[`${qid}S`] ?? existingAnswers[`${qid}S`]?.response
+      );
+      if (status === 'complete') return false;
+
       const attempts = Number(
-        answers[`${qid}attempts`] ||
-        existingAnswers[`${qid}attempts`]?.response ||
+        answers[`${qid}attempts`] ??
+        existingAnswers[`${qid}attempts`]?.response ??
         0
       );
       return attempts < 3;
     });
-    // Is this group set to "ignore AI gating"?
+
+    // In "requirements-only" mode, AI feedback is advisory, not a gate
+    const effectiveTextPending = isRequirementsOnly
+      ? false
+      : pendingTextFollowups;
+    const effectiveCodePending = isRequirementsOnly
+      ? false
+      : pendingCodeGates;
+
     const overrideThisGroup =
       forceOverride || !!overrideGroups[currentQuestionGroupIndex];
 
-    const groupState =
-      overrideThisGroup
+    const hasAIFromThisRun = unanswered.some((u) =>
+      /\(AI feedback\)/.test(u)
+    );
+
+    const computedState =
+      overrideThisGroup ||
+        (!pendingBase && !effectiveTextPending && !effectiveCodePending)
         ? 'completed'
-        : pendingBase || pendingTextFollowups || pendingCodeGates
-          ? 'inprogress'
-          : 'completed';
+        : 'inprogress';
 
     const stateKey = `${currentQuestionGroupIndex + 1}state`;
-    answers[stateKey] = groupState;
+    answers[stateKey] = computedState;
 
-    if (groupState === 'inprogress') {
-      const msg = unanswered.length
-        ? `Please complete: ${unanswered.join(', ')}`
-        : 'Please resolve the pending items in this group.';
-      alert(msg);
+    if (computedState === 'inprogress') {
+      const msgParts = [];
+
+      if (unanswered.length) {
+        msgParts.push(`Please complete: ${unanswered.join(', ')}.`);
+      }
+
+      if ((effectiveTextPending || hasAIFromThisRun) && !isRequirementsOnly) {
+        msgParts.push(
+          'There are AI suggestions (yellow boxes) for one or more questions. ' +
+          'You can revise your answers and submit again, or click ' +
+          '"Continue without fixing AI feedback" to move on.'
+        );
+      }
+
+      if (effectiveCodePending && !isRequirementsOnly) {
+        msgParts.push(
+          'One or more code questions still have issues according to the code checker. ' +
+          'Try improving your program and submit again, or ask your instructor about overriding.'
+        );
+      }
+
+      if (msgParts.length === 0) {
+        msgParts.push('There are still items to review in this group.');
+      }
+
+      alert(msgParts.join(' '));
       setIsSubmitting(false);
       return;
     }
-    if (groupState === 'completed' && overrideThisGroup &&
-      (pendingBase || pendingTextFollowups || pendingCodeGates)) {
+
+    if (
+      computedState === 'completed' &&
+      overrideThisGroup &&
+      (pendingBase || pendingTextFollowups || pendingCodeGates)
+    ) {
       alert(
         'You chose to continue without fixing AI feedback. ' +
         'Your instructor may review this later.'
       );
     }
+
+
+
     try {
       const response = await fetch(
         `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`,
@@ -1504,7 +1979,7 @@ export default function RunActivityPage({
           body: JSON.stringify({
             groupIndex: currentQuestionGroupIndex,
             studentId: user.id,
-            groupState,
+            groupState: computedState,
             answers,
           }),
         }
@@ -1515,6 +1990,19 @@ export default function RunActivityPage({
         alert(`Submission failed: ${errorData.error || 'Unknown error'}`);
       } else {
         await loadActivity();
+        if (!isTestMode && overrideThisGroup) {
+          // Clear any lingering AI suggestions for this group on the client side
+          const qBlocksForGroup = blocks.filter((b) => b.type === 'question');
+          setTextFeedbackShown((prev) => {
+            const next = { ...prev };
+            qBlocksForGroup.forEach((b) => {
+              const qid = `${b.groupId}${b.id}`;
+              delete next[qid];
+            });
+            return next;
+          });
+        }
+
         if (currentQuestionGroupIndex + 1 === groups.length) {
           await fetch(`${API_BASE_URL}/api/responses/mark-complete`, {
             method: 'POST',
@@ -1530,7 +2018,6 @@ export default function RunActivityPage({
       setIsSubmitting(false);
     }
   }
-
 
   async function handleCodeChange(responseKey, updatedCode, meta = {}) {
     setLastEditTs(Date.now());
@@ -1693,8 +2180,8 @@ export default function RunActivityPage({
       console.error('handleCodeChange failed:', err);
     }
   }
-  // Helper: pull score + explain fields for a base question id like "1a"
-  // Helper: pull tri-band scores + feedback for a base question id like "1a"
+
+  // Helper: tri-band scores + feedback for a base question id like "1a"
   function getQuestionScores(qid, block) {
     const codeScoreRaw =
       existingAnswers[`${qid}CodeScore`]?.response ??
@@ -1715,22 +2202,22 @@ export default function RunActivityPage({
     const codeExplain =
       existingAnswers[`${qid}CodeFeedback`]?.response ||
       existingAnswers[`${qid}CodeExplain`]?.response ||
-      "";
+      '';
 
     const runExplain =
       existingAnswers[`${qid}RunFeedback`]?.response ||
       existingAnswers[`${qid}RunExplain`]?.response ||
-      "";
+      '';
 
     const respExplain =
       existingAnswers[`${qid}ResponseFeedback`]?.response ||
       existingAnswers[`${qid}ResponseExplain`]?.response ||
-      "";
+      '';
 
     const bucketPoints = (bucket) => {
       if (!bucket) return 0;
-      if (typeof bucket === "number") return bucket;
-      if (typeof bucket === "object" && typeof bucket.points === "number") {
+      if (typeof bucket === 'number') return bucket;
+      if (typeof bucket === 'object' && typeof bucket.points === 'number') {
         return bucket.points;
       }
       return 0;
@@ -1745,9 +2232,12 @@ export default function RunActivityPage({
       codeScoreRaw != null ||
       runScoreRaw != null ||
       respScoreRaw != null ||
-      existingAnswers.hasOwnProperty(`${qid}CodeScore`) ||
-      existingAnswers.hasOwnProperty(`${qid}RunScore`) ||
-      existingAnswers.hasOwnProperty(`${qid}ResponseScore`);
+      Object.prototype.hasOwnProperty.call(existingAnswers, `${qid}CodeScore`) ||
+      Object.prototype.hasOwnProperty.call(existingAnswers, `${qid}RunScore`) ||
+      Object.prototype.hasOwnProperty.call(
+        existingAnswers,
+        `${qid}ResponseScore`
+      );
 
     const earnedTotal =
       (codeScore != null ? codeScore : 0) +
@@ -1772,6 +2262,10 @@ export default function RunActivityPage({
     };
   }
 
+  const isSubmitted = !!activity?.submitted_at;
+  let globalQuestionCounter = 0;
+
+
   return (
     <>
       <Container className="pt-3 mt-2">
@@ -1782,6 +2276,59 @@ export default function RunActivityPage({
               ? `Course: ${courseName}`
               : 'Untitled Activity'}
         </h2>
+
+        {/* TEST STATUS BANNER */}
+        {isTestMode && (
+          <Alert
+            variant={
+              testLockState.lockedAfter
+                ? 'secondary'
+                : testLockState.lockedBefore
+                  ? 'warning'
+                  : 'info'
+            }
+            className="mt-2"
+          >
+            <div>
+              <strong>This is a timed test.</strong>
+            </div>
+            {testWindow && (
+              <div className="small mt-1">
+                Start:{' '}
+                <strong>{testWindow.start.toLocaleString()}</strong> &nbsp;–&nbsp;
+                End:{' '}
+                <strong>{testWindow.end.toLocaleString()}</strong>
+              </div>
+            )}
+
+            {isStudent && testLockState.lockedBefore && (
+              <div className="small mt-1">
+                The test has not started yet. It will unlock at the start time.
+              </div>
+            )}
+
+            {isStudent &&
+              !testLockState.lockedBefore &&
+              !testLockState.lockedAfter &&
+              testLockState.remainingSeconds != null && (
+                <div className="small mt-1">
+                  Time remaining:{' '}
+                  <strong>
+                    {formatRemainingSeconds(testLockState.remainingSeconds)}
+                  </strong>
+                </div>
+              )}
+
+            {isStudent && testLockState.lockedAfter && (
+              <div className="small mt-1">
+                The test window is closed
+                {activity?.submitted_at
+                  ? ' and your test has been submitted.'
+                  : '.'}
+              </div>
+            )}
+          </Alert>
+        )}
 
         {renderBlocks(preamble, {
           editable: false,
@@ -1796,23 +2343,55 @@ export default function RunActivityPage({
           localCode,
           onLocalCodeChange: updateLocalCode,
           prefill: existingAnswers,
+          fileContents,
+          setFileContents: handleUpdateFileContents,
+          onFileChange: handleFileChange,
         })}
 
         {groups.map((group, index) => {
           const stateKey = `${index + 1}state`;
-          const isComplete =
-            existingAnswers[stateKey]?.response === 'completed';
+          const rawState = existingAnswers[stateKey]?.response;
+          const isComplete = normalizeStatus(rawState) === 'complete';
           const isCurrent = index === currentQuestionGroupIndex;
 
-          const editable = isActive && isCurrent && !isComplete;
-          const showGroup = isInstructor || isComplete || isCurrent;
+          // In test mode: editable as long as the student is active and the test isn't locked
+          const testEditable =
+            isTestMode &&
+            isStudent &&
+            !testLockState.lockedBefore &&
+            !testLockState.lockedAfter;
+
+          const editable = isTestMode
+            ? (isStudent && !isSubmitted)
+            : (isActive && isCurrent && !isComplete);
+
+          console.log('[RUN] group', index, {
+            stateKey,
+            rawState,
+            isComplete,
+            isCurrent,
+            isTestMode,
+            isSubmitted,
+            isActive,
+            editable,
+          });
+          // For students before start, hide groups completely
+          //if (isTestMode && isStudent && testLockState.lockedBefore && !isInstructor) {
+          //  return null;
+          //}
+          const showGroup =
+            isInstructor ||
+            (isTestMode && isStudent) ||
+            isComplete ||
+            isCurrent;
           if (!showGroup) return null;
 
-          // NEW: does this group currently have AI feedback/guidance?
+          // does this group currently have AI feedback/guidance?
           const hasAIGuidanceForGroup = (group.content || [])
             .filter((b) => b.type === 'question')
             .some((b) => {
               const qid = `${b.groupId}${b.id}`;
+              const hasTextSuggestion = !!textFeedbackShown[qid];
               const hasFU = !!followupsShown[qid];
 
               // any code feedback for cells like "1acode1", "1acode2", ...
@@ -1821,7 +2400,7 @@ export default function RunActivityPage({
                   key.startsWith(`${qid}code`) && fb && String(fb).trim() !== ''
               );
 
-              return hasFU || hasCodeFb;
+              return hasTextSuggestion || hasFU || hasCodeFb;
             });
 
           return (
@@ -1862,13 +2441,13 @@ export default function RunActivityPage({
                 prefill: existingAnswers,
                 currentGroupIndex: index,
                 followupsShown,
-                followupAnswers,
-                setFollowupAnswers,
+                textFeedbackShown,
                 socket,
                 instanceId,
                 answeredBy: user?.id,
                 fileContents,
                 setFileContents: handleUpdateFileContents,
+                onFileChange: handleFileChange,
                 onCodeChange: handleCodeChange,
                 codeFeedbackShown,
                 isInstructor,
@@ -1879,21 +2458,15 @@ export default function RunActivityPage({
                 localCode,
                 onLocalCodeChange: updateLocalCode,
                 onTextChange: (responseKey, value) => {
-                  if (responseKey.endsWith('FA1')) {
-                    setFollowupAnswers((prev) => ({
-                      ...prev,
-                      [responseKey]: value,
-                    }));
-                  } else {
-                    setExistingAnswers((prev) => ({
-                      ...prev,
-                      [responseKey]: {
-                        ...prev[responseKey],
-                        response: value,
-                        type: 'text',
-                      },
-                    }));
-                  }
+                  // no special FA1 handling; we store anything as text
+                  setExistingAnswers((prev) => ({
+                    ...prev,
+                    [responseKey]: {
+                      ...prev[responseKey],
+                      response: value,
+                      type: 'text',
+                    },
+                  }));
                   if (isActive && socket) {
                     socket.emit('response:update', {
                       instanceId,
@@ -1905,6 +2478,7 @@ export default function RunActivityPage({
                   setLastEditTs(Date.now());
                 },
               })}
+
               {/* Show per-question scores + AI explanations in TEST MODE */}
               {isTestMode && (
                 <div className="mt-3">
@@ -1912,37 +2486,98 @@ export default function RunActivityPage({
                     .filter((b) => b.type === 'question')
                     .map((b) => {
                       const qid = `${b.groupId}${b.id}`;
+                      globalQuestionCounter += 1;                 // 👈 NEW
+                      const displayNumber = globalQuestionCounter; // e.g., 1, 2, 3, ...
                       const {
                         hasAnyScore,
                         respScore,
                         codeScore,
-                        totalScore,
+                        runScore,
                         respExplain,
                         codeExplain,
-                        totalExplain,
-                      } = getQuestionScores(qid);
+                        runExplain,
+                        maxCode,
+                        maxRun,
+                        maxResp,
+                        earnedTotal,
+                        maxTotal,
+                      } = getQuestionScores(qid, b);
 
                       if (!hasAnyScore) return null;
+
+                      // Safe numeric fallbacks
+                      const wEarn = Number.isFinite(respScore) ? respScore : 0;
+                      const rEarn = Number.isFinite(runScore) ? runScore : 0;
+                      const cEarn = Number.isFinite(codeScore) ? codeScore : 0;
+
+                      const wBand =
+                        maxResp > 0
+                          ? `Written ${wEarn}/${maxResp}`
+                          : respScore != null
+                            ? `Written ${wEarn}`
+                            : null;
+
+                      const rBand =
+                        maxRun > 0
+                          ? `Run ${rEarn}/${maxRun}`
+                          : runScore != null
+                            ? `Run ${rEarn}`
+                            : null;
+
+                      const cBand =
+                        maxCode > 0
+                          ? `Code ${cEarn}/${maxCode}`
+                          : codeScore != null
+                            ? `Code ${cEarn}`
+                            : null;
+
+                      const bandSummary = [wBand, rBand, cBand]
+                        .filter(Boolean)
+                        .join(' · ');
+
+                      const totalEarn = Number.isFinite(earnedTotal)
+                        ? earnedTotal
+                        : 0;
+                      const totalMax = Number.isFinite(maxTotal) ? maxTotal : 0;
+
+                      const totalSummary =
+                        totalMax > 0
+                          ? `${totalEarn}/${totalMax}`
+                          : `${totalEarn}`;
 
                       return (
                         <div
                           key={`${qid}-scores`}
                           className="mt-2 p-2 border rounded bg-light"
                         >
-                          <strong>Question {qid} – Score: </strong>
-                          {totalScore ||
-                            [
-                              respScore && `Written ${respScore}`,
-                              codeScore && `Code ${codeScore}`,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')}
+                          <div>
+                            <strong>Question {displayNumber} – Total: </strong>
+                            {totalSummary}
+                          </div>
+
+                          {bandSummary && (
+                            <div className="small">
+                              <strong>Components:</strong>{' '}
+                              <span style={{ whiteSpace: 'pre-wrap' }}>
+                                {bandSummary}
+                              </span>
+                            </div>
+                          )}
 
                           {respExplain && (
                             <div className="mt-1 small">
-                              <strong>Written/output feedback:</strong>{' '}
+                              <strong>Written feedback:</strong>{' '}
                               <span style={{ whiteSpace: 'pre-wrap' }}>
                                 {respExplain}
+                              </span>
+                            </div>
+                          )}
+
+                          {runExplain && (
+                            <div className="mt-1 small">
+                              <strong>Run/output feedback:</strong>{' '}
+                              <span style={{ whiteSpace: 'pre-wrap' }}>
+                                {runExplain}
                               </span>
                             </div>
                           )}
@@ -1952,15 +2587,6 @@ export default function RunActivityPage({
                               <strong>Code feedback:</strong>{' '}
                               <span style={{ whiteSpace: 'pre-wrap' }}>
                                 {codeExplain}
-                              </span>
-                            </div>
-                          )}
-
-                          {totalExplain && (
-                            <div className="mt-1 small">
-                              <strong>Overall comment:</strong>{' '}
-                              <span style={{ whiteSpace: 'pre-wrap' }}>
-                                {totalExplain}
                               </span>
                             </div>
                           )}
@@ -1988,16 +2614,15 @@ export default function RunActivityPage({
                       'Submit and Continue'
                     )}
                   </Button>
-                  {/* NEW: let students bypass AI gating in learning mode */}
+
+                  {/* Let students bypass AI gating in learning mode */}
                   {!isTestMode && hasAIGuidanceForGroup && (
                     <Button
                       variant="outline-secondary"
                       size="sm"
                       className="ms-2"
                       onClick={() => {
-                        // optional: remember this override
                         setOverrideGroups((prev) => ({ ...prev, [index]: true }));
-                        // and actually submit with override
                         handleSubmit(true);
                       }}
                     >
@@ -2016,6 +2641,21 @@ export default function RunActivityPage({
               All questions complete! Review your responses above.
             </Alert>
           )}
+
+        {isTestMode && overallTestTotals.max > 0 && (
+          <Alert variant="info" className="mt-3">
+            Overall test score:{' '}
+            <strong>
+              {overallTestTotals.earned}/{overallTestTotals.max}
+            </strong>{' '}
+            (
+            {(
+              (overallTestTotals.earned / overallTestTotals.max) *
+              100
+            ).toFixed(1)}
+            %)
+          </Alert>
+        )}
       </Container>
 
       {DEBUG_FILES && (
@@ -2026,6 +2666,58 @@ export default function RunActivityPage({
             : Object.entries(fileContents)
               .map(([k, v]) => `${k}(${(v ?? '').length})`)
               .join(', ')}
+        </div>
+      )}
+
+      {DEBUG_FILES && (
+        <div className="small text-muted" style={{ whiteSpace: 'pre-wrap' }}>
+          <strong>🧪 Files:</strong>{' '}
+          {Object.keys(fileContents).length === 0
+            ? '(none)'
+            : Object.entries(fileContents)
+              .map(([k, v]) => `${k}(${(v ?? '').length})`)
+              .join(', ')}
+        </div>
+      )}
+
+      {/* Floating test timer — always visible for students in test mode */}
+      {isTestMode && isStudent && testWindow && (
+        <div
+          style={{
+            position: 'fixed',
+            top: '70px',      // below the navbar
+            right: '16px',
+            zIndex: 1050,     // above page content but below modals
+          }}
+        >
+          <div className="bg-dark text-white px-3 py-2 rounded shadow-sm small">
+            {testLockState.lockedBefore && (
+              <>
+                <div className="fw-bold">Test starts in</div>
+                {testLockState.remainingSeconds != null && (
+                  <div>{formatRemainingSeconds(testLockState.remainingSeconds)}</div>
+                )}
+              </>
+            )}
+
+            {!testLockState.lockedBefore &&
+              !testLockState.lockedAfter &&
+              testLockState.remainingSeconds != null && (
+                <>
+                  <div className="fw-bold">Time remaining</div>
+                  <div>{formatRemainingSeconds(testLockState.remainingSeconds)}</div>
+                </>
+              )}
+
+            {testLockState.lockedAfter && (
+              <>
+                <div className="fw-bold">Test closed</div>
+                {activity?.submitted_at && (
+                  <div className="mt-1">Your test has been submitted.</div>
+                )}
+              </>
+            )}
+          </div>
         </div>
       )}
     </>

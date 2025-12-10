@@ -1,7 +1,18 @@
-// server/courses/routes.js
 const express = require("express");
 const router = express.Router();
 const controller = require("./controller");
+
+// 🔹 User-specific enrollments MUST come before generic "/:courseId/..." routes
+router.get("/user/:userId/enrollments", controller.getUserEnrollments);
+
+// Get all courses
+router.get("/", controller.getAllCourses);
+
+// Create a new course
+router.post("/", controller.createCourse);
+
+// Enroll in course by code
+router.post("/enroll-by-code", controller.enrollByCode);
 
 // Get all students enrolled in a course (used for role selection)
 router.get("/:courseId/enrollments", controller.getCourseEnrollments);
@@ -9,33 +20,22 @@ router.get("/:courseId/enrollments", controller.getCourseEnrollments);
 // Get activities for a course
 router.get("/:courseId/activities", controller.getCourseActivities);
 
-// Get user's enrolled courses
-router.get("/user/:userId/enrollments", controller.getUserEnrollments);
-
-// Enroll in course by code
-router.post("/enroll-by-code", controller.enrollByCode);
-
-// Get all courses (no custom middleware needed here)
-router.get("/", controller.getAllCourses);
-
-// Create a new course
-router.post("/", controller.createCourse);
-
-// Delete a course
-router.delete("/:id", controller.deleteCourse);
+// 🔹 NEW: Get test results for a course
+router.get("/:courseId/test-results", controller.getCourseTestResults);
 
 // Get students for a course
 router.get("/:courseId/students", controller.getStudentsForCourse);
 
-// Unenroll a student from a course
-router.delete("/:courseId/unenroll/:studentId", controller.unenrollStudentFromCourse);
-
 // Get course info (used in ManageCourseStudentsPage)
 router.get("/:courseId/info", controller.getCourseInfo);
 
-// Get course progress (used in ManageCoursesPage)
+// Get course progress (used in ManageCoursesPage) — regular activities only
 router.get("/:courseId/progress", controller.getCourseProgress);
 
+// Unenroll a student from a course
+router.delete("/:courseId/unenroll/:studentId", controller.unenrollStudentFromCourse);
 
+// Delete a course
+router.delete("/:id", controller.deleteCourse);
 
 module.exports = router;

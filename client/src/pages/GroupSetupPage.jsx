@@ -4,6 +4,8 @@ import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Container, Row, Col, Button, Form, Card } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
+import { normalizeDbDatetime, utcToLocalInputValue, formatLocalDateTime } from '../utils/time';
+
 
 export default function GroupSetupPage() {
   const { courseId, activityId } = useParams();
@@ -12,9 +14,18 @@ export default function GroupSetupPage() {
   const [students, setStudents] = useState([]);
   const [selected, setSelected] = useState({});
   const [groups, setGroups] = useState([]);
-  const [groupSize, setGroupSize] = useState(4);      // 🔹 New: group size selector (1–5)
-  const [useRoles, setUseRoles] = useState(true);     // 🔹 New: toggle role assignment
 
+  const [groupSize, setGroupSize] = useState(4);
+  const [useRoles, setUseRoles] = useState(true);
+
+  // NEW: test-related state
+  const [isTest, setIsTest] = useState(false);
+  const [testStartAt, setTestStartAt] = useState('');          // datetime-local string
+  const [testDurationMinutes, setTestDurationMinutes] = useState(30);
+  const [lockedBeforeStart, setLockedBeforeStart] = useState(true);
+  const [lockedAfterEnd, setLockedAfterEnd] = useState(true);
+
+  // Load students
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/courses/${courseId}/students`)
       .then(res => res.json())
@@ -31,6 +42,57 @@ export default function GroupSetupPage() {
       })
       .catch(err => console.error('❌ Failed to load students:', err));
   }, [courseId, activityId]);
+
+  // NEW: load activity meta and inspect sheet for \test
+  useEffect(() => {
+    async function fetchActivity() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/activities/${activityId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const sheetUrl = data.sheet_url;
+        let sheetHasTestTag = false;
+
+        if (sheetUrl && sheetUrl !== 'undefined') {
+          try {
+            const docRes = await fetch(
+              `${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(
+                sheetUrl
+              )}`
+            );
+            if (docRes.ok) {
+              const { lines } = await docRes.json();
+              sheetHasTestTag = Array.isArray(lines)
+                ? lines.some((line) => line.trim() === '\\test')
+                : false;
+            }
+          } catch (err) {
+            console.error('❌ Failed to inspect sheet for \\test:', err);
+          }
+        }
+
+        const dbFlag = data.is_test ?? data.isTest ?? false;
+        // Sheet is the truth; DB is just a fallback
+        setIsTest(sheetHasTestTag || !!dbFlag);
+      } catch (err) {
+        console.error('❌ Failed to load activity meta:', err);
+      }
+    }
+
+    if (activityId) {
+      fetchActivity();
+    }
+  }, [activityId]);
+
+
+  // NEW: when this is a test, default to groups-of-1 and no roles
+  useEffect(() => {
+    if (isTest) {
+      setGroupSize(1);
+      setUseRoles(false);
+    }
+  }, [isTest]);
 
   const toggleSelect = (id) => {
     setSelected(prev => ({ ...prev, [id]: !prev[id] }));
@@ -75,39 +137,54 @@ export default function GroupSetupPage() {
 
     const rolePriority = ['facilitator', 'analyst', 'qc', 'spokesperson'];
 
-const finalGroups = rawGroups.map(group => {
-  const gSize = group.length;
+    const finalGroups = rawGroups.map(group => {
+      const gSize = group.length;
 
-  const members = group.map((student, index) => {
-    let role = null; // default: no role
+      const members = group.map((student, index) => {
+        let role = null; // default: no role
 
-    if (useRoles) {
-      if (gSize < 4) {
-        // Fill roles in priority order for however many students there are
-        role = rolePriority[index] || null;
-      } else if (gSize === 4) {
-        role = rolePriority[index] || null;
-      } else {
-        // gSize === 5: first 4 get roles, 5th gets none
-        role = index < 4 ? rolePriority[index] : null;
-      }
-    }
+        if (useRoles) {
+          if (gSize < 4) {
+            // Fill roles in priority order for however many students there are
+            role = rolePriority[index] || null;
+          } else if (gSize === 4) {
+            role = rolePriority[index] || null;
+          } else {
+            // gSize === 5: first 4 get roles, 5th gets none
+            role = index < 4 ? rolePriority[index] : null;
+          }
+        }
 
-    return {
-      student_id: student.id,
-      role
-    };
-  });
+        return {
+          student_id: student.id,
+          role
+        };
+      });
 
-  return { members };
-});
-
+      return { members };
+    });
 
     console.log('🧩 Generated groups:', finalGroups);
     setGroups(finalGroups);
   };
 
   const handleSaveGroups = async () => {
+    // NEW: minimal validation for tests
+    if (isTest) {
+      if (!testStartAt) {
+        alert('Please set the test start date and time.');
+        return;
+      }
+      if (!testDurationMinutes || testDurationMinutes <= 0) {
+        alert('Please set a positive time limit in minutes.');
+        return;
+      }
+    }
+    // Convert local datetime-local string → UTC ISO before sending
+    const testStartAtUtc =
+      isTest && testStartAt
+        ? new Date(testStartAt).toISOString()
+        : null;
     try {
       const res = await fetch(`${API_BASE_URL}/api/activity-instances/setup-groups`, {
         method: 'POST',
@@ -115,9 +192,15 @@ const finalGroups = rawGroups.map(group => {
         body: JSON.stringify({
           activityId: Number(activityId),
           courseId: Number(courseId),
-          groups
+          groups,
+          // test timing + locks
+          testStartAt: isTest ? testStartAtUtc : null,
+          testDurationMinutes: isTest ? Number(testDurationMinutes) : 0,
+          lockedBeforeStart: isTest ? lockedBeforeStart : false,
+          lockedAfterEnd: isTest ? lockedAfterEnd : false,
         })
       });
+
 
       const data = await res.json();
 
@@ -137,6 +220,12 @@ const finalGroups = rawGroups.map(group => {
     <Container className="mt-4">
       <h2>Group Setup</h2>
 
+      {isTest && (
+        <p className="text-muted">
+          This activity is marked as a <strong>test</strong>. Defaults: groups of 1, no roles, timed window.
+        </p>
+      )}
+
       <h5>Select Present Students:</h5>
       <Row>
         {Array.isArray(students) && students.length > 0 ? (
@@ -155,13 +244,14 @@ const finalGroups = rawGroups.map(group => {
         )}
       </Row>
 
-      {/* 🔹 Controls: group size + use roles */}
+      {/* Controls: group size + use roles */}
       <Row className="mt-3">
         <Col md={3}>
           <Form.Label>Group Size</Form.Label>
           <Form.Select
             value={groupSize}
             onChange={(e) => setGroupSize(Number(e.target.value))}
+            disabled={isTest} // tests default to 1; override if you want
           >
             {[1, 2, 3, 4, 5].map(size => (
               <option key={size} value={size}>{size}</option>
@@ -174,9 +264,51 @@ const finalGroups = rawGroups.map(group => {
             id="use-roles"
             label="Assign roles to group members"
             checked={useRoles}
+            disabled={isTest}  // no roles for tests by default
             onChange={(e) => setUseRoles(e.target.checked)}
           />
         </Col>
+
+        {/* NEW: test timing controls */}
+        {isTest && (
+          <>
+            <Col md={3}>
+              <Form.Label>Test start date &amp; time</Form.Label>
+              <Form.Control
+                type="datetime-local"
+                value={testStartAt}
+                onChange={(e) => setTestStartAt(e.target.value)}
+              />
+            </Col>
+            <Col md={3}>
+              <Form.Label>Time limit (minutes)</Form.Label>
+              <Form.Control
+                type="number"
+                min={1}
+                value={testDurationMinutes}
+                onChange={(e) => setTestDurationMinutes(Number(e.target.value) || 0)}
+              />
+            </Col>
+            <Col md={3} className="d-flex align-items-end">
+              <Form.Check
+                type="checkbox"
+                id="locked-before-start"
+                label="Lock before start time"
+                checked={lockedBeforeStart}
+                onChange={(e) => setLockedBeforeStart(e.target.checked)}
+              />
+            </Col>
+            <Col md={3} className="d-flex align-items-end">
+              <Form.Check
+                type="checkbox"
+                id="locked-after-end"
+                label="Lock after end of test"
+                checked={lockedAfterEnd}
+                onChange={(e) => setLockedAfterEnd(e.target.checked)}
+              />
+            </Col>
+          </>
+        )}
       </Row>
 
       <Button className="mt-3" onClick={generateGroups}>
@@ -195,7 +327,6 @@ const finalGroups = rawGroups.map(group => {
                     group.members.map((m, i) => {
                       const student = students.find(s => s.id === m.student_id);
                       const name = student?.name || 'Unknown';
-                      // Show role label only if non-empty
                       return (
                         <li key={i}>
                           {m.role ? `${m.role}: ${name}` : name}

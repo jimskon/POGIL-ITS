@@ -6,9 +6,10 @@ import ActivityEnvironment from '../components/activity/ActivityEnvironment';
 import ActivityPythonBlock from '../components/activity/ActivityPythonBlock';
 import { Form } from 'react-bootstrap';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';;
 
 import ActivityCppBlock from '../components/activity/ActivityCppBlock';
+import { Alert } from 'react-bootstrap';
 
 
 // --- helpers ---
@@ -74,7 +75,7 @@ function ImgWithFallback({ src, alt, widthStyle, captionHtml }) {
 // Keeps everything else as-is. Works for any \SomeTag{ ... } (including section*, link, image, etc.)
 function collapseBracedCommands(rawLines) {
   const startsTag = (s) =>
-    +    /^\s*\\(?:title|name|activitycontext|studentlevel|aicodeguidance|section\*?|questiongroup|question|sampleresponses|feedbackprompt|followupprompt|table|image|link|file|pythonturtle|cpp|include)\{/.test(s);
+    /^\s*\\(?:title|name|activitycontext|studentlevel|aicodeguidance|section\*?|questiongroup|question|sampleresponses|feedbackprompt|followupprompt|table|image|link|file|pythonturtle|cpp|include)\{/.test(s);
   const out = [];
   let buf = null;
   let depth = 0;
@@ -108,6 +109,7 @@ export default function FileBlock({
   fileContents,
   editable,
   setFileContents,
+  onFileChange,           // 👈 NEW
 }) {
   // Use live value from fileContents if present, otherwise fall back to initialContent
   const effective =
@@ -116,6 +118,10 @@ export default function FileBlock({
       : initialContent;
 
   const [localValue, setLocalValue] = useState(effective);
+
+  // NEW: refs to manage caret position
+  const textareaRef = useRef(null);
+  const pendingSelectionRef = useRef(null);
 
   // Keep local in sync when parent state or initial content changes
   useEffect(() => {
@@ -126,7 +132,7 @@ export default function FileBlock({
     setLocalValue(next);
   }, [fileContents, filename, initialContent]);
 
-  // 🔴 KEY: seed fileContents once so the runner sees authored files
+  // Seed fileContents once so the runner sees authored files
   useEffect(() => {
     if (
       setFileContents &&
@@ -140,6 +146,19 @@ export default function FileBlock({
     }
   }, [filename, initialContent, fileContents, setFileContents]);
 
+  // After we update localValue due to custom key handling, restore caret
+  useEffect(() => {
+    if (pendingSelectionRef.current && textareaRef.current) {
+      const { start, end } = pendingSelectionRef.current;
+      try {
+        textareaRef.current.setSelectionRange(start, end);
+      } catch {
+        // ignore
+      }
+      pendingSelectionRef.current = null;
+    }
+  }, [localValue]);
+
   const handleChange = (e) => {
     const updated = e.target.value;
     setLocalValue(updated);
@@ -150,18 +169,81 @@ export default function FileBlock({
         [filename]: updated,
       }));
     }
+
+    // 👇 NEW: notify parent so it can broadcast / persist
+    if (onFileChange) {
+      onFileChange(updated);
+    }
+  };
+
+  // TAB inserts tab; ENTER auto-indents
+  const handleKeyDown = (e) => {
+    if (!editable) return;
+
+    const el = e.target;
+    const value = localValue;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? start;
+
+    // Tab: insert a tab instead of leaving the textarea
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const indent = '\t'; // or '    ' for 4 spaces
+      const newValue = value.slice(0, start) + indent + value.slice(end);
+      const newPos = start + indent.length;
+
+      setLocalValue(newValue);
+      if (setFileContents) {
+        setFileContents(prev => ({
+          ...prev,
+          [filename]: newValue,
+        }));
+      }
+
+      pendingSelectionRef.current = { start: newPos, end: newPos };
+      return;
+    }
+
+    // Enter: auto-indent based on current line's leading whitespace
+    if (e.key === 'Enter') {
+      e.preventDefault();
+
+      const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+      const line = value.slice(lineStart, start);
+      const indentMatch = line.match(/^[\t ]*/);
+      const indent = indentMatch ? indentMatch[0] : '';
+
+      const insert = '\n' + indent;
+      const newValue = value.slice(0, start) + insert + value.slice(end);
+      const newPos = start + insert.length;
+
+      setLocalValue(newValue);
+      if (setFileContents) {
+        setFileContents(prev => ({
+          ...prev,
+          [filename]: newValue,
+        }));
+      }
+
+      pendingSelectionRef.current = { start: newPos, end: newPos };
+      return;
+    }
   };
 
   return (
     <div className="mb-3">
-      <strong>File: <code>{filename}</code></strong>
+      <strong>
+        File: <code>{filename}</code>
+      </strong>
       <Form.Control
         as="textarea"
         value={localValue}
         onChange={handleChange}
+        onKeyDown={handleKeyDown}
         rows={Math.max(4, localValue.split('\n').length)}
         readOnly={!editable}
         className="font-monospace bg-light mt-1"
+        ref={textareaRef}
       />
     </div>
   );
@@ -169,12 +251,10 @@ export default function FileBlock({
 
 
 
-
-
-
 export function parseSheetToBlocks(lines) {
   //console.log("🧑‍💻 parseSheetToBlocks invoked");
   lines = collapseBracedCommands(lines);
+  let isTest = false;
   const blocks = [];
   let groupNumber = 0;
   let questionLetterCode = 97;
@@ -186,6 +266,7 @@ export function parseSheetToBlocks(lines) {
   let inList = false;
   let listType = null;
   let listItems = [];
+  let listBelongsToQuestion = false;
   let inFileBlock = false;
   let currentFile = null;
   let inScoreBlock = false;
@@ -283,6 +364,12 @@ export function parseSheetToBlocks(lines) {
 
   for (let line of lines) {
     const trimmed = line.trim();
+    // mark this activity as a test
+    if (trimmed === '\\test') {
+      isTest = true;
+
+      continue;
+    }
     // --- inside a \score ... \endscore block ---
     if (inScoreBlock && currentScore && currentQuestion) {
       if (trimmed === '\\endscore') {
@@ -386,14 +473,34 @@ export function parseSheetToBlocks(lines) {
       inList = true;
       listType = trimmed.includes('itemize') ? 'ul' : 'ol';
       listItems = [];
+      // if we’re inside a question, this list should be part of that question
+      listBelongsToQuestion = !!currentQuestion;
       continue;
     }
 
     if (trimmed === '\\end{itemize}' || trimmed === '\\end{enumerate}') {
-      blocks.push({ type: 'list', listType, items: listItems.map(format) });
+      if (listBelongsToQuestion && currentQuestion) {
+        // list lives inside the current question: append HTML directly
+        const itemsHtml = listItems
+          .map(text => `<li>${format(text)}</li>`)
+          .join('');
+        const listHtml = `<${listType}>${itemsHtml}</${listType}>`;
+
+        // add a line break before the list to keep spacing reasonable
+        currentQuestion.prompt += '<br>' + listHtml;
+      } else {
+        // plain top-level list block (same behavior as before)
+        blocks.push({
+          type: 'list',
+          listType,
+          items: listItems.map(format),
+        });
+      }
+
       inList = false;
       listType = null;
       listItems = [];
+      listBelongsToQuestion = false;
       continue;
     }
 
@@ -621,22 +728,30 @@ export function parseSheetToBlocks(lines) {
     }
 
     // questiongroup: \questiongroup{...}
+    // questiongroup: \questiongroup{...}
     if (trimmed.startsWith('\\questiongroup{')) {
       flushCurrentBlock();
-      groupNumber++;
-      inGroup = true;
-      questionLetterCode = 97;
+
       const m = trimmed.match(/\\questiongroup\{([\s\S]+?)\}/);
       const contentRaw = m ? m[1] : '';
       const content = format(contentRaw.trimStart());
-      blocks.push({ type: 'groupIntro', groupId: groupNumber, content }); continue;
+
+      // Always create a group intro (tests and non-tests)
+      groupNumber++;
+      inGroup = true;
+      questionLetterCode = 97;  // reset per group if you want a,b,c,...
+      blocks.push({ type: 'groupIntro', groupId: groupNumber, content });
+
+      continue;
     }
 
     if (trimmed === '\\endquestiongroup') {
+      // Always close the group (tests and non-tests)
       blocks.push({ type: 'endGroup' });
       inGroup = false;
       continue;
     }
+
 
     if (trimmed.startsWith('\\question{')) {
       // grab everything between the first '{' and the LAST '}' on this line
@@ -659,7 +774,9 @@ export function parseSheetToBlocks(lines) {
         samples: [],
         feedback: [],
         followups: [],
-        codeBlocks: []
+        codeBlocks: [],
+        // per-question scoring metadata
+        scores: {},   // e.g. { response: {points, instructionsHtml, instructionsRaw}, ... }
       };
       continue;
     }
@@ -688,33 +805,6 @@ export function parseSheetToBlocks(lines) {
       continue;
     }
 
-    if (trimmed.startsWith('\\question{')) {
-      // grab everything between the first '{' and the LAST '}' on this line
-      const open = trimmed.indexOf('{');
-      const close = trimmed.lastIndexOf('}');
-      const raw = (open >= 0 && close > open)
-        ? trimmed.slice(open + 1, close)
-        : trimmed.slice(open + 1);
-
-      const id = String.fromCharCode(questionLetterCode++);
-      const rawClean = raw.trimStart();
-      currentQuestion = {
-        type: 'question',
-        id,
-        groupId: groupNumber,
-        label: `${id}.`,
-        responseId: responseId++,
-        prompt: format(rawClean),
-        responseLines: 1,
-        samples: [],
-        feedback: [],
-        followups: [],
-        codeBlocks: [],
-        // NEW: per-question scoring metadata
-        scores: {},   // e.g. { response: {points, instructionsHtml, instructionsRaw}, ... }
-      };
-      continue;
-    }
 
     // --- scoring blocks: \score{n,type} ... \endscore ---
     // type is one of: response, code, output
@@ -816,11 +906,30 @@ export function parseSheetToBlocks(lines) {
     if (trimmed.startsWith('\\file{')) {
       flushCurrentBlock();
       inFileBlock = true;
-      const filename = trimmed.match(/\\file\{(.+?)\}/)?.[1]?.trim();
-      console.log("📂 Starting file block for:", filename);
-      currentFile = { type: 'file', filename, lines: [] };
+
+      const m = trimmed.match(/\\file\{([\s\S]+?)\}/);
+      const inner = m?.[1]?.trim() || '';
+
+      // Support: \file{test.cpp} and \file{test.cpp,readonly}
+      const parts = inner
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean);
+
+      const filename = parts[0] || '';
+      const readonly = (parts[1]?.toLowerCase() === 'readonly');
+
+      console.log("📂 Starting file block for:", filename, "readonly:", readonly);
+
+      currentFile = {
+        type: 'file',
+        filename,
+        readonly,      // 👈 carry this through to the block
+        lines: [],
+      };
       continue;
     }
+
 
     if (trimmed === '\\endfile') {
       if (currentFile) {
@@ -847,8 +956,21 @@ export function parseSheetToBlocks(lines) {
   }
 
   flushCurrentBlock();
+
+  // For tests: renumber all questions sequentially: 1., 2., 3., ...
+  if (isTest) {
+    let q = 0;
+    for (const b of blocks) {
+      if (b.type === 'question') {
+        q += 1;
+        b.label = `${q}.`;
+      }
+    }
+  }
+
   return blocks;
 }
+
 
 // turn rich prompt HTML into plain text for the AI
 const stripHtml = (s = '') =>
@@ -879,6 +1001,8 @@ export function renderBlocks(blocks, options = {}) {
     codeFeedbackShown = {},
     fileContents,
     setFileContents,
+    textFeedbackShown = {},
+    onFileChange = null,
   } = options;
 
   let standaloneCodeCounter = 1;
@@ -953,8 +1077,10 @@ export function renderBlocks(blocks, options = {}) {
       return (
         <ListTag key={`list-${index}`} className="my-2 list-disc list-inside">
           {block.items.map((item, i) => (
-            <li key={`list-item-${i}`}>{item}</li>
-          ))}
+            <li
+              key={`list-item-${i}`}
+              dangerouslySetInnerHTML={{ __html: item }}
+            />))}
         </ListTag>
       );
     }
@@ -1006,17 +1132,39 @@ export function renderBlocks(blocks, options = {}) {
     }
 
     if (block.type === 'file') {
+      const isReadonly = !!block.readonly;
+
+      // All file editing is local-only, per user.
+      // fileContents/setFileContents live only in this client,
+      // are NOT synced via socket or saved to the DB.
+      const filename = block.filename;
+      const canonicalContents = fileContents || {};
+      const initialContent = block.content || '';
+
+      // What this user currently has in memory
+      const effectiveContent =
+        Object.prototype.hasOwnProperty.call(canonicalContents, filename)
+          ? canonicalContents[filename]
+          : initialContent;
+
+      // Everyone can edit non-readonly files, regardless of active/observer
+      const canEdit = !isReadonly;
+
       return (
-        <FileBlock
-          key={`file-${block.filename}-${index}`}
-          filename={block.filename}
-          initialContent={block.content || ''}
-          fileContents={fileContents}
-          setFileContents={setFileContents}
-          editable={true}
-        />
+        <div key={`file-wrap-${block.filename}-${index}`} className="mb-3">
+          <FileBlock
+            filename={block.filename}
+            initialContent={effectiveContent}
+            fileContents={canonicalContents}
+            setFileContents={setFileContents}
+            editable={canEdit}
+            // no onFileChange → files remain local-only, never broadcast/persisted
+          />
+        </div>
       );
     }
+
+
 
 
 
@@ -1159,7 +1307,7 @@ export function renderBlocks(blocks, options = {}) {
               fileContents={fileContents}
               setFileContents={setFileContents}
               timeLimit={tl}
-              includeFiles={block.imports || []} 
+              includeFiles={block.imports || []}
             />
           </div>
         );
@@ -1191,6 +1339,7 @@ export function renderBlocks(blocks, options = {}) {
         feedbackPrompt: '',
         hasTextResponse: !!block.hasTextResponse,
         hasTableResponse: !!block.hasTableResponse,
+        lang: 'python',
       };
 
       const tl = block.timeLimit ?? 50000;
@@ -1419,7 +1568,10 @@ export function renderBlocks(blocks, options = {}) {
         block.hasTextResponse || (!hasPython && !hasCpp && !block.hasTableResponse);
 
       const lockMainResponse =
-        !!followupsShown?.[responseKey] && !!block.hasTextResponse;
+        runMode === 'preview'
+          ? !!followupsShown?.[responseKey] && !!block.hasTextResponse
+          : false;
+
 
       // NEW: formatted score badges
       const scoreBadges = [];
@@ -1495,6 +1647,7 @@ export function renderBlocks(blocks, options = {}) {
               feedbackPrompt: stripHtml(block.feedback?.[0] || ''),        // ✅ include per-question guidance
               hasTextResponse: !!block.hasTextResponse,
               hasTableResponse: !!block.hasTableResponse,
+              lang: 'python',
             };
 
             const tl = py.timeLimit ?? block.timeLimit ?? 50000;
@@ -1526,6 +1679,7 @@ export function renderBlocks(blocks, options = {}) {
                   code={displayedCode}
                   blockIndex={`q-${currentGroupIndex}-${block.id}-${i}`}
                   editable={canEdit}
+                  localOnly={runMode === 'preview'}
                   responseKey={responseKey}
                   onCodeChange={(rk, code, extra) => {
                     if (showToggle && codeMode === 'local' && !isActive) {
@@ -1541,7 +1695,7 @@ export function renderBlocks(blocks, options = {}) {
                   turtleTargetId={isTurtle ? turtleId : undefined}
                   turtleWidth={w}
                   turtleHeight={h}
-                  includeFiles={py.imports || []} 
+                  includeFiles={py.imports || []}
                 />
               </div>
             );
@@ -1597,6 +1751,7 @@ export function renderBlocks(blocks, options = {}) {
                   code={displayedCode}
                   blockIndex={`cpp-${block.groupId}-${block.id}-${i}`}
                   editable={canEdit}
+                  localOnly={runMode === 'preview'}
                   responseKey={responseKey}
                   onCodeChange={(rk, code, extra) => {
                     if (showToggle && codeMode === 'local' && !isActive) {
@@ -1607,6 +1762,9 @@ export function renderBlocks(blocks, options = {}) {
                       onCodeChange(rk, code, {
                         ...extra,
                         questionText: stripHtml(block.prompt || ''),
+                        sampleResponse: stripHtml(block.samples?.[0] || ''),
+                        feedbackPrompt: stripHtml(block.feedback?.[0] || ''),
+
                         hasTextResponse: !!block.hasTextResponse,
                         hasTableResponse: !!block.hasTableResponse,
                         lang: 'cpp',
@@ -1673,31 +1831,49 @@ export function renderBlocks(blocks, options = {}) {
                 hasTextResponse: !!block.hasTextResponse,
                 hasTableResponse: !!block.hasTableResponse,
               };
+
+              const guidance = textFeedbackShown?.[responseKey];
+
               return (
-                <Form.Control
-                  as="textarea"
-                  rows={Math.max((block.responseLines || 1), 2)}
-                  value={prefill?.[responseKey]?.response || ''}
-                  readOnly={
-                    !editable ||
-                    lockMainResponse ||
-                    prefill?.[`${responseKey}S`] === 'complete' ||
-                    prefill?.[`${responseKey}S`]?.response === 'complete'
-                  }
-                  data-question-id={responseKey}
-                  className="mt-2"
-                  style={{ resize: 'vertical' }}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (options.onTextChange) {
-                      // 👇 pass meta as the 3rd arg
-                      options.onTextChange(responseKey, val, meta);
+                <>
+                  <Form.Control
+                    as="textarea"
+                    rows={Math.max((block.responseLines || 1), 2)}
+                    value={prefill?.[responseKey]?.response || ''}
+                    readOnly={
+                      !editable ||
+                      lockMainResponse ||
+                      prefill?.[`${responseKey}S`] === 'complete' ||
+                      prefill?.[`${responseKey}S`]?.response === 'complete'
                     }
-                  }}
-                />
+                    data-question-id={responseKey}
+                    className="mt-2"
+                    style={{ resize: 'vertical' }}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (options.onTextChange) {
+                        options.onTextChange(responseKey, val, meta);
+                      }
+                    }}
+                  />
+
+                  {/* 🔶 AI Guidance: visible to active student, observers, and instructor */}
+                  {guidance && (
+                    <Alert
+                      variant="warning"
+                      className="mt-2"
+                      style={{ whiteSpace: 'pre-wrap' }}
+                    >
+                      <strong>AI Guidance</strong>
+                      <div>{guidance}</div>
+                    </Alert>
+                  )}
+                </>
               );
             })()
           ) : null}
+
+
 
 
           {runMode === 'preview' && (

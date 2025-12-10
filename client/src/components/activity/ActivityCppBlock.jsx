@@ -71,15 +71,16 @@ export default function ActivityCppBlock({
   const taRef = useRef(null);
   const gutterRef = useRef(null);
   const codeScrollRef = useRef(null);
+  const selectionRef = useRef(null);
 
-  
+
   // --- debounce plumbing for broadcast / sync ---
   const debounceMs = 300;
   const broadcastTimerRef = useRef(null);
   const lastSentRef = useRef(initialCode ?? '');
   const pendingRemoteRef = useRef(null);
 
-  
+
   useEffect(
     () => () => {
       if (broadcastTimerRef.current) clearTimeout(broadcastTimerRef.current);
@@ -105,6 +106,47 @@ export default function ActivityCppBlock({
       sendUpstream(val, { broadcastOnly: true });
       broadcastTimerRef.current = null;
     }, debounceMs);
+  };
+
+  const handleKeyDown = (e) => {
+    if (!isEditing || !editable) return;
+
+    const el = e.target;
+    const value = code;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? start;
+
+    // TAB → insert indent instead of leaving textarea
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const indent = '    '; // change to '\t' if you want hard tabs
+      const newValue = value.slice(0, start) + indent + value.slice(end);
+      const newPos = start + indent.length;
+
+      setCode(newValue);
+      if (editable) scheduleBroadcast(newValue);
+      selectionRef.current = { start: newPos, end: newPos };
+      return;
+    }
+
+    // ENTER → auto-indent
+    if (e.key === 'Enter') {
+      e.preventDefault();
+
+      const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+      const line = value.slice(lineStart, start);
+      const match = line.match(/^[\t ]*/);
+      const indent = match ? match[0] : '';
+
+      const insert = '\n' + indent;
+      const newValue = value.slice(0, start) + insert + value.slice(end);
+      const newPos = start + insert.length;
+
+      setCode(newValue);
+      if (editable) scheduleBroadcast(newValue);
+      selectionRef.current = { start: newPos, end: newPos };
+      return;
+    }
   };
 
   const flushPendingRemoteIfAny = () => {
@@ -138,6 +180,15 @@ export default function ActivityCppBlock({
       Prism.highlightElement(codeRef.current);
     }
   }, [isEditing, code]);
+
+  useEffect(() => {
+    if (!isEditing || !taRef.current || !selectionRef.current) return;
+    const { start, end } = selectionRef.current;
+    try {
+      taRef.current.setSelectionRange(start, end);
+    } catch { }
+    selectionRef.current = null;
+  }, [code, isEditing]);
 
   // init terminal once
   useEffect(() => {
@@ -269,7 +320,7 @@ export default function ActivityCppBlock({
     setTerminalOutput((prev) => prev + chunk);
   };
 
-    // Derive the output key from the code key, e.g. 1acode1 -> 1aoutput1
+  // Derive the output key from the code key, e.g. 1acode1 -> 1aoutput1
   const outputKey = useMemo(() => {
     if (!responseKey) return '';
     return responseKey.replace(/code(\d+)$/, 'output$1');
@@ -299,14 +350,8 @@ export default function ActivityCppBlock({
     setIsRunning(true);
 
     try {
-      const payload = { code };
-
-      if (!localOnly) {
-        const filesPayload = buildFilesPayload();
-        if (filesPayload) {
-          payload.files = filesPayload;
-        }
-      }
+    const filesPayload = buildFilesPayload();
+    const payload = filesPayload ? { code, files: filesPayload } : { code };
 
       const compileController = new AbortController();
       const compileTimer = setTimeout(() => compileController.abort(), timeLimit);
@@ -653,12 +698,15 @@ export default function ActivityCppBlock({
               setCode(v);
               if (editable) scheduleBroadcast(v);
             }}
+            onKeyDown={handleKeyDown}
             onScroll={onTextareaScroll}
             rows={Math.max(16, (code ?? '').split(EOL_SPLIT).length)}
             className="font-monospace mt-0 bg-white text-dark"
             style={{ ...styles.textarea, minHeight: 420 }}
           />
         ) : (
+
+
           <div
             ref={codeScrollRef}
             style={{ ...styles.codeView, minHeight: 420 }}

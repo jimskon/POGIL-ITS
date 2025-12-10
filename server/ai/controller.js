@@ -12,7 +12,6 @@ function stripHtml(s = '') {
     .replace(/<\/?[A-Za-z!][^>]*>/g, ''); // strip only real tags, not "< 1" or "> 10"
 }
 
-
 const noFollowups = (s) => /^\s*(none|no\s*follow-?ups?|no\s*feedback)\s*$/i
   .test(String(s || '').trim());
 
@@ -86,20 +85,19 @@ function derivePolicyFromGuidance(guidanceText = '') {
       noExtras: false,
     };
   }
-  //const g = stripHtml(guidanceText).toLowerCase();
+
   const explicitFU = (g.match(/follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i) || [])[1];
-  const noFollowups = /do not ask a follow up/.test(g);
+  const noFollowupFlag = /do not ask a follow up/.test(g);
   const requirementsOnly = /requirements-only/.test(g);
   const ignoreSpacing = /ignore spacing/.test(g);
   const forbidFStrings = /f-strings.*(unavailable|do not|don't)/.test(g);
   const failOpen = /fail[- ]open/.test(g) || /doesn'?t have to be perfect/.test(g);
   const noExtras = /do not require extra features|do not require extras/.test(g);
 
-  // If not explicitly “no followups”, default to gibberish-only followups when requirements-only/fail-open vibe is present.
-  // Prefer "default" unless explicitly set to "none".
+  // Prefer explicit gate; otherwise honor "do not ask a follow up"
   const followupGate = explicitFU
     ? explicitFU.toLowerCase()
-    : (noFollowups ? 'none' : 'default');
+    : (noFollowupFlag ? 'none' : 'default');
 
   return {
     followupGate,           // 'none' | 'gibberish-only' | 'default'
@@ -128,7 +126,6 @@ const VALUE_TWEAK_PATTERNS = [
   /\b(?:so that|to make)\s+it\s+(?:true|false)\b/i,
 ];
 
-
 function mentionsValueTweak(s) {
   const t = String(s || '').trim();
   return !!t && VALUE_TWEAK_PATTERNS.some(r => r.test(t));
@@ -143,6 +140,7 @@ function codeLooksGibberish(src) {
   return false;
 }
 
+// ---------------------- STUDENT RESPONSE (TEXT) ----------------------
 async function evaluateStudentResponse(req, res) {
   const {
     questionText,
@@ -153,7 +151,7 @@ async function evaluateStudentResponse(req, res) {
     forceFollowup = false,
     context = {},
     guidance = "",
-    codeContext = ""        // 👈 NEW: optional code shown with the question
+    codeContext = ""        // optional code shown with the question
   } = req.body || {};
 
   if (String(feedbackPrompt).trim().toLowerCase() === "none") {
@@ -172,13 +170,62 @@ async function evaluateStudentResponse(req, res) {
     const questionGuide = stripHtml(feedbackPrompt || '');
     const policy = getEffectivePolicy(activityGuide, questionGuide);
 
+    // -------------------- REQUIREMENTS-ONLY SHORTCUT --------------------
+    // If the policy says "requirements-only", we try to accept anything that is:
+    //   - non-empty
+    //   - not gibberish
+    //   - and clearly related to the question or sample response.
+    //
+    // Only truly off-topic or nonsense answers fall through to full AI eval.
+    const relaxedMode = policy.requirementsOnly === true;
+
+    if (relaxedMode && !forceFollowup) {
+      const answerRaw = String(studentAnswer || '').trim();
+
+      // Empty, obvious non-answer, or gibberish → let AI handle it
+      if (
+        !answerRaw ||
+        looksGibberish(answerRaw) ||
+        /^\s*(none|idk|i don't know)\s*$/i.test(answerRaw)
+      ) {
+        // fall through to AI below
+      } else {
+        // Cheap relevance check: look for overlap of meaningful words
+        const q = stripHtml(questionText || '').toLowerCase();
+        const s = stripHtml(answerRaw).toLowerCase();
+        const sample = stripHtml(sampleResponse || '').toLowerCase();
+
+        const extractWords = (text) =>
+          text.split(/\W+/).filter(w => w.length > 4); // ignore tiny/common words
+
+        const qWords = extractWords(q);
+        const sampleWords = extractWords(sample);
+
+        const containsAny = (words, haystack) =>
+          words.some(w => haystack.includes(w));
+
+        const relevant =
+          (qWords.length && containsAny(qWords, s)) ||
+          (sampleWords.length && containsAny(sampleWords, s));
+
+        if (relevant) {
+          // Close enough for requirements-only: accept with no follow-up.
+          return res.status(200).json({
+            followupQuestion: null,
+            feedback: null,
+            meta: { reason: 'requirements_only_ok' }
+          });
+        }
+        // If not clearly relevant, fall through to full AI eval.
+      }
+    }
+    // --------------------------------------------------------------------
+
     // Respect explicit "no follow-ups"
     if (policy.followupGate === 'none' && !forceFollowup) {
       return res.status(200).json({ followupQuestion: null, meta: { reason: 'policy_no_followups' } });
     }
 
-    // 🔎 Let the model judge coherence, relevance, wrong, overly simple, missing artifact.
-    //    (No early return on "gibberish-only".)
     const sys = [
       'You are a concise, supportive grading assistant for an intro programming class.',
       'Judge answers by whether they are coherent, on-topic, and meet the prompt’s intent.',
@@ -256,7 +303,7 @@ async function evaluateStudentResponse(req, res) {
   }
 }
 
-
+// ---------------------- PYTHON CODE (GROUP MODE / GENERAL) ----------------------
 async function evaluatePythonCode(req, res) {
   const { questionText, studentCode, codeVersion, guidance = "", isCodeOnly = false, feedbackPrompt = "" } = req.body;
 
@@ -285,8 +332,8 @@ async function evaluatePythonCode(req, res) {
     policy.noExtras && '- Do NOT ask for additional features beyond the prompt.',
     policy.failOpen && '- If minor issues but functionally OK, treat as correct.',
     '- Assume standard Python 3 with full f-string support. ' +
-      'If a print statement already has matching parentheses, NEVER say it is missing a parenthesis. ' +
-      'Do NOT recommend switching to f-strings as an “improvement” when they are not used.'
+    'If a print statement already has matching parentheses, NEVER say it is missing a parenthesis. ' +
+    'Do NOT recommend switching to f-strings as an “improvement” when they are not used.'
   ].filter(Boolean).join('\n');
 
 
@@ -392,7 +439,7 @@ ${rules ? '\n' + rules : ''}
   }
 }
 
-
+// ---------------------- POLICY COMBINER ----------------------
 function getEffectivePolicy(activityGuide, questionGuide) {
   const a = derivePolicyFromGuidance(activityGuide);
   const q = derivePolicyFromGuidance(questionGuide);
@@ -423,11 +470,7 @@ function getEffectivePolicy(activityGuide, questionGuide) {
   };
 }
 
-
-// server/ai/controller.js
-
-// Keep the helpers added earlier: stripHtml, derivePolicyFromGuidance, isFatal, isSoft
-
+// ---------------------- GENERIC CODE EVAL (PY/CPP/etc.) ----------------------
 async function evaluateCode({
   questionText,
   studentCode,
@@ -535,9 +578,272 @@ ${rules ? '\n' + rules : ''}
   return { feedback, followup };
 }
 
+// ---------------------- TEST-MODE: gradeTestQuestion ----------------------
+async function gradeTestQuestion({
+  questionText,
+  scores = {}, // rubric buckets from the sheet: { code, output, response }
+  responseText = "", // student's written answer
+  codeCells = [], // [{ code: "...", lang?: "cpp"|"python", label?: "..." }, ...]
+  outputText = "", // captured program output, if any
+  rubric = {}, // same as scores in most calls
+}) {
+  const bucketPoints = (bucket) => {
+    if (bucket == null) return 0;
+    if (typeof bucket === "number") return bucket;
+    if (typeof bucket === "object" && typeof bucket.points === "number") {
+      return bucket.points;
+    }
+    return 0;
+  };
 
+  // ---- Point caps per band ----
+  const codeBucket = scores.code || rubric.code || {};
+  const runBucket = scores.output || rubric.output || {};
+  const respBucket = scores.response || rubric.response || {};
+
+  const maxCodePts = bucketPoints(codeBucket);
+  const maxRunPts = bucketPoints(runBucket);
+  const maxRespPts = bucketPoints(respBucket);
+
+  const maxTotal = maxCodePts + maxRunPts + maxRespPts;
+
+  if (maxTotal <= 0) {
+    console.log("🧮 gradeTestQuestion: no points configured; skipping AI grade.");
+    return {
+      codeScore: 0,
+      codeFeedback: "",
+      runScore: 0,
+      runFeedback: "",
+      responseScore: 0,
+      responseFeedback: "",
+    };
+  }
+
+  // ---- Rubric text per band ----
+  const codeRubricText =
+    stripHtml(
+      codeBucket.instructionsRaw || codeBucket.instructionsHtml || ""
+    ) || "(none)";
+
+  const runRubricText =
+    stripHtml(runBucket.instructionsRaw || runBucket.instructionsHtml || "") ||
+    "(none)";
+
+  const responseRubricText =
+    stripHtml(respBucket.instructionsRaw || respBucket.instructionsHtml || "") ||
+    "(none)";
+
+  // ---- Build code bundle for the prompt ----
+  const codeBundle = codeCells
+    .map((cell, idx) => {
+      const lang = (cell.lang || "").toLowerCase();
+      const label = cell.label ? ` (${cell.label})` : "";
+      const fence =
+        lang === "cpp" || lang === "c++"
+          ? "cpp"
+          : lang === "python"
+            ? "python"
+            : "";
+      return [
+        `Code cell ${idx + 1}${label}:`,
+        "```" + fence,
+        cell.code || "",
+        "```",
+      ].join("\n");
+    })
+    .join("\n\n");
+
+  const sys = [
+    "You are grading a short quiz/exam question for an intro programming course.",
+    "You will assign numeric points separately for:",
+    "- CODE (implementation quality / correctness)",
+    "- RUN (program output, tests, harness behavior)",
+    "- RESPONSE (written explanation or short answer).",
+    "Use the rubric text exactly; partial credit is allowed.",
+    "If a band has full credit, feedback for that band should be null.",
+    "Return ONLY JSON, no commentary.",
+  ].join("\n");
+
+  const userLines = [];
+
+  userLines.push("Question:");
+  userLines.push(stripHtml(questionText || "(missing)"));
+  userLines.push("");
+
+  userLines.push(`Max code points: ${maxCodePts}`);
+  userLines.push(`Max run/output points: ${maxRunPts}`);
+  userLines.push(`Max response points: ${maxRespPts}`);
+  userLines.push("");
+
+  userLines.push("Rubric for CODE band:");
+  userLines.push(codeRubricText);
+  userLines.push("");
+
+  userLines.push("Rubric for RUN/OUTPUT band:");
+  userLines.push(runRubricText);
+  userLines.push("");
+
+  userLines.push("Rubric for RESPONSE band:");
+  userLines.push(responseRubricText);
+  userLines.push("");
+
+  userLines.push("Student written RESPONSE (if any):");
+  userLines.push(stripHtml(responseText || "(none)"));
+  userLines.push("");
+
+  if (codeBundle) {
+    userLines.push("Student CODE submission(s):");
+    userLines.push(codeBundle);
+    userLines.push("");
+  } else {
+    userLines.push("Student CODE submission(s): (none)");
+    userLines.push("");
+  }
+
+  if (outputText) {
+    userLines.push("PROGRAM OUTPUT / TEST OUTPUT:");
+    userLines.push(stripHtml(outputText));
+    userLines.push("");
+  } else {
+    userLines.push("PROGRAM OUTPUT / TEST OUTPUT: (none provided).");
+    userLines.push("");
+  }
+
+  userLines.push(
+    `Return strict JSON only in this form:\n` +
+    `{"codeScore": number, "codeFeedback": string|null, ` +
+    `"runScore": number, "runFeedback": string|null, ` +
+    `"responseScore": number, "responseFeedback": string|null}\n` +
+    `- codeScore must be between 0 and ${maxCodePts}.\n` +
+    `- runScore must be between 0 and ${maxRunPts}.\n` +
+    `- responseScore must be between 0 and ${maxRespPts}.\n` +
+    `- For any band with full credit, feedback for that band MUST be null.\n` +
+    `- For bands with less than full credit, feedback should be ONE short sentence explaining why.`
+  );
+
+  const user = userLines.join("\n");
+
+  try {
+    const chat = await openai.chat.completions.create({
+      model: MODEL,
+      messages: [
+        { name: "grader", role: "system", content: sys },
+        { role: "user", content: user },
+      ],
+      temperature: 0.1,
+      max_tokens: 260,
+    });
+
+    const raw = (chat.choices?.[0]?.message?.content ?? "").trim();
+    const match = raw.match(/\{[\s\S]*\}/);
+    const jsonStr = match ? match[0] : raw;
+
+    let obj;
+    try {
+      obj = JSON.parse(jsonStr);
+    } catch (e) {
+      console.error("❌ gradeTestQuestion JSON parse error:", e, "raw:", raw);
+      return {
+        codeScore: 0,
+        codeFeedback: "",
+        runScore: 0,
+        runFeedback: "",
+        responseScore: 0,
+        responseFeedback: "",
+      };
+    }
+
+    let codeScore = Number(obj.codeScore ?? 0);
+    let runScore = Number(obj.runScore ?? 0);
+    let responseScore = Number(obj.responseScore ?? 0);
+
+    if (!Number.isFinite(codeScore)) codeScore = 0;
+    if (!Number.isFinite(runScore)) runScore = 0;
+    if (!Number.isFinite(responseScore)) responseScore = 0;
+
+    // Clamp into bands
+    codeScore = Math.max(0, Math.min(maxCodePts, codeScore));
+    runScore = Math.max(0, Math.min(maxRunPts, runScore));
+    responseScore = Math.max(0, Math.min(maxRespPts, responseScore));
+
+    const codeFeedback =
+      (obj.codeFeedback && String(obj.codeFeedback).trim()) || "";
+    const runFeedback =
+      (obj.runFeedback && String(obj.runFeedback).trim()) || "";
+    const responseFeedback =
+      (obj.responseFeedback && String(obj.responseFeedback).trim()) || "";
+
+    console.log("🧮 gradeTestQuestion result:", {
+      maxCodePts,
+      maxRunPts,
+      maxRespPts,
+      codeScore,
+      runScore,
+      responseScore,
+    });
+
+    return {
+      codeScore,
+      codeFeedback,
+      runScore,
+      runFeedback,
+      responseScore,
+      responseFeedback,
+    };
+  } catch (err) {
+    console.error("❌ gradeTestQuestion OpenAI error:", err);
+    return {
+      codeScore: 0,
+      codeFeedback: "",
+      runScore: 0,
+      runFeedback: "",
+      responseScore: 0,
+      responseFeedback: "",
+    };
+  }
+}
+
+// ---------------------- TEST-MODE: C++ wrapper ----------------------
+async function evaluateCppCode(req, res) {
+  const {
+    questionText,
+    studentCode,
+    codeVersion,
+    guidance = "",
+    isCodeOnly = false,
+    feedbackPrompt = "",
+  } = req.body || {};
+
+  if (!questionText || !studentCode) {
+    return res.status(400).json({ error: "Missing question text or student code" });
+  }
+
+  try {
+    const { feedback, followup } = await evaluateCode({
+      questionText,
+      studentCode,
+      codeVersion,
+      guidance,
+      isCodeOnly,
+      feedbackPrompt,
+      lang: "cpp", // 🔒 FORCE C++
+    });
+
+    // "minor" is a safe default verdict for the HTTP shape
+    return res.status(200).json({ feedback, followup, verdict: "minor" });
+  } catch (err) {
+    console.error("Error evaluating C++ code:", err);
+    return res
+      .status(200)
+      .json({ feedback: null, followup: null, verdict: "minor" });
+  }
+}
+
+// ---------------------- EXPORTS ----------------------
 module.exports = {
   evaluateStudentResponse,
   evaluatePythonCode,
-  evaluateCode, // ✅ local use
+  evaluateCode,
+  gradeTestQuestion,
+  evaluateCppCode,
 };
