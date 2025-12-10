@@ -732,15 +732,16 @@ async function gradeTestQuestion({
       ],
       temperature: 0.1,
       max_tokens: 260,
+      // 🔑 Enforce that the model returns a JSON object
+      response_format: { type: "json_object" },
     });
 
     const raw = (chat.choices?.[0]?.message?.content ?? "").trim();
-    const match = raw.match(/\{[\s\S]*\}/);
-    const jsonStr = match ? match[0] : raw;
-
     let obj;
+
     try {
-      obj = JSON.parse(jsonStr);
+      obj = JSON.parse(raw);
+
     } catch (e) {
       console.error("❌ gradeTestQuestion JSON parse error:", e, "raw:", raw);
       return {
@@ -839,11 +840,48 @@ async function evaluateCppCode(req, res) {
   }
 }
 
+// ---------------------- TEST-MODE: HTTP wrapper for gradeTestQuestion ----------------------
+async function gradeTestQuestionHttp(req, res) {
+  try {
+    const {
+      questionText,
+      scores,
+      responseText,
+      codeCells,
+      outputText,
+      rubric,
+    } = req.body || {};
+
+    if (!questionText || !scores) {
+      return res
+        .status(400)
+        .json({ error: 'Missing questionText or scores' });
+    }
+
+    const result = await gradeTestQuestion({
+      questionText,
+      scores,
+      responseText: responseText || '',
+      codeCells: Array.isArray(codeCells) ? codeCells : [],
+      outputText: outputText || '',
+      rubric: rubric || scores,
+    });
+
+    return res.json(result);
+  } catch (err) {
+    console.error('❌ gradeTestQuestionHttp failed:', err);
+    return res.status(500).json({ error: 'grading failed' });
+  }
+}
+
+
+
 // ---------------------- EXPORTS ----------------------
 module.exports = {
   evaluateStudentResponse,
   evaluatePythonCode,
   evaluateCode,
   gradeTestQuestion,
+  gradeTestQuestionHttp,
   evaluateCppCode,
 };

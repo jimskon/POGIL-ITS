@@ -18,6 +18,11 @@ export default function ViewGroupsPage() {
   const [error, setError] = useState('');
   const [clearing, setClearing] = useState(new Set());
 
+
+  // Track which instances are being regraded / reviewed
+  const [regrading, setRegrading] = useState(new Set());
+  const [reviewing, setReviewing] = useState(new Set());
+
   // Live-edit state
   const [available, setAvailable] = useState([]);
   const [active, setActive] = useState([]);
@@ -181,6 +186,73 @@ export default function ViewGroupsPage() {
       alert(err.message || 'Failed to reopen test.');
     }
   };
+  // Regrade a test instance using stored answers
+  const handleRegrade = async (instanceId) => {
+    if (!window.confirm('Regrade this test using the current saved answers?')) return;
+
+    const next = new Set(regrading);
+    next.add(instanceId);
+    setRegrading(next);
+
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/activity-instances/${instanceId}/regrade`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          // If your /regrade endpoint needs questions metadata,
+          // you can add a body here later. For now we assume
+          // the server reconstructs questions from the doc.
+          body: JSON.stringify({}),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'Failed to regrade');
+      }
+
+      await fetchGroups(); // refresh scores + graded_at
+    } catch (err) {
+      console.error('❌ Regrade failed:', err);
+      alert(err.message || 'Failed to regrade test.');
+    } finally {
+      const n2 = new Set(regrading);
+      n2.delete(instanceId);
+      setRegrading(n2);
+    }
+  };
+
+  // Mark a graded instance as reviewed by the instructor
+  const handleMarkReviewed = async (instanceId) => {
+    const next = new Set(reviewing);
+    next.add(instanceId);
+    setReviewing(next);
+
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/activity-instances/${instanceId}/mark-reviewed`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || 'Failed to mark reviewed');
+      }
+
+      await fetchGroups(); // refresh review flags
+    } catch (err) {
+      console.error('❌ Mark reviewed failed:', err);
+      alert(err.message || 'Failed to mark reviewed.');
+    } finally {
+      const n2 = new Set(reviewing);
+      n2.delete(instanceId);
+      setReviewing(n2);
+    }
+  };
 
   return (
     <Container className="mt-4">
@@ -244,6 +316,11 @@ export default function ViewGroupsPage() {
           {groups.map((group) => {
             const isSubmitted = !!group.submitted_at;
             const hasTiming = !!group.test_start_at && group.test_duration_minutes > 0;
+            const isGraded = !!group.graded_at;
+            const isReviewed = !!group.review_complete;
+            const hasScore =
+              typeof group.points_earned === 'number' &&
+              typeof group.points_possible === 'number';
 
             return (
               <Col lg={4} md={6} sm={12} key={group.instance_id}>
@@ -257,13 +334,20 @@ export default function ViewGroupsPage() {
                           : `Question Group: ${group.progress}`}
                       </strong>
                       {isTest && hasTiming && (
-                        <span className="ms-2">
-                          {isSubmitted && <Badge bg="success">Submitted</Badge>}
-                          {!isSubmitted && <Badge bg="secondary">In progress</Badge>}
+                        <span className="ms-2 d-inline-flex flex-wrap gap-2">
+                          {isSubmitted ? (
+                            <Badge bg="success">Submitted</Badge>
+                          ) : (
+                            <Badge bg="secondary">In progress</Badge>
+                          )}
+                          {isGraded && <Badge bg="info">Graded</Badge>}
+                          {isReviewed && (
+                            <Badge bg="primary">Reviewed</Badge>
+                          )}
                         </span>
                       )}
                     </div>
-                    <div className="d-flex gap-2 mt-2 mt-sm-0">
+                    <div className="d-flex gap-2 mt-2 mt-sm-0 flex-wrap">
                       {isTest && hasTiming && !isSubmitted && (
                         <Button
                           variant="outline-secondary"
@@ -273,6 +357,33 @@ export default function ViewGroupsPage() {
                           Reopen
                         </Button>
                       )}
+
+                      {isTest && isSubmitted && (
+                        <Button
+                          variant="outline-warning"
+                          size="sm"
+                          disabled={regrading.has(group.instance_id)}
+                          onClick={() => handleRegrade(group.instance_id)}
+                        >
+                          {regrading.has(group.instance_id)
+                            ? 'Regrading…'
+                            : 'Regrade'}
+                        </Button>
+                      )}
+
+                      {isTest && isGraded && !isReviewed && (
+                        <Button
+                          variant="outline-success"
+                          size="sm"
+                          disabled={reviewing.has(group.instance_id)}
+                          onClick={() => handleMarkReviewed(group.instance_id)}
+                        >
+                          {reviewing.has(group.instance_id)
+                            ? 'Marking…'
+                            : 'Mark Reviewed'}
+                        </Button>
+                      )}
+
                       <Button
                         variant="outline-danger"
                         size="sm"
@@ -281,6 +392,7 @@ export default function ViewGroupsPage() {
                       >
                         {clearing.has(group.instance_id) ? 'Clearing…' : 'Clear Answers'}
                       </Button>
+
                       <Button
                         variant="primary"
                         size="sm"
@@ -295,6 +407,7 @@ export default function ViewGroupsPage() {
                     </div>
                   </Card.Header>
 
+
                   <Card.Body>
                     {isTest && hasTiming && (
                       <div className="mb-2 small text-muted">
@@ -306,14 +419,37 @@ export default function ViewGroupsPage() {
                         </div>
                         <div>
                           <strong>Reopen until:</strong>{' '}
-                          {group.test_reopen_until ? formatUtcToLocal(group.test_reopen_until) : '—'}
+                          {group.test_reopen_until
+                            ? formatUtcToLocal(group.test_reopen_until)
+                            : '—'}
                         </div>
                         <div>
                           <strong>Submitted:</strong>{' '}
-                          {group.submitted_at ? formatUtcToLocal(group.submitted_at) : 'Not submitted'}
+                          {group.submitted_at
+                            ? formatUtcToLocal(group.submitted_at)
+                            : 'Not submitted'}
                         </div>
+                        {isGraded && (
+                          <div>
+                            <strong>Graded:</strong>{' '}
+                            {formatUtcToLocal(group.graded_at)}
+                          </div>
+                        )}
+                        {isReviewed && group.reviewed_at && (
+                          <div>
+                            <strong>Reviewed:</strong>{' '}
+                            {formatUtcToLocal(group.reviewed_at)}
+                          </div>
+                        )}
+                        {hasScore && (
+                          <div>
+                            <strong>Score:</strong>{' '}
+                            {group.points_earned}/{group.points_possible}
+                          </div>
+                        )}
                       </div>
                     )}
+
 
                     <ul>
                       {group.members.map((m, i) => (

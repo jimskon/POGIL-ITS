@@ -33,6 +33,7 @@ CREATE TABLE `activity_instances` (
   `test_duration_minutes` int(10) unsigned NOT NULL DEFAULT 0 COMMENT 'Time limit in minutes (0 = no limit)',
   `test_reopen_until` datetime DEFAULT NULL COMMENT 'Optional reopen-until time for this instance',
   `submitted_at` datetime DEFAULT NULL COMMENT 'When the instance was finally submitted',
+  `graded_at` datetime DEFAULT NULL,
   `review_complete` tinyint(1) NOT NULL DEFAULT 0,
   `reviewed_at` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
@@ -197,7 +198,7 @@ CREATE TABLE `responses` (
   KEY `answered_by_user_id` (`answered_by_user_id`),
   CONSTRAINT `responses_ibfk_1` FOREIGN KEY (`activity_instance_id`) REFERENCES `activity_instances` (`id`) ON DELETE CASCADE,
   CONSTRAINT `responses_ibfk_2` FOREIGN KEY (`answered_by_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=18568165 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=18572137 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;

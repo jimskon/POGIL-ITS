@@ -781,12 +781,11 @@ export default function RunActivityPage({
     // Only students care about lock state + auto-submit.
     // Instructors can see everything regardless.
     const isSubmitted = !!activity?.submitted_at;
-    let globalQuestionCounter = 0;  // used only for test-mode display labels
-    const displayNumber = globalQuestionCounter; // e.g., 1, 2, 3, ...
 
     const { start, end } = testWindow;
 
     let autoFired = false;
+
 
     const tick = async () => {
       const now = new Date();
@@ -1453,7 +1452,32 @@ function buildTestSubmissionPayload(blocks, container) {
       answers[outputKey] = outputText;
     }
 
-    // 4) Decide what becomes the "responseText" for grading
+    // 4) Collect code cells for this question
+    const rawCodeCells = collectQuestionCodeBlocks(
+      block,
+      qid,
+      container,
+      existingAnswers
+    );
+
+    // Save each code cell into answers as well (so it’s snapshotted)
+    rawCodeCells.forEach(({ key, code }) => {
+      answers[key] = code || '';
+    });
+
+    // Shape for the grader: only keep non-empty code cells, with lang + label
+    const codeCells = rawCodeCells
+      .map(({ key, code }) => {
+        const src = code || '';
+        return {
+          code: src,
+          lang: pickLangForBlock(block, src),
+          label: key,      // lets the grader know which cell this is
+        };
+      })
+      .filter((c) => c.code.trim() !== '');
+
+    // 5) Decide what becomes the "responseText" for grading
     //    Priority: written -> table -> output
     const finalResponse = baseAnswer || tableMarkdown || outputText || '';
 
@@ -1462,20 +1486,21 @@ function buildTestSubmissionPayload(blocks, container) {
       answers[qid] = finalResponse;
     }
 
-    // 5) Minimal question object for the test grader
+    // 6) Push question object for gradeTestQuestion
     questions.push({
       qid,
       questionText,
       scores: block.scores || {},
       responseText: finalResponse,
-      // NOTE: We intentionally do NOT send code or big blobs here.
-      // Code is already stored via /api/responses/code and can be
-      // fetched server-side if needed.
+      codeCells,
+      outputText,
+      // rubric: block.scores || {}, // optional; gradeTestQuestion already falls back to scores
     });
   }
 
   return { answers, questions };
 }
+
 
 
   async function handleSubmit(forceOverride = false) {
@@ -2386,16 +2411,18 @@ function buildTestSubmissionPayload(blocks, container) {
           const isComplete = normalizeStatus(rawState) === 'complete';
           const isCurrent = index === currentQuestionGroupIndex;
 
-          // In test mode: editable as long as the student is active and the test isn't locked
+          // In test mode: editable only when window is open and not submitted/locked
           const testEditable =
             isTestMode &&
             isStudent &&
             !testLockState.lockedBefore &&
-            !testLockState.lockedAfter;
+            !testLockState.lockedAfter &&
+            !isSubmitted;
 
           const editable = isTestMode
-            ? (isStudent && !isSubmitted)
+            ? testEditable
             : (isActive && isCurrent && !isComplete);
+
 
           console.log('[RUN] group', index, {
             stateKey,
@@ -2412,11 +2439,15 @@ function buildTestSubmissionPayload(blocks, container) {
           //  return null;
           //}
           const showGroup =
+            // Instructors always see everything
             isInstructor ||
-            (isTestMode && isStudent) ||
-            isComplete ||
-            isCurrent;
+            // Students in test mode:
+            (isTestMode && isStudent && !testLockState.lockedBefore) ||
+            // Learning mode: show completed groups and current group
+            (!isTestMode && (isComplete || isCurrent));
+
           if (!showGroup) return null;
+
 
           // does this group currently have AI feedback/guidance?
           const hasAIGuidanceForGroup = (group.content || [])
