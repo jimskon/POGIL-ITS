@@ -1,21 +1,7 @@
 // client/src/components/QuestionScorePanel.jsx
 import React, { useEffect, useState } from 'react';
-import { Button, Form } from 'react-bootstrap';
+import { Card, Form, Button } from 'react-bootstrap';
 
-/**
- * Per-question test scores + feedback panel.
- *
- * Props:
- * - qid: string, e.g. "1a" or "1"
- * - displayNumber: number, e.g. 1, 2, 3 (for "Question 1")
- * - scores: {
- *     hasAnyScore, codeScore, runScore, respScore,
- *     codeExplain, runExplain, respExplain,
- *     maxCode, maxRun, maxResp, earnedTotal, maxTotal
- *   }
- * - allowEdit: boolean — can this user edit (instructor + submitted test)?
- * - onSave(qid, updated): callback to persist edits
- */
 export default function QuestionScorePanel({
   qid,
   displayNumber,
@@ -24,7 +10,6 @@ export default function QuestionScorePanel({
   onSave,
 }) {
   const {
-    hasAnyScore,
     codeScore,
     runScore,
     respScore,
@@ -34,247 +19,201 @@ export default function QuestionScorePanel({
     maxCode,
     maxRun,
     maxResp,
-    earnedTotal,
-    maxTotal,
   } = scores || {};
 
-  // Local editable state
-  const [editing, setEditing] = useState(false);
+  // If this question truly has no scoring bands at all, don’t render anything.
+  if ((maxCode || 0) === 0 && (maxRun || 0) === 0 && (maxResp || 0) === 0) {
+    return null;
+  }
+
   const [local, setLocal] = useState({
-    respScore: respScore ?? '',
-    runScore: runScore ?? '',
     codeScore: codeScore ?? '',
-    respExplain: respExplain ?? '',
-    runExplain: runExplain ?? '',
+    runScore: runScore ?? '',
+    respScore: respScore ?? '',
     codeExplain: codeExplain ?? '',
+    runExplain: runExplain ?? '',
+    respExplain: respExplain ?? '',
   });
 
-  // Keep local state in sync when scores change from outside
   useEffect(() => {
     setLocal({
-      respScore: respScore ?? '',
-      runScore: runScore ?? '',
       codeScore: codeScore ?? '',
-      respExplain: respExplain ?? '',
-      runExplain: runExplain ?? '',
+      runScore: runScore ?? '',
+      respScore: respScore ?? '',
       codeExplain: codeExplain ?? '',
+      runExplain: runExplain ?? '',
+      respExplain: respExplain ?? '',
     });
-  }, [qid, respScore, runScore, codeScore, respExplain, runExplain, codeExplain]);
+  }, [codeScore, runScore, respScore, codeExplain, runExplain, respExplain]);
 
-  const handleChange = (field, value) => {
+  const handleChange = (field) => (e) => {
+    const value = e.target.value;
     setLocal((prev) => ({ ...prev, [field]: value }));
   };
 
   const handleSave = () => {
-    if (typeof onSave === 'function') {
-      onSave(qid, local);
-    }
-    setEditing(false);
+    if (!onSave) return;
+    onSave(qid, local);
   };
 
-  // Fallbacks
-  const safeEarned = Number.isFinite(earnedTotal) ? earnedTotal : 0;
-  const safeMax = Number.isFinite(maxTotal) ? maxTotal : 0;
-  const totalSummary =
-    safeMax > 0 ? `${safeEarned}/${safeMax}` : `${safeEarned}`;
-
-  const wEarn = Number.isFinite(respScore) ? respScore : 0;
-  const rEarn = Number.isFinite(runScore) ? runScore : 0;
-  const cEarn = Number.isFinite(codeScore) ? codeScore : 0;
-
-  const wBand =
-    maxResp > 0
-      ? `Written ${wEarn}/${maxResp}`
-      : respScore != null
-      ? `Written ${wEarn}`
-      : null;
-
-  const rBand =
-    maxRun > 0
-      ? `Run ${rEarn}/${maxRun}`
-      : runScore != null
-      ? `Run ${rEarn}`
-      : null;
-
-  const cBand =
-    maxCode > 0
-      ? `Code ${cEarn}/${maxCode}`
-      : codeScore != null
-      ? `Code ${cEarn}`
-      : null;
-
-  const bandSummary = [wBand, rBand, cBand].filter(Boolean).join(' · ');
-
-  // If there are literally no scores AND we’re not editing,
-  // we can show nothing to students to avoid clutter.
-  const showReadOnly =
-    hasAnyScore ||
-    respExplain ||
-    runExplain ||
-    codeExplain ||
-    editing ||
-    allowEdit;
-
-  if (!showReadOnly) return null;
+  // Build the “Components:” line using only bands that actually have points
+  const components = [];
+  if ((maxResp || 0) > 0) {
+    const earned = respScore != null ? respScore : 0;
+    components.push(`Written ${earned}/${maxResp}`);
+  }
+  if ((maxRun || 0) > 0) {
+    const earned = runScore != null ? runScore : 0;
+    components.push(`Run ${earned}/${maxRun}`);
+  }
+  if ((maxCode || 0) > 0) {
+    const earned = codeScore != null ? codeScore : 0;
+    components.push(`Code ${earned}/${maxCode}`);
+  }
 
   return (
-    <div className="mt-2 p-2 border rounded bg-light">
-      <div>
-        <strong>Question {displayNumber} – Total: </strong>
-        {totalSummary}
-      </div>
+    <Card className="mt-2">
+      <Card.Body>
+        <Card.Title className="mb-1">
+          Question {displayNumber} – Total:{' '}
+          {((respScore || 0) + (runScore || 0) + (codeScore || 0))}/
+          {(maxResp || 0) + (maxRun || 0) + (maxCode || 0)}
+        </Card.Title>
 
-      {bandSummary && (
-        <div className="small">
-          <strong>Components:</strong>{' '}
-          <span style={{ whiteSpace: 'pre-wrap' }}>{bandSummary}</span>
-        </div>
-      )}
+        {components.length > 0 && (
+          <Card.Subtitle className="mb-2 text-muted">
+            Components: {components.join(' · ')}
+          </Card.Subtitle>
+        )}
 
-      {!editing && (
-        <>
-          {respExplain && (
-            <div className="mt-1 small">
-              <strong>Written feedback:</strong>{' '}
-              <span style={{ whiteSpace: 'pre-wrap' }}>{respExplain}</span>
-            </div>
-          )}
+        {/* WRITTEN / RESPONSE BAND */}
+        {(maxResp || 0) > 0 && (
+          <div className="mb-2">
+            <strong>Written feedback:</strong>
+            {allowEdit ? (
+              <>
+                <div className="d-flex align-items-center mt-1">
+                  <Form.Label className="me-2 mb-0">Score</Form.Label>
+                  <Form.Control
+                    type="number"
+                    size="sm"
+                    style={{ width: '80px' }}
+                    value={local.respScore}
+                    onChange={handleChange('respScore')}
+                    min={0}
+                    max={maxResp}
+                  />
+                  <span className="ms-1">/ {maxResp}</span>
+                </div>
+                <Form.Control
+                  as="textarea"
+                  rows={2}
+                  className="mt-1"
+                  placeholder="Short explanation (optional)"
+                  value={local.respExplain}
+                  onChange={handleChange('respExplain')}
+                />
+              </>
+            ) : (
+              <p className="mb-0 mt-1">
+                {respExplain?.trim()
+                  ? respExplain
+                  : respScore === maxResp
+                  ? 'Full credit for written response.'
+                  : ''}
+              </p>
+            )}
+          </div>
+        )}
 
-          {runExplain && (
-            <div className="mt-1 small">
-              <strong>Run/output feedback:</strong>{' '}
-              <span style={{ whiteSpace: 'pre-wrap' }}>{runExplain}</span>
-            </div>
-          )}
+        {/* RUN / OUTPUT BAND – only if maxRun > 0 */}
+        {(maxRun || 0) > 0 && (
+          <div className="mb-2">
+            <strong>Run/output feedback:</strong>
+            {allowEdit ? (
+              <>
+                <div className="d-flex align-items-center mt-1">
+                  <Form.Label className="me-2 mb-0">Score</Form.Label>
+                  <Form.Control
+                    type="number"
+                    size="sm"
+                    style={{ width: '80px' }}
+                    value={local.runScore}
+                    onChange={handleChange('runScore')}
+                    min={0}
+                    max={maxRun}
+                  />
+                  <span className="ms-1">/ {maxRun}</span>
+                </div>
+                <Form.Control
+                  as="textarea"
+                  rows={2}
+                  className="mt-1"
+                  placeholder="Short explanation (optional)"
+                  value={local.runExplain}
+                  onChange={handleChange('runExplain')}
+                />
+              </>
+            ) : (
+              <p className="mb-0 mt-1">
+                {runExplain?.trim()
+                  ? runExplain
+                  : runScore === maxRun && maxRun > 0
+                  ? 'Full credit for run/output.'
+                  : ''}
+              </p>
+            )}
+          </div>
+        )}
 
-          {codeExplain && (
-            <div className="mt-1 small">
-              <strong>Code feedback:</strong>{' '}
-              <span style={{ whiteSpace: 'pre-wrap' }}>{codeExplain}</span>
-            </div>
-          )}
-        </>
-      )}
+        {/* CODE BAND – only if maxCode > 0 */}
+        {(maxCode || 0) > 0 && (
+          <div className="mb-2">
+            <strong>Code feedback:</strong>
+            {allowEdit ? (
+              <>
+                <div className="d-flex align-items-center mt-1">
+                  <Form.Label className="me-2 mb-0">Score</Form.Label>
+                  <Form.Control
+                    type="number"
+                    size="sm"
+                    style={{ width: '80px' }}
+                    value={local.codeScore}
+                    onChange={handleChange('codeScore')}
+                    min={0}
+                    max={maxCode}
+                  />
+                  <span className="ms-1">/ {maxCode}</span>
+                </div>
+                <Form.Control
+                  as="textarea"
+                  rows={2}
+                  className="mt-1"
+                  placeholder="Short explanation (optional)"
+                  value={local.codeExplain}
+                  onChange={handleChange('codeExplain')}
+                />
+              </>
+            ) : (
+              <p className="mb-0 mt-1">
+                {codeExplain?.trim()
+                  ? codeExplain
+                  : codeScore === maxCode && maxCode > 0
+                  ? 'Full credit for code.'
+                  : ''}
+              </p>
+            )}
+          </div>
+        )}
 
-      {allowEdit && (
-        <div className="mt-2">
-          {!editing && (
-            <Button
-              variant="outline-secondary"
-              size="sm"
-              onClick={() => setEditing(true)}
-            >
-              Edit scores & feedback
+        {allowEdit && (
+          <div className="mt-2">
+            <Button size="sm" variant="primary" onClick={handleSave}>
+              Save scores &amp; feedback
             </Button>
-          )}
-
-          {editing && (
-            <div className="mt-2">
-              <Form>
-                <div className="d-flex flex-wrap gap-2">
-                  <Form.Group style={{ maxWidth: '120px' }}>
-                    <Form.Label className="small mb-0">Written score</Form.Label>
-                    <Form.Control
-                      size="sm"
-                      type="number"
-                      value={local.respScore}
-                      onChange={(e) =>
-                        handleChange('respScore', e.target.value)
-                      }
-                    />
-                  </Form.Group>
-
-                  <Form.Group style={{ maxWidth: '120px' }}>
-                    <Form.Label className="small mb-0">Run score</Form.Label>
-                    <Form.Control
-                      size="sm"
-                      type="number"
-                      value={local.runScore}
-                      onChange={(e) =>
-                        handleChange('runScore', e.target.value)
-                      }
-                    />
-                  </Form.Group>
-
-                  <Form.Group style={{ maxWidth: '120px' }}>
-                    <Form.Label className="small mb-0">Code score</Form.Label>
-                    <Form.Control
-                      size="sm"
-                      type="number"
-                      value={local.codeScore}
-                      onChange={(e) =>
-                        handleChange('codeScore', e.target.value)
-                      }
-                    />
-                  </Form.Group>
-                </div>
-
-                <Form.Group className="mt-2">
-                  <Form.Label className="small mb-0">
-                    Written feedback
-                  </Form.Label>
-                  <Form.Control
-                    as="textarea"
-                    rows={2}
-                    size="sm"
-                    value={local.respExplain}
-                    onChange={(e) =>
-                      handleChange('respExplain', e.target.value)
-                    }
-                  />
-                </Form.Group>
-
-                <Form.Group className="mt-2">
-                  <Form.Label className="small mb-0">
-                    Run/output feedback
-                  </Form.Label>
-                  <Form.Control
-                    as="textarea"
-                    rows={2}
-                    size="sm"
-                    value={local.runExplain}
-                    onChange={(e) =>
-                      handleChange('runExplain', e.target.value)
-                    }
-                  />
-                </Form.Group>
-
-                <Form.Group className="mt-2">
-                  <Form.Label className="small mb-0">
-                    Code feedback
-                  </Form.Label>
-                  <Form.Control
-                    as="textarea"
-                    rows={2}
-                    size="sm"
-                    value={local.codeExplain}
-                    onChange={(e) =>
-                      handleChange('codeExplain', e.target.value)
-                    }
-                  />
-                </Form.Group>
-
-                <div className="mt-2 d-flex gap-2">
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={handleSave}
-                  >
-                    Save
-                  </Button>
-                  <Button
-                    variant="outline-secondary"
-                    size="sm"
-                    onClick={() => setEditing(false)}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </Form>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+          </div>
+        )}
+      </Card.Body>
+    </Card>
   );
 }

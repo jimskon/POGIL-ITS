@@ -15,8 +15,11 @@ router.post('/setup-groups', controller.setupMultipleGroupInstances);
 // ✅ Reopen a timed test window for this instance
 router.post('/:instanceId/reopen', controller.reopenInstance);
 
-// in activity_instances routes
-router.post('/activity-instances/:instanceId/mark-test-submitted', controller.markTestSubmitted);
+// ✅ Regrade this test instance using stored answers
+router.post('/:instanceId/regrade', controller.regradeTestInstance);
+
+// ✅ Mark test as submitted (cached totals)
+router.post('/:instanceId/mark-test-submitted', controller.markTestSubmitted);
 
 // ✅ Submit a test for this instance
 router.post('/:instanceId/submit-test', controller.submitTest);   

@@ -930,16 +930,146 @@ async function reopenInstance(req, res) {
   }
 }
 
+// Helper: load test questions + score metadata for an instance by parsing the Google Doc
+async function loadTestQuestionsForInstance(instanceId) {
+  // 1) Find the activity + sheet_url for this instance
+  const [[row]] = await db.query(
+    `SELECT ai.activity_id, a.sheet_url
+     FROM activity_instances ai
+     JOIN pogil_activities a ON ai.activity_id = a.id
+     WHERE ai.id = ?`,
+    [instanceId]
+  );
+
+  if (!row) {
+    throw new Error(`Activity instance ${instanceId} not found`);
+  }
+  if (!row.sheet_url) {
+    throw new Error(`No sheet_url for activity_id ${row.activity_id}`);
+  }
+
+  const docId = row.sheet_url.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1];
+  if (!docId) {
+    throw new Error(`Invalid sheet_url for activity_id ${row.activity_id}: ${row.sheet_url}`);
+  }
+
+  const auth = authorize();
+  const docs = google.docs({ version: 'v1', auth });
+  const doc = await docs.documents.get({ documentId: docId });
+
+  // Flatten doc into trimmed lines (same pattern as refreshTotalGroups)
+  const lines = (doc.data.body?.content || [])
+    .map(block => {
+      if (!block.paragraph?.elements) return null;
+      return block.paragraph.elements
+        .map(e => e.textRun?.content || '')
+        .join('')
+        .trim();
+    })
+    .filter(Boolean);
+
+  const questions = [];
+  let current = null;
+
+  for (const raw of lines) {
+    const line = raw.trim();
+
+    // --- Question line ---
+    if (line.startsWith('\\question')) {
+      // push previous question
+      if (current) {
+        questions.push(current);
+      }
+
+      // Handle both:
+      //  - \question{1} Some text...
+      //  - \question Some text...
+      let id = null;
+      let text = '';
+
+      const m = line.match(/^\\question\{([^}]+)\}\s*(.*)$/);
+      if (m) {
+        id = m[1].trim();         // explicit id in braces, e.g. "1" or "1a"
+        text = m[2] || '';
+      } else {
+        // No explicit ID: auto-number using position
+        id = String(questions.length + 1);
+        text = line.replace(/^\\question\s*/, '');
+      }
+
+      current = {
+        id,
+        text: text.trim(),
+        scores: {},    // we'll fill from \score lines
+      };
+      continue;
+    }
+
+    // --- Score line for the current question ---
+    if (line.startsWith('\\score') && current) {
+      // Expect something like:
+      // \score{code=4,output=2,response=4}
+      const m = line.match(/^\\score\{([^}]+)\}/);
+      if (m) {
+        const spec = m[1];  // "code=4,output=2,response=4"
+        const scoreParts = spec.split(/[;,]/);
+        const scoreObj = {};
+
+        for (const part of scoreParts) {
+          const [kRaw, vRaw] = part.split('=');
+          if (!kRaw || !vRaw) continue;
+          const k = kRaw.trim().toLowerCase();
+          const v = Number(vRaw.trim());
+          if (!Number.isNaN(v)) {
+            scoreObj[k] = v;
+          }
+        }
+
+        // Map to the shape submitTest expects: { code, output, response }
+        current.scores = {
+          code: scoreObj.code ?? scoreObj.codes ?? null,
+          output: scoreObj.output ?? scoreObj.run ?? null,
+          response: scoreObj.response ?? null,
+        };
+      }
+      continue;
+    }
+
+    // --- Any other line: treat as part of the current question's text ---
+    if (current) {
+      current.text = current.text
+        ? current.text + ' ' + line
+        : line;
+      continue;
+    }
+
+    // If not in a question, ignore or you could collect global instructions;
+    // they aren't needed for regrade.
+  }
+
+  // Push the last question
+  if (current) {
+    questions.push(current);
+  }
+
+  return questions;
+}
+
+
 // Regrade a test instance using stored responses (no student participation)
 async function regradeTestInstance(req, res) {
   const { instanceId } = req.params;
-  const { questions = [] } = req.body || {};
 
   if (!instanceId) {
     return res.status(400).json({ error: 'Missing instanceId' });
   }
-  if (!Array.isArray(questions) || questions.length === 0) {
-    return res.status(400).json({ error: 'Missing questions metadata for regrade' });
+
+  let questions;
+  try {
+    questions = await loadTestQuestionsForInstance(instanceId);
+  } catch (err) {
+    console.error('❌ regradeTestInstance: failed to load questions:', err);
+    return res.status(500).json({ error: 'Failed to load test questions for regrade' });
   }
 
   console.log('🔁 regradeTestInstance for', instanceId, 'questions:', questions.length);
@@ -947,6 +1077,18 @@ async function regradeTestInstance(req, res) {
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
+    // ... keep the rest of your existing regradeTestInstance body as-is ...
+
+    // 🔹 Pick any student in this instance as the "answer owner"
+    const [[memberRow]] = await conn.query(
+      `SELECT student_id
+       FROM group_members
+       WHERE activity_instance_id = ?
+       ORDER BY id
+       LIMIT 1`,
+      [instanceId]
+    );
+    const defaultAnswererId = memberRow?.student_id || 0; // fallback 0 if somehow no members
 
     // Load all stored responses for this instance
     const [rows] = await conn.query(
@@ -964,16 +1106,18 @@ async function regradeTestInstance(req, res) {
 
     const upsertResponse = async (qid, value, type = 'text') => {
       if (value == null || String(value).trim() === '') return;
+
       await conn.query(
         `
         INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-        VALUES (?, ?, ?, ?, NULL)
+        VALUES (?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           response      = VALUES(response),
           response_type = VALUES(response_type),
+          answered_by_user_id = VALUES(answered_by_user_id),
           updated_at    = CURRENT_TIMESTAMP
       `,
-        [instanceId, qid, type, String(value)]
+        [instanceId, qid, type, String(value), defaultAnswererId]
       );
     };
 
