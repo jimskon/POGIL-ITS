@@ -1,3 +1,4 @@
+// client/src/pages/ViewGroupsPage.jsx
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Container, Card, Spinner, Alert, Button, Row, Col, Form, Badge } from 'react-bootstrap';
