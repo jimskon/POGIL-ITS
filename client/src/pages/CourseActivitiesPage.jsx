@@ -31,6 +31,7 @@ export default function CourseActivitiesPage() {
           setActivities([]);
         } else {
           setActivities(data);
+          console.log("📦 activities payload:", data);
         }
       } catch (err) {
         console.error('❌ Failed to fetch activities:', err);
@@ -86,9 +87,17 @@ export default function CourseActivitiesPage() {
 
                 <td>
                   {user.role === 'student' && activity.is_ready ? (
-                    <Button variant="success" onClick={() => handleDoActivity(activity)}>
-                      Start
-                    </Button>
+                    (() => {
+                      const isSubmitted = !!activity.submitted_at;
+                      return (
+                        <Button
+                          variant={isSubmitted ? 'primary' : 'success'}
+                          onClick={() => handleDoActivity(activity)}
+                        >
+                          {isSubmitted ? 'Review' : 'Start'}
+                        </Button>
+                      );
+                    })()
                   ) : (user.role === 'instructor' || user.role === 'root' || user.role === 'creator') ? (
                     <>
                       {!activity.has_groups ? (
@@ -96,9 +105,10 @@ export default function CourseActivitiesPage() {
                           Setup Groups
                         </Button>
                       ) : (
-                        <Button variant="secondary" onClick={() =>
-                          navigate(`/view-groups/${courseId}/${activity.activity_id}`)
-                        }>
+                        <Button
+                          variant="secondary"
+                          onClick={() => navigate(`/view-groups/${courseId}/${activity.activity_id}`)}
+                        >
                           View Groups
                         </Button>
                       )}
@@ -106,6 +116,7 @@ export default function CourseActivitiesPage() {
                   ) : (
                     <span>Not available</span>
                   )}
+
 
                 </td>
 

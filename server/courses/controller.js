@@ -153,35 +153,48 @@ async function getCourseActivities(req, res) {
   }
 
   try {
-    const [rows] = await db.query(
-      `SELECT 
-         a.id AS activity_id,
-         a.name AS activity_name,
-         a.order_index AS activity_index,
-         (
-           SELECT ai2.id
-           FROM activity_instances ai2
-           JOIN group_members gm ON gm.activity_instance_id = ai2.id
-           WHERE ai2.activity_id = a.id AND ai2.course_id = c.id AND gm.student_id = ?
-           LIMIT 1
-         ) AS instance_id,
-         COUNT(ai.id) AS group_count,
-         MAX(ai.status = 'in_progress') AS is_ready
-       FROM pogil_activities a
-       JOIN courses c ON a.class_id = c.class_id
-       LEFT JOIN activity_instances ai
-         ON ai.activity_id = a.id AND ai.course_id = c.id
-       WHERE c.id = ?
-       GROUP BY a.id, a.name, a.order_index
-       ORDER BY a.order_index ASC`,
-      [userId, courseId]
-    );
+const [rows] = await db.query(
+  `SELECT 
+     a.id AS activity_id,
+     a.name AS activity_name,
+     a.order_index AS activity_index,
+     (
+       SELECT ai2.id
+       FROM activity_instances ai2
+       JOIN group_members gm ON gm.activity_instance_id = ai2.id
+       WHERE ai2.activity_id = a.id AND ai2.course_id = c.id AND gm.student_id = ?
+       LIMIT 1
+     ) AS instance_id,
+
+     (
+       SELECT ai2.submitted_at
+       FROM activity_instances ai2
+       JOIN group_members gm ON gm.activity_instance_id = ai2.id
+       WHERE ai2.activity_id = a.id AND ai2.course_id = c.id AND gm.student_id = ?
+       LIMIT 1
+     ) AS submitted_at,
+
+     COUNT(ai.id) AS group_count,
+     MAX(ai.status = 'in_progress') AS is_ready
+   FROM pogil_activities a
+   JOIN courses c ON a.class_id = c.class_id
+   LEFT JOIN activity_instances ai
+     ON ai.activity_id = a.id AND ai.course_id = c.id
+   WHERE c.id = ?
+   GROUP BY a.id, a.name, a.order_index
+   ORDER BY a.order_index ASC`,
+  [userId, userId, courseId]   
+);
+
+
+
 
     const activities = rows.map((row) => ({
       activity_id: row.activity_id,
       title: row.activity_name,
       order_index: row.activity_index,
-      instance_id: row.instance_id || null, // specific to the logged-in student
+      instance_id: row.instance_id || null, 
+      submitted_at: row.submitted_at || null,
       is_ready: !!row.is_ready,
       has_groups: row.group_count > 0,
     }));

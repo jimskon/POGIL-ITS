@@ -26,7 +26,7 @@ export default function QuestionScorePanel({
     return null;
   }
 
-  const [local, setLocal] = useState({
+  const makeLocalFromScores = () => ({
     codeScore: codeScore ?? '',
     runScore: runScore ?? '',
     respScore: respScore ?? '',
@@ -35,25 +35,36 @@ export default function QuestionScorePanel({
     respExplain: respExplain ?? '',
   });
 
+  const [local, setLocal] = useState(makeLocalFromScores());
+  const [isEditing, setIsEditing] = useState(false);
+
   useEffect(() => {
-    setLocal({
-      codeScore: codeScore ?? '',
-      runScore: runScore ?? '',
-      respScore: respScore ?? '',
-      codeExplain: codeExplain ?? '',
-      runExplain: runExplain ?? '',
-      respExplain: respExplain ?? '',
-    });
+    // If server-side scores change (regrade / reload), refresh view.
+    // But don't clobber in-progress edits.
+    if (!isEditing) {
+      setLocal(makeLocalFromScores());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [codeScore, runScore, respScore, codeExplain, runExplain, respExplain]);
 
   const handleChange = (field) => (e) => {
-    const value = e.target.value;
-    setLocal((prev) => ({ ...prev, [field]: value }));
+    setLocal((prev) => ({ ...prev, [field]: e.target.value }));
   };
 
-  const handleSave = () => {
+  const handleStartEdit = () => {
+    setLocal(makeLocalFromScores()); // ensure editor starts from latest saved state
+    setIsEditing(true);
+  };
+
+  const handleCancel = () => {
+    setLocal(makeLocalFromScores());
+    setIsEditing(false);
+  };
+
+  const handleSave = async () => {
     if (!onSave) return;
-    onSave(qid, local);
+    await onSave(qid, local);
+    setIsEditing(false);
   };
 
   // Build the “Components:” line using only bands that actually have points
@@ -71,13 +82,17 @@ export default function QuestionScorePanel({
     components.push(`Code ${earned}/${maxCode}`);
   }
 
+  const totalEarned = (respScore || 0) + (runScore || 0) + (codeScore || 0);
+  const totalMax = (maxResp || 0) + (maxRun || 0) + (maxCode || 0);
+
+  const canEditNow = !!allowEdit && !!onSave;
+  const showInputs = canEditNow && isEditing;
+
   return (
     <Card className="mt-2">
       <Card.Body>
         <Card.Title className="mb-1">
-          Question {displayNumber} – Total:{' '}
-          {((respScore || 0) + (runScore || 0) + (codeScore || 0))}/
-          {(maxResp || 0) + (maxRun || 0) + (maxCode || 0)}
+          Question {displayNumber} – Total: {totalEarned}/{totalMax}
         </Card.Title>
 
         {components.length > 0 && (
@@ -90,7 +105,7 @@ export default function QuestionScorePanel({
         {(maxResp || 0) > 0 && (
           <div className="mb-2">
             <strong>Written feedback:</strong>
-            {allowEdit ? (
+            {showInputs ? (
               <>
                 <div className="d-flex align-items-center mt-1">
                   <Form.Label className="me-2 mb-0">Score</Form.Label>
@@ -126,11 +141,11 @@ export default function QuestionScorePanel({
           </div>
         )}
 
-        {/* RUN / OUTPUT BAND – only if maxRun > 0 */}
+        {/* RUN / OUTPUT BAND */}
         {(maxRun || 0) > 0 && (
           <div className="mb-2">
             <strong>Run/output feedback:</strong>
-            {allowEdit ? (
+            {showInputs ? (
               <>
                 <div className="d-flex align-items-center mt-1">
                   <Form.Label className="me-2 mb-0">Score</Form.Label>
@@ -166,11 +181,11 @@ export default function QuestionScorePanel({
           </div>
         )}
 
-        {/* CODE BAND – only if maxCode > 0 */}
+        {/* CODE BAND */}
         {(maxCode || 0) > 0 && (
           <div className="mb-2">
             <strong>Code feedback:</strong>
-            {allowEdit ? (
+            {showInputs ? (
               <>
                 <div className="d-flex align-items-center mt-1">
                   <Form.Label className="me-2 mb-0">Score</Form.Label>
@@ -206,11 +221,22 @@ export default function QuestionScorePanel({
           </div>
         )}
 
-        {allowEdit && (
-          <div className="mt-2">
-            <Button size="sm" variant="primary" onClick={handleSave}>
-              Save scores &amp; feedback
-            </Button>
+        {canEditNow && (
+          <div className="mt-2 d-flex gap-2">
+            {!isEditing ? (
+              <Button size="sm" variant="outline-secondary" onClick={handleStartEdit}>
+                Edit
+              </Button>
+            ) : (
+              <>
+                <Button size="sm" variant="primary" onClick={handleSave}>
+                  Save scores &amp; feedback
+                </Button>
+                <Button size="sm" variant="secondary" onClick={handleCancel}>
+                  Cancel
+                </Button>
+              </>
+            )}
           </div>
         )}
       </Card.Body>

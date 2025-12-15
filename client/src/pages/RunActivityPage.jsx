@@ -960,29 +960,29 @@ export default function RunActivityPage({
       setExistingAnswers((prev) => ({ ...prev, ...answersData }));
 
       // 💾 NEW: hydrate fileContents from saved file:<filename> responses
-const savedFiles = {};
-for (const [key, entry] of Object.entries(answersData)) {
-  if (!key.startsWith('file:')) continue;
-  const filename = key.slice('file:'.length);
-  if (!filename) continue;
-  savedFiles[filename] = entry?.response ?? '';
-}
+      const savedFiles = {};
+      for (const [key, entry] of Object.entries(answersData)) {
+        if (!key.startsWith('file:')) continue;
+        const filename = key.slice('file:'.length);
+        if (!filename) continue;
+        savedFiles[filename] = entry?.response ?? '';
+      }
 
-if (Object.keys(savedFiles).length > 0) {
-  setFileContents((prev) => {
-    const updated = { ...prev, ...savedFiles };
-    fileContentsRef.current = updated;
+      if (Object.keys(savedFiles).length > 0) {
+        setFileContents((prev) => {
+          const updated = { ...prev, ...savedFiles };
+          fileContentsRef.current = updated;
 
-    if (DEBUG_FILES) {
-      console.debug(
-        `[${PAGE_TAG}] hydrate files from DB:`,
-        Object.entries(savedFiles).map(([k, v]) => `${k}(${(v ?? '').length})`)
-      );
-    }
+          if (DEBUG_FILES) {
+            console.debug(
+              `[${PAGE_TAG}] hydrate files from DB:`,
+              Object.entries(savedFiles).map(([k, v]) => `${k}(${(v ?? '').length})`)
+            );
+          }
 
-    return updated;
-  });
-}
+          return updated;
+        });
+      }
 
 
       // 2) Restore code feedback (per-code-cell feedback from backend)
@@ -1385,121 +1385,121 @@ if (Object.keys(savedFiles).length > 0) {
     return generic || detectLanguageFromCode(studentCode) || 'python';
   }
 
-function buildTestSubmissionPayload(blocks, container) {
-  const answers = {};
-  const questions = [];
+  function buildTestSubmissionPayload(blocks, container) {
+    const answers = {};
+    const questions = [];
 
-  for (const block of blocks) {
-    if (block.type !== 'question') continue;
+    for (const block of blocks) {
+      if (block.type !== 'question') continue;
 
-    const qid = `${block.groupId}${block.id}`;
-    const questionText = getQuestionText(block, qid);
+      const qid = `${block.groupId}${block.id}`;
+      const questionText = getQuestionText(block, qid);
 
-    // 1) Base written/text response (if any)
-    const textEl = container.querySelector(`[data-question-id="${qid}"]`);
-    const baseAnswer = textEl?.value?.trim() || '';
+      // 1) Base written/text response (if any)
+      const textEl = container.querySelector(`[data-question-id="${qid}"]`);
+      const baseAnswer = textEl?.value?.trim() || '';
 
-    // 2) Table inputs (if any)
-    let tableHasInput = false;
-    let tableMarkdown = '';
+      // 2) Table inputs (if any)
+      let tableHasInput = false;
+      let tableMarkdown = '';
 
-    if (block.tableBlocks?.length > 0) {
-      for (let t = 0; t < block.tableBlocks.length; t++) {
-        const table = block.tableBlocks[t];
+      if (block.tableBlocks?.length > 0) {
+        for (let t = 0; t < block.tableBlocks.length; t++) {
+          const table = block.tableBlocks[t];
 
-        for (let row = 0; row < table.rows.length; row++) {
-          for (let col = 0; col < table.rows[row].length; col++) {
-            const cell = table.rows[row][col];
-            if (cell.type === 'input') {
-              const key = `${qid}table${t}cell${row}_${col}`;
-              const val =
-                container.querySelector(`[data-question-id="${key}"]`)
-                  ?.value?.trim() || '';
-              if (val !== '') {
-                answers[key] = val;
-                tableHasInput = true;
+          for (let row = 0; row < table.rows.length; row++) {
+            for (let col = 0; col < table.rows[row].length; col++) {
+              const cell = table.rows[row][col];
+              if (cell.type === 'input') {
+                const key = `${qid}table${t}cell${row}_${col}`;
+                const val =
+                  container.querySelector(`[data-question-id="${key}"]`)
+                    ?.value?.trim() || '';
+                if (val !== '') {
+                  answers[key] = val;
+                  tableHasInput = true;
+                }
               }
             }
           }
         }
+
+        if (tableHasInput) {
+          // Build a markdown snapshot of the student's table for grading
+          tableMarkdown = buildMarkdownTableFromBlock(block, container);
+        }
       }
 
-      if (tableHasInput) {
-        // Build a markdown snapshot of the student's table for grading
-        tableMarkdown = buildMarkdownTableFromBlock(block, container);
+      // 3) Harness output — gather mirrors like 1aoutput1, 1aoutput2, ...
+      const outputEls = container.querySelectorAll(
+        `[data-output-key^="${qid}output"]`
+      );
+
+      let combinedOutput = '';
+      outputEls.forEach((el) => {
+        const text = (el.textContent || '').trim();
+        if (text) {
+          combinedOutput += (combinedOutput ? '\n' : '') + text;
+        }
+      });
+
+      const outputKey = `${qid}output`;
+      const outputText =
+        combinedOutput ||
+        (existingAnswers[outputKey]?.response || '').trim();
+
+      if (outputText) {
+        answers[outputKey] = outputText;
       }
-    }
 
-    // 3) Harness output — gather mirrors like 1aoutput1, 1aoutput2, ...
-    const outputEls = container.querySelectorAll(
-      `[data-output-key^="${qid}output"]`
-    );
+      // 4) Collect code cells for this question
+      const rawCodeCells = collectQuestionCodeBlocks(
+        block,
+        qid,
+        container,
+        existingAnswers
+      );
 
-    let combinedOutput = '';
-    outputEls.forEach((el) => {
-      const text = (el.textContent || '').trim();
-      if (text) {
-        combinedOutput += (combinedOutput ? '\n' : '') + text;
+      // Save each code cell into answers as well (so it’s snapshotted)
+      rawCodeCells.forEach(({ key, code }) => {
+        answers[key] = code || '';
+      });
+
+      // Shape for the grader: only keep non-empty code cells, with lang + label
+      const codeCells = rawCodeCells
+        .map(({ key, code }) => {
+          const src = code || '';
+          return {
+            code: src,
+            lang: pickLangForBlock(block, src),
+            label: key,      // lets the grader know which cell this is
+          };
+        })
+        .filter((c) => c.code.trim() !== '');
+
+      // 5) Decide what becomes the "responseText" for grading
+      //    Priority: written -> table -> output
+      const finalResponse = baseAnswer || tableMarkdown || outputText || '';
+
+      if (finalResponse) {
+        // Store main response for this question under its qid
+        answers[qid] = finalResponse;
       }
-    });
 
-    const outputKey = `${qid}output`;
-    const outputText =
-      combinedOutput ||
-      (existingAnswers[outputKey]?.response || '').trim();
-
-    if (outputText) {
-      answers[outputKey] = outputText;
+      // 6) Push question object for gradeTestQuestion
+      questions.push({
+        qid,
+        questionText,
+        scores: block.scores || {},
+        responseText: finalResponse,
+        codeCells,
+        outputText,
+        // rubric: block.scores || {}, // optional; gradeTestQuestion already falls back to scores
+      });
     }
 
-    // 4) Collect code cells for this question
-    const rawCodeCells = collectQuestionCodeBlocks(
-      block,
-      qid,
-      container,
-      existingAnswers
-    );
-
-    // Save each code cell into answers as well (so it’s snapshotted)
-    rawCodeCells.forEach(({ key, code }) => {
-      answers[key] = code || '';
-    });
-
-    // Shape for the grader: only keep non-empty code cells, with lang + label
-    const codeCells = rawCodeCells
-      .map(({ key, code }) => {
-        const src = code || '';
-        return {
-          code: src,
-          lang: pickLangForBlock(block, src),
-          label: key,      // lets the grader know which cell this is
-        };
-      })
-      .filter((c) => c.code.trim() !== '');
-
-    // 5) Decide what becomes the "responseText" for grading
-    //    Priority: written -> table -> output
-    const finalResponse = baseAnswer || tableMarkdown || outputText || '';
-
-    if (finalResponse) {
-      // Store main response for this question under its qid
-      answers[qid] = finalResponse;
-    }
-
-    // 6) Push question object for gradeTestQuestion
-    questions.push({
-      qid,
-      questionText,
-      scores: block.scores || {},
-      responseText: finalResponse,
-      codeCells,
-      outputText,
-      // rubric: block.scores || {}, // optional; gradeTestQuestion already falls back to scores
-    });
+    return { answers, questions };
   }
-
-  return { answers, questions };
-}
 
 
 
@@ -2059,7 +2059,7 @@ function buildTestSubmissionPayload(blocks, container) {
     }
   }
 
-    // Instructor override: save edited per-question scores & feedback
+  // Instructor override: save edited per-question scores & feedback
   async function handleSaveQuestionScores(qid, local) {
     if (!activity || !instanceId || !user?.id) return;
 
@@ -2377,7 +2377,7 @@ function buildTestSubmissionPayload(blocks, container) {
               : 'Untitled Activity'}
         </h2>
 
-         <RunActivityTestStatusBanner
+        <RunActivityTestStatusBanner
           isTestMode={isTestMode}
           testWindow={testWindow}
           testLockState={testLockState}
@@ -2558,25 +2558,29 @@ function buildTestSubmissionPayload(blocks, container) {
                 globalQuestionCounter += 1;
                 const scores = getQuestionScores(qid, block);
 
-                const allowEdit =
-                  isTestMode && isInstructor && isSubmitted;
+                const allowEdit = isTestMode && isInstructor && isSubmitted;
+
+                // show panel only after submission for students
+                const showScorePanel =
+                  isTestMode &&
+                  (isInstructor || isSubmitted);   // <- the key gating fix
 
                 return (
-                  <div
-                    key={`group-${index}-block-${bIndex}`}
-                    className="mb-2"
-                  >
+                  <div key={`group-${index}-block-${bIndex}`} className="mb-2">
                     {renderedBlock}
 
-                    <QuestionScorePanel
-                      qid={qid}
-                      displayNumber={globalQuestionCounter}
-                      scores={scores}
-                      allowEdit={allowEdit}
-                      onSave={handleSaveQuestionScores}
-                    />
+                    {showScorePanel && (
+                      <QuestionScorePanel
+                        qid={qid}
+                        displayNumber={globalQuestionCounter}
+                        scores={scores}
+                        allowEdit={allowEdit}
+                        onSave={handleSaveQuestionScores}
+                      />
+                    )}
                   </div>
                 );
+
               })}
 
 
@@ -2626,7 +2630,7 @@ function buildTestSubmissionPayload(blocks, container) {
             </Alert>
           )}
 
-        {isTestMode && overallTestTotals.max > 0 && (
+        {isTestMode && overallTestTotals.max > 0 && (isInstructor || isSubmitted) && (
           <Alert variant="info" className="mt-3">
             Overall test score:{' '}
             <strong>
