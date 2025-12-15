@@ -52,11 +52,11 @@ export default function NavBar({ bgColor = "dark", fixed = false, statusText = "
           <Navbar.Brand as={Link} to="/dashboard" className="d-flex align-items-center gap-2">
             <img src={`${import.meta.env.BASE_URL}images/kenyon-logo.png`} alt="Kenyon College Logo" style={{ height: 30 }} />
 
-            POGIL ITS
+            coLearn AI
           </Navbar.Brand>
 
-          <Navbar.Toggle aria-controls="pogil-navbar" />
-          <Navbar.Collapse id="pogil-navbar">
+          <Navbar.Toggle aria-controls="coLearn-AI--navbar" />
+          <Navbar.Collapse id="coLearn-AI--navbar">
             <Nav className="me-auto flex-row gap-3">
               {user && (
                 <>
