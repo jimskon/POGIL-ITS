@@ -1,38 +1,30 @@
 // src/pages/CourseActivitiesPage.jsx
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Container, Table, Button, Spinner, Alert } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
 import { useUser } from '../context/UserContext';
-import { useLocation } from 'react-router-dom';
-
-console.log("📘 CourseActivitiesPage mounted");
 
 export default function CourseActivitiesPage() {
-  const { courseId, activityId } = useParams();
-  console.log("courseId:", courseId, "activityId:", activityId); // ✅ should both be defined
+  const { courseId } = useParams();
   const location = useLocation();
   const courseName = location.state?.courseName;
   const navigate = useNavigate();
+
   const [activities, setActivities] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const { user } = useUser();
 
   useEffect(() => {
-    console.log("📘 Fetching activities for courseId:", courseId);
     const fetchActivities = async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/courses/${courseId}/activities`);
+        const res = await fetch(`${API_BASE_URL}/api/courses/${courseId}/activities`, {
+          credentials: 'include',
+        });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        if (!Array.isArray(data)) {
-          console.error("Expected array, got:", data);
-          setActivities([]);
-        } else {
-          setActivities(data);
-          console.log("📦 activities payload:", data);
-        }
+        setActivities(Array.isArray(data) ? data : []);
       } catch (err) {
         console.error('❌ Failed to fetch activities:', err);
         setError('Unable to load activities.');
@@ -44,28 +36,29 @@ export default function CourseActivitiesPage() {
     fetchActivities();
   }, [courseId]);
 
-  useEffect(() => {
-    console.log("Fetched activities:", activities);
-  }, [activities]);
-
   const handleDoActivity = (activity, isInstructor = false) => {
-    const activityId = activity.activity_id;      // ✅ use activity ID
-    const instanceId = activity.instance_id;      // ✅ only for students
-
-    console.log("🧠 FULL activity object:", activity);
-    console.log("🔍 courseId:", courseId, "activityId:", activityId, "instanceId:", instanceId);
+    const activityId = activity.activity_id;
+    const instanceId = activity.instance_id;
+    const isTest = !!activity.isTest;
 
     const path = isInstructor
-      ? `/setup-groups/${courseId}/${activityId}`
+      ? (isTest
+        ? `/test-setup/${courseId}/${activityId}`   // ✅ tests go here
+        : `/setup-groups/${courseId}/${activityId}` // ✅ non-tests go here
+      )
       : `/run/${instanceId}`;
 
-    navigate(path);
+    navigate(path, { state: { courseName } });
   };
 
+
+  const isInstructorLike =
+    user?.role === 'instructor' || user?.role === 'root' || user?.role === 'creator';
 
   return (
     <Container className="mt-4">
       <h2>{courseName ? `Course: ${courseName}` : 'Available Activities'}</h2>
+
       {loading ? (
         <Spinner animation="border" />
       ) : error ? (
@@ -81,47 +74,77 @@ export default function CourseActivitiesPage() {
             </tr>
           </thead>
           <tbody>
-            {activities.map((activity, idx) => (
-              <tr key={idx}>
-                <td>{activity.title || activity.activity_name || 'Untitled Activity'}</td>
+            {activities.map((activity) => {
+              const title = activity.title || activity.activity_name || 'Untitled Activity';
 
-                <td>
-                  {user.role === 'student' && activity.is_ready ? (
-                    (() => {
-                      const isSubmitted = !!activity.submitted_at;
-                      return (
-                        <Button
-                          variant={isSubmitted ? 'primary' : 'success'}
-                          onClick={() => handleDoActivity(activity)}
-                        >
-                          {isSubmitted ? 'Review' : 'Start'}
-                        </Button>
-                      );
-                    })()
-                  ) : (user.role === 'instructor' || user.role === 'root' || user.role === 'creator') ? (
-                    <>
-                      {!activity.has_groups ? (
-                        <Button variant="primary" onClick={() => handleDoActivity(activity, true)}>
-                          Setup Groups
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="secondary"
-                          onClick={() => navigate(`/view-groups/${courseId}/${activity.activity_id}`)}
-                        >
-                          View Groups
-                        </Button>
-                      )}
-                    </>
-                  ) : (
-                    <span>Not available</span>
-                  )}
+              // ✅ single source of truth from backend
+              const isTest = !!activity.isTest;
 
+              return (
+                <tr key={activity.activity_id}>
+                  <td>{title}</td>
+                  <td>
+                    {user?.role === 'student' && activity.is_ready ? (
+                      (() => {
+                        const isSubmitted = !!activity.submitted_at;
+                        return (
+                          <Button
+                            variant={isSubmitted ? 'primary' : 'success'}
+                            onClick={() => handleDoActivity(activity)}
+                          >
+                            {isSubmitted ? 'Review' : 'Start'}
+                          </Button>
+                        );
+                      })()
+) : isInstructorLike ? (
+  isTest ? (
+    !activity.has_groups ? (
+      <Button
+        variant="primary"
+        onClick={() =>
+          navigate(`/test-setup/${courseId}/${activity.activity_id}`, {
+            state: { courseName },
+          })
+        }
+      >
+        Test Setup
+      </Button>
+    ) : (
+      <Button
+        variant="secondary"
+        onClick={() =>
+          navigate(`/view-tests/${courseId}/${activity.activity_id}`, {
+            state: { courseName },
+          })
+        }
+      >
+        View Tests
+      </Button>
+    )
+  ) : !activity.has_groups ? (
+    <Button variant="primary" onClick={() => handleDoActivity(activity, true)}>
+      Setup Groups
+    </Button>
+  ) : (
+    <Button
+      variant="secondary"
+      onClick={() =>
+        navigate(`/view-groups/${courseId}/${activity.activity_id}`, {
+          state: { courseName },
+        })
+      }
+    >
+      View Groups
+    </Button>
+  )
+) : (
+  <span>Not available</span>
+)}
 
-                </td>
-
-              </tr>
-            ))}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </Table>
       )}

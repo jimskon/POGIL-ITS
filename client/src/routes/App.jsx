@@ -23,6 +23,10 @@ import ManageCourseStudentsPage from '../pages/ManageCourseStudentsPage';
 import ManageCourseProgressPage from '../pages/ManageCourseProgressPage';
 import ManageCourseTestsPage from '../pages/ManageCourseTestsPage'; // 👈 NEW
 import { useLocation } from 'react-router-dom';
+import ViewTestsPage from '../pages/ViewTestsPage';
+import TestSetupPage from '../pages/TestSetupPage';
+
+
 
 function AppRoutes() {
   const { user } = useUser();
@@ -70,6 +74,9 @@ function AppRoutes() {
         />
         <Route path="/setup-groups/:courseId/:activityId" element={<GroupSetupPage />} />
         <Route path="/view-groups/:courseId/:activityId" element={<ViewGroupsPage />} />
+        <Route path="/view-tests/:courseId/:activityId" element={<ViewTestsPage />} />
+        <Route path="/test-setup/:courseId/:activityId" element={<TestSetupPage />} />
+
         <Route path="/editor/:activityId" element={<ActivityEditor />} />
         <Route path="/verify" element={<VerifyPage />} />
         <Route path="/forgot-password" element={<ForgotPasswordPage />} />
