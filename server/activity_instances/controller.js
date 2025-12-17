@@ -954,7 +954,7 @@ async function reopenInstance(req, res) {
     const now = new Date();
     const reopenUntil = new Date(now.getTime() + extendMinutes * 60000);
 
-     await db.query(
+    await db.query(
       `UPDATE activity_instances
        SET test_reopen_until = DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)
        WHERE id = ?`,
@@ -1185,6 +1185,15 @@ async function regradeTestInstance(req, res) {
       const maxCodePts = bucketPoints(scores.code);
       const maxRunPts = bucketPoints(scores.output);
       const maxRespPts = bucketPoints(scores.response);
+
+      console.log('🧩 [regrade] parsed question snapshot', {
+        qid,
+        questionTextPreview: (q.questionText || q.prompt || q.text || '').slice(0, 80),
+        hasScoreTagRaw: !!(q.scoreRaw || q.score || q.scoresRaw),
+        scoreRawPreview: String(q.scoreRaw || q.score || q.scoresRaw || '').slice(0, 120),
+        scoreBucketsKeys: q.scores ? Object.keys(q.scores) : null,
+        fullKeys: Object.keys(q || {}).slice(0, 30),
+      });
 
       console.log('🧮 [regrade] Question rubric:', {
         qid: baseId,
