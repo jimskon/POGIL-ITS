@@ -38,4 +38,9 @@ router.delete("/:courseId/unenroll/:studentId", controller.unenrollStudentFromCo
 // Delete a course
 router.delete("/:id", controller.deleteCourse);
 
+router.put(
+  "/:courseId/activities/:activityId/hidden",
+  controller.setCourseActivityHidden
+);
+
 module.exports = router;

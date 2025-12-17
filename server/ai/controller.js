@@ -595,16 +595,6 @@ async function gradeTestQuestion({
     }
     return 0;
   };
-console.log('🧮 [gradeTestQuestion] INPUTS', {
-  q: (questionText || '').slice(0, 80),
-  maxCodePts, maxRunPts, maxRespPts,
-  hasResponseText: !!(responseText || '').trim(),
-  codeCellsCount: Array.isArray(codeCells) ? codeCells.length : 0,
-  hasOutputText: !!(outputText || '').trim(),
-  codeRubricLen: codeRubricText.length,
-  runRubricLen: runRubricText.length,
-  respRubricLen: responseRubricText.length,
-});
 
   // ---- Point caps per band ----
   const codeBucket = scores.code || rubric.code || {};
@@ -643,6 +633,16 @@ console.log('🧮 [gradeTestQuestion] INPUTS', {
     stripHtml(respBucket.instructionsRaw || respBucket.instructionsHtml || "") ||
     "(none)";
 
+console.log('🧮 [gradeTestQuestion] INPUTS', {
+  q: (questionText || '').slice(0, 80),
+  maxCodePts, maxRunPts, maxRespPts,
+  hasResponseText: !!(responseText || '').trim(),
+  codeCellsCount: Array.isArray(codeCells) ? codeCells.length : 0,
+  hasOutputText: !!(outputText || '').trim(),
+  codeRubricLen: codeRubricText.length,
+  runRubricLen: runRubricText.length,
+  respRubricLen: responseRubricText.length,
+});
   // ---- Build code bundle for the prompt ----
   const codeBundle = codeCells
     .map((cell, idx) => {

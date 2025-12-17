@@ -209,6 +209,7 @@ async function getActivityInstanceById(req, res) {
          ai.test_duration_minutes,
          ai.test_reopen_until,
          ai.submitted_at,
+         ai.hidden,
          a.title       AS title,
          a.name        AS activity_name,
          a.sheet_url
@@ -221,6 +222,11 @@ async function getActivityInstanceById(req, res) {
     if (!instance) {
       return res.status(404).json({ error: 'Instance not found' });
     }
+
+    if (instance.hidden && req.user?.role === 'student') {
+      return res.status(403).json({ error: 'This activity is currently hidden.' });
+    }
+
 
     res.json(instance);
   } catch (err) {
@@ -968,9 +974,48 @@ async function reopenInstance(req, res) {
   }
 }
 
-// Helper: load test questions + score metadata for an instance by parsing the Google Doc
+// Helper: parse score specs from either style:
+//   \score{10,code} or \score{6,response}
+//   \score{code=4,output=2,response=4}
+function parseScoreSpec(specRaw) {
+  const spec = String(specRaw || '').trim();
+  const out = {};
+
+  // style A: "code=4,output=2,response=4"
+  if (spec.includes('=')) {
+    for (const part of spec.split(/[;,]/)) {
+      const [kRaw, vRaw] = part.split('=');
+      if (!kRaw || !vRaw) continue;
+      const k = kRaw.trim().toLowerCase();
+      const v = Number(String(vRaw).trim());
+      if (!Number.isFinite(v)) continue;
+
+      if (k === 'code' || k === 'codes') out.code = v;
+      else if (k === 'output' || k === 'run') out.output = v;
+      else if (k === 'response') out.response = v;
+    }
+    return out;
+  }
+
+  // style B: "10,code" (or "6,response")
+  // allow whitespace: "10, code"
+  const parts = spec.split(',').map(s => s.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    const pts = Number(parts[0]);
+    const bucket = parts[1].toLowerCase();
+
+    if (Number.isFinite(pts)) {
+      if (bucket === 'code') out.code = pts;
+      else if (bucket === 'output' || bucket === 'run') out.output = pts;
+      else if (bucket === 'response') out.response = pts;
+    }
+  }
+
+  return out;
+}
+
+// Helper: flatten Google doc into trimmed lines (same as you already do)
 async function loadTestQuestionsForInstance(instanceId) {
-  // 1) Find the activity + sheet_url for this instance
   const [[row]] = await db.query(
     `SELECT ai.activity_id, a.sheet_url
      FROM activity_instances ai
@@ -979,30 +1024,20 @@ async function loadTestQuestionsForInstance(instanceId) {
     [instanceId]
   );
 
-  if (!row) {
-    throw new Error(`Activity instance ${instanceId} not found`);
-  }
-  if (!row.sheet_url) {
-    throw new Error(`No sheet_url for activity_id ${row.activity_id}`);
-  }
+  if (!row) throw new Error(`Activity instance ${instanceId} not found`);
+  if (!row.sheet_url) throw new Error(`No sheet_url for activity_id ${row.activity_id}`);
 
   const docId = row.sheet_url.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1];
-  if (!docId) {
-    throw new Error(`Invalid sheet_url for activity_id ${row.activity_id}: ${row.sheet_url}`);
-  }
+  if (!docId) throw new Error(`Invalid sheet_url: ${row.sheet_url}`);
 
   const auth = authorize();
   const docs = google.docs({ version: 'v1', auth });
   const doc = await docs.documents.get({ documentId: docId });
 
-  // Flatten doc into trimmed lines (same pattern as refreshTotalGroups)
   const lines = (doc.data.body?.content || [])
     .map(block => {
       if (!block.paragraph?.elements) return null;
-      return block.paragraph.elements
-        .map(e => e.textRun?.content || '')
-        .join('')
-        .trim();
+      return block.paragraph.elements.map(e => e.textRun?.content || '').join('').trim();
     })
     .filter(Boolean);
 
@@ -1012,95 +1047,96 @@ async function loadTestQuestionsForInstance(instanceId) {
   for (const raw of lines) {
     const line = raw.trim();
 
-    // --- Question line ---
+    // New question
     if (line.startsWith('\\question')) {
-      // push previous question
-      if (current) {
-        questions.push(current);
-      }
+      if (current) questions.push(current);
 
-      // Handle both:
-      //  - \question{1} Some text...
-      //  - \question Some text...
-      let id = null;
-      let text = '';
-
-      const m = line.match(/^\\question\{([^}]+)\}\s*(.*)$/);
-      if (m) {
-        id = m[1].trim();         // explicit id in braces, e.g. "1" or "1a"
-        text = m[2] || '';
-      } else {
-        // No explicit ID: auto-number using position
-        id = String(questions.length + 1);
-        text = line.replace(/^\\question\s*/, '');
-      }
+      // Your format is usually: \question{Question text...}
+      const m = line.match(/^\\question\{([\s\S]*?)\}\s*$/);
+      const qText = m ? m[1].trim() : line.replace(/^\\question\s*/, '').trim();
 
       current = {
-        id,
-        text: text.trim(),
-        scores: {},    // we'll fill from \score lines
+        id: null,          // we'll assign ids later for regrade mapping
+        text: qText,
+        scores: {},
       };
       continue;
     }
 
-    // --- Score line for the current question ---
+    // Score tag
     if (line.startsWith('\\score') && current) {
-      // Expect something like:
-      // \score{code=4,output=2,response=4}
-      const m = line.match(/^\\score\{([^}]+)\}/);
+      const m = line.match(/^\\score\{([^}]*)\}/);
       if (m) {
-        const spec = m[1];  // "code=4,output=2,response=4"
-        const scoreParts = spec.split(/[;,]/);
-        const scoreObj = {};
-
-        for (const part of scoreParts) {
-          const [kRaw, vRaw] = part.split('=');
-          if (!kRaw || !vRaw) continue;
-          const k = kRaw.trim().toLowerCase();
-          const v = Number(vRaw.trim());
-          if (!Number.isNaN(v)) {
-            scoreObj[k] = v;
-          }
-        }
-
-        // Map to the shape submitTest expects: { code, output, response }
-        current.scores = {
-          code: scoreObj.code ?? scoreObj.codes ?? null,
-          output: scoreObj.output ?? scoreObj.run ?? null,
-          response: scoreObj.response ?? null,
-        };
+        current.scores = parseScoreSpec(m[1]);
       }
       continue;
     }
 
-    // --- Any other line: treat as part of the current question's text ---
+    // Accumulate extra lines into question text (optional)
     if (current) {
-      current.text = current.text
-        ? current.text + ' ' + line
-        : line;
+      // Stop at end markers if you want; but keeping it simple:
+      if (!line.startsWith('\\end')) {
+        current.text = current.text ? (current.text + ' ' + line) : line;
+      }
       continue;
     }
-
-    // If not in a question, ignore or you could collect global instructions;
-    // they aren't needed for regrade.
   }
 
-  // Push the last question
-  if (current) {
-    questions.push(current);
-  }
-
+  if (current) questions.push(current);
   return questions;
 }
 
+async function getBaseQidsFirstSeen(conn, instanceId) {
+  const [all] = await conn.query(
+    `SELECT id, question_id
+     FROM responses
+     WHERE activity_instance_id = ?
+     ORDER BY id ASC`,
+    [instanceId]
+  );
 
-// Regrade a test instance using stored responses (no student participation)
+  const isBaseCandidate = (qidRaw) => {
+    const qid = String(qidRaw || '').trim();
+    if (!qid) return false;
+
+    // global keys
+    if (qid === 'testTotalScore' || qid === 'testMaxScore' || qid === 'testSummary') return false;
+
+    // artifacts written by submit/regrade
+    if (/CodeScore$/i.test(qid)) return false;
+    if (/RunScore$/i.test(qid)) return false;
+    if (/ResponseScore$/i.test(qid)) return false;
+    if (/CodeFeedback$/i.test(qid)) return false;
+    if (/RunFeedback$/i.test(qid)) return false;
+    if (/ResponseFeedback$/i.test(qid)) return false;
+    if (/Output$/i.test(qid)) return false;
+
+    // code cell answers: 1code1, 2acode2, etc.
+    if (/code\d+$/i.test(qid)) return false;
+
+    // per-question / per-group state markers (your collaborative flow)
+    if (/^\d+state$/i.test(qid)) return false;
+    if (/^[0-9]+[a-zA-Z]S$/i.test(qid)) return false;
+
+    return true;
+  };
+
+  const firstSeen = new Map();
+  for (const r of all) {
+    const qid = String(r.question_id || '').trim();
+    if (!isBaseCandidate(qid)) continue;
+    if (!firstSeen.has(qid)) firstSeen.set(qid, r.id);
+  }
+
+  return [...firstSeen.entries()]
+    .sort((a, b) => a[1] - b[1])
+    .map(([qid]) => qid);
+}
+
+
 async function regradeTestInstance(req, res) {
   const { instanceId } = req.params;
-
-  if (!instanceId) {
-    return res.status(400).json({ error: 'Missing instanceId' });
-  }
+  if (!instanceId) return res.status(400).json({ error: 'Missing instanceId' });
 
   let questions;
   try {
@@ -1112,12 +1148,12 @@ async function regradeTestInstance(req, res) {
 
   console.log('🔁 regradeTestInstance for', instanceId, 'questions:', questions.length);
 
-  const conn = await db.getConnection();
+  let conn = null;
   try {
+    conn = await db.getConnection();
     await conn.beginTransaction();
-    // ... keep the rest of your existing regradeTestInstance body as-is ...
 
-    // 🔹 Pick any student in this instance as the "answer owner"
+    // Pick any student in this instance as the "answer owner"
     const [[memberRow]] = await conn.query(
       `SELECT student_id
        FROM group_members
@@ -1126,11 +1162,11 @@ async function regradeTestInstance(req, res) {
        LIMIT 1`,
       [instanceId]
     );
-    const defaultAnswererId = memberRow?.student_id || 0; // fallback 0 if somehow no members
+    const defaultAnswererId = memberRow?.student_id || 0;
 
     // Load all stored responses for this instance
     const [rows] = await conn.query(
-      `SELECT question_id, response, response_type
+      `SELECT question_id, response
        FROM responses
        WHERE activity_instance_id = ?`,
       [instanceId]
@@ -1138,12 +1174,21 @@ async function regradeTestInstance(req, res) {
 
     const answers = {};
     for (const row of rows) {
-      // Use the same keys submitTest uses, e.g. "1", "1code1", "1Output", etc.
       answers[row.question_id] = row.response ?? '';
     }
 
+    // Map parsed question order -> base qids found in DB
+    const baseIds = await getBaseQidsFirstSeen(conn, instanceId);
+    console.log('🧭 [regrade] baseIds from DB (first-seen):', baseIds.slice(0, 60));
+
+    for (let i = 0; i < questions.length; i++) {
+      if (baseIds[i]) questions[i].id = baseIds[i];
+    }
+
     const upsertResponse = async (qid, value, type = 'text') => {
-      if (value == null || String(value).trim() === '') return;
+      if (value == null) return;
+      const s = String(value);
+      if (!s.trim()) return;
 
       await conn.query(
         `
@@ -1154,17 +1199,15 @@ async function regradeTestInstance(req, res) {
           response_type = VALUES(response_type),
           answered_by_user_id = VALUES(answered_by_user_id),
           updated_at    = CURRENT_TIMESTAMP
-      `,
-        [instanceId, qid, type, String(value), defaultAnswererId]
+        `,
+        [instanceId, qid, type, s, defaultAnswererId]
       );
     };
 
     const bucketPoints = (bucket) => {
       if (!bucket) return 0;
       if (typeof bucket === 'number') return bucket;
-      if (typeof bucket === 'object' && typeof bucket.points === 'number') {
-        return bucket.points;
-      }
+      if (typeof bucket === 'object' && typeof bucket.points === 'number') return bucket.points;
       return 0;
     };
 
@@ -1174,67 +1217,40 @@ async function regradeTestInstance(req, res) {
 
     for (const q of questions) {
       const baseId = q.id || q.qid;
-      if (!baseId) {
-        console.error('❌ regradeTestInstance: question missing id:', q);
-        continue;
-      }
+      if (!baseId) continue;
 
       const text = q.text || '';
       const scores = q.scores || {};
 
       const maxCodePts = bucketPoints(scores.code);
-      const maxRunPts = bucketPoints(scores.output);
+      const maxRunPts  = bucketPoints(scores.output);
       const maxRespPts = bucketPoints(scores.response);
 
-      console.log('🧩 [regrade] parsed question snapshot', {
-        qid,
-        questionTextPreview: (q.questionText || q.prompt || q.text || '').slice(0, 80),
-        hasScoreTagRaw: !!(q.scoreRaw || q.score || q.scoresRaw),
-        scoreRawPreview: String(q.scoreRaw || q.score || q.scoresRaw || '').slice(0, 120),
-        scoreBucketsKeys: q.scores ? Object.keys(q.scores) : null,
-        fullKeys: Object.keys(q || {}).slice(0, 30),
-      });
-
-      console.log('🧮 [regrade] Question rubric:', {
-        qid: baseId,
-        scores,
-        maxCodePts,
-        maxRunPts,
-        maxRespPts,
-      });
+      if (maxCodePts <= 0 && maxRunPts <= 0 && maxRespPts <= 0) {
+        console.log('⚠️ [regrade] No points configured for question', baseId, '- skipping grading.');
+        continue;
+      }
 
       const written = (answers[baseId] || '').trim();
 
+      // code cells from stored answers
       const codeCells = [];
       const codePrefix = (baseId + 'code').toLowerCase();
-
       for (const [key, value] of Object.entries(answers)) {
         if (!value || !String(value).trim()) continue;
-
-        const lowerKey = key.toLowerCase();
-        if (!lowerKey.startsWith(codePrefix)) continue;
-
-        const labelMatch = key.match(/code(\d+)$/i);
-        const label = labelMatch ? labelMatch[1] : key;
+        if (!key.toLowerCase().startsWith(codePrefix)) continue;
 
         codeCells.push({
-          qid: key,                 // e.g. "1code1"
+          qid: key,
           code: String(value),
           lang: 'cpp',
-          label: `code ${label}`,
+          label: key,
         });
       }
 
-      let outputText = '';
-      const outputPrefix = (baseId + 'output').toLowerCase();
-
-      for (const [key, value] of Object.entries(answers)) {
-        const lowerKey = key.toLowerCase();
-        if (lowerKey === outputPrefix || lowerKey.startsWith(outputPrefix)) {
-          outputText = String(value || '').trim();
-          break;
-        }
-      }
+      // output
+      const outputKey = `${baseId}Output`;
+      const outputText = answers[outputKey] ? String(answers[outputKey]).trim() : '';
 
       console.log('🧪 [regrade] artifacts for', baseId, {
         writtenPresent: !!written,
@@ -1242,22 +1258,10 @@ async function regradeTestInstance(req, res) {
         hasOutput: !!outputText,
       });
 
-      if (maxCodePts <= 0 && maxRunPts <= 0 && maxRespPts <= 0) {
-        console.log(
-          '⚠️ [regrade] No points configured for question',
-          baseId,
-          '- skipping grading.'
-        );
-        continue;
-      }
-
       const {
-        codeScore,
-        codeFeedback,
-        runScore,
-        runFeedback,
-        responseScore,
-        responseFeedback,
+        codeScore, codeFeedback,
+        runScore, runFeedback,
+        responseScore, responseFeedback,
       } = await gradeTestQuestion({
         questionText: text,
         scores,
@@ -1267,22 +1271,7 @@ async function regradeTestInstance(req, res) {
         rubric: scores,
       });
 
-      console.log('✅ [regrade] result:', {
-        instanceId,
-        qid: baseId,
-        maxCodePts,
-        maxRunPts,
-        maxRespPts,
-        codeScore,
-        runScore,
-        responseScore,
-      });
-
-      const earned =
-        (codeScore || 0) +
-        (runScore || 0) +
-        (responseScore || 0);
-
+      const earned = (codeScore || 0) + (runScore || 0) + (responseScore || 0);
       const maxPts = maxCodePts + maxRunPts + maxRespPts;
 
       totalEarnedPoints += earned;
@@ -1290,118 +1279,47 @@ async function regradeTestInstance(req, res) {
 
       questionResults.push({
         qid: baseId,
-        maxCodePts,
-        maxRunPts,
-        maxRespPts,
-        codeScore,
-        runScore,
-        responseScore,
+        maxCodePts, maxRunPts, maxRespPts,
+        codeScore, runScore, responseScore,
         codeFeedback: codeFeedback || '',
         runFeedback: runFeedback || '',
         responseFeedback: responseFeedback || '',
       });
 
-      // 🔁 Update score/feedback responses
-      const upsertScore = async (suffix, value) => {
-        if (value == null) return;
-        await upsertResponse(`${baseId}${suffix}`, value, 'text');
-      };
-
-      await upsertScore('CodeScore', codeScore);
-      await upsertScore('CodeFeedback', codeFeedback);
-
-      await upsertScore('RunScore', runScore);
-      await upsertScore('RunFeedback', runFeedback);
-
-      await upsertScore('ResponseScore', responseScore);
-      await upsertScore('ResponseFeedback', responseFeedback);
+      await upsertResponse(`${baseId}CodeScore`, codeScore, 'text');
+      await upsertResponse(`${baseId}CodeFeedback`, codeFeedback, 'text');
+      await upsertResponse(`${baseId}RunScore`, runScore, 'text');
+      await upsertResponse(`${baseId}RunFeedback`, runFeedback, 'text');
+      await upsertResponse(`${baseId}ResponseScore`, responseScore, 'text');
+      await upsertResponse(`${baseId}ResponseFeedback`, responseFeedback, 'text');
     }
 
-    // Build the summary text (same format as submitTest)
-    const lines = [];
+    const summaryText =
+      questionResults
+        .map(qr => `Question ${qr.qid} – Total ${(qr.codeScore||0)+(qr.runScore||0)+(qr.responseScore||0)}/${qr.maxCodePts+qr.maxRunPts+qr.maxRespPts}`)
+        .join('\n') +
+      `\n\nOverall: ${totalEarnedPoints}/${totalMaxPoints}`;
 
-    for (const qr of questionResults) {
-      const {
-        qid,
-        maxCodePts = 0,
-        maxRunPts = 0,
-        maxRespPts = 0,
-        codeScore = 0,
-        runScore = 0,
-        responseScore = 0,
-        codeFeedback = '',
-        runFeedback = '',
-        responseFeedback = '',
-      } = qr;
-
-      const bandParts = [];
-      if (maxCodePts > 0) bandParts.push(`Code ${codeScore}/${maxCodePts}`);
-      if (maxRunPts > 0) bandParts.push(`Run ${runScore}/${maxRunPts}`);
-      if (maxRespPts > 0) bandParts.push(`Response ${responseScore}/${maxRespPts}`);
-
-      const qMax = maxCodePts + maxRunPts + maxRespPts;
-      const qScore = codeScore + runScore + responseScore;
-
-      lines.push(`Question ${qid} – Total ${qScore}/${qMax}`);
-      if (bandParts.length) {
-        lines.push(`  ${bandParts.join(' · ')}`);
-      }
-
-      if (maxCodePts > 0 && codeScore < maxCodePts && codeFeedback) {
-        lines.push(`  Code feedback: ${codeFeedback}`);
-      }
-      if (maxRunPts > 0 && runScore < maxRunPts && runFeedback) {
-        lines.push(`  Run feedback: ${runFeedback}`);
-      }
-      if (maxRespPts > 0 && responseScore < maxRespPts && responseFeedback) {
-        lines.push(`  Response feedback: ${responseFeedback}`);
-      }
-
-      lines.push('');
-    }
-
-    lines.push(`Overall: ${totalEarnedPoints}/${totalMaxPoints}`);
-    const summaryText = lines.join('\n');
-
-    console.log('📊 [regrade] summary:', {
-      instanceId,
-      totalEarnedPoints,
-      totalMaxPoints,
-    });
-
-    // Store overall totals & summary
     await upsertResponse('testTotalScore', totalEarnedPoints, 'text');
     await upsertResponse('testMaxScore', totalMaxPoints, 'text');
     await upsertResponse('testSummary', summaryText, 'text');
 
-    // Update instance metadata: regraded now, reset review flags
     await conn.query(
       `UPDATE activity_instances
-       SET
-         points_earned    = ?,
-         points_possible  = ?,
-         graded_at        = UTC_TIMESTAMP(),
-         review_complete  = 0,
-         reviewed_at      = NULL
+       SET points_earned = ?, points_possible = ?, graded_at = UTC_TIMESTAMP(),
+           review_complete = 0, reviewed_at = NULL
        WHERE id = ?`,
       [totalEarnedPoints, totalMaxPoints, instanceId]
     );
 
     await conn.commit();
-    return res.json({
-      ok: true,
-      regraded: true,
-      earned: totalEarnedPoints,
-      max: totalMaxPoints,
-      questions: questionResults,
-      summary: summaryText,
-    });
+    return res.json({ ok: true, regraded: true, earned: totalEarnedPoints, max: totalMaxPoints });
   } catch (err) {
-    await conn.rollback();
+    if (conn) await conn.rollback();
     console.error('❌ regradeTestInstance failed:', err);
     return res.status(500).json({ error: 'regrade-test failed' });
   } finally {
-    conn.release();
+    if (conn) conn.release();
   }
 }
 
@@ -1729,7 +1647,7 @@ async function markInstanceReviewed(req, res) {
     await db.query(
       `UPDATE activity_instances
        SET review_complete = 1,
-           reviewed_at     = markInstanceReviewed()
+           reviewed_at     = UTC_TIMESTAMP()
        WHERE id = ?`,
       [instanceId]
     );
@@ -1771,6 +1689,33 @@ async function markTestSubmitted(req, res) {
   }
 }
 
+// PUT /api/courses/:courseId/activities/:activityId/hidden
+// Body: { hidden: true/false }
+async function setActivityHiddenForCourse(req, res) {
+  const { courseId, activityId } = req.params;
+  const hidden = req.body?.hidden ? 1 : 0;
+
+  if (!courseId || !activityId) {
+    return res.status(400).json({ error: 'Missing courseId or activityId' });
+  }
+
+  try {
+    // Optional: enforce instructor-like auth here if your routes don't already
+    // if (!['instructor','root','creator'].includes(req.user?.role)) return res.status(403).json({ error: 'Forbidden' });
+
+    const [result] = await db.query(
+      `UPDATE activity_instances
+       SET hidden = ?
+       WHERE course_id = ? AND activity_id = ?`,
+      [hidden, courseId, activityId]
+    );
+
+    return res.json({ ok: true, hidden: !!hidden, affected: result.affectedRows || 0 });
+  } catch (err) {
+    console.error('❌ setActivityHiddenForCourse:', err);
+    return res.status(500).json({ error: 'Failed to update hidden flag' });
+  }
+}
 
 
 // Export it as part of the module
@@ -1795,4 +1740,5 @@ module.exports = {
   regradeTestInstance,
   markTestSubmitted,
   updateTestSettings,
+  setActivityHiddenForCourse,
 };

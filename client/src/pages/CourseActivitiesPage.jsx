@@ -1,9 +1,10 @@
 // src/pages/CourseActivitiesPage.jsx
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Container, Table, Button, Spinner, Alert } from 'react-bootstrap';
+import { Container, Table, Button, ButtonGroup, Spinner, Alert } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
 import { useUser } from '../context/UserContext';
+
 
 export default function CourseActivitiesPage() {
   const { courseId } = useParams();
@@ -50,6 +51,30 @@ export default function CourseActivitiesPage() {
 
     navigate(path, { state: { courseName } });
   };
+  const toggleHidden = async (activity) => {
+    const newHidden = !activity.hidden;
+
+    const res = await fetch(
+      `${API_BASE_URL}/api/courses/${courseId}/activities/${activity.activity_id}/hidden`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ hidden: newHidden }),
+      }
+    );
+
+    if (!res.ok) {
+      alert('Failed to change visibility');
+      return;
+    }
+
+    setActivities((prev) =>
+      prev.map((a) =>
+        a.activity_id === activity.activity_id ? { ...a, hidden: newHidden } : a
+      )
+    );
+  };
 
 
   const isInstructorLike =
@@ -84,7 +109,8 @@ export default function CourseActivitiesPage() {
                 <tr key={activity.activity_id}>
                   <td>{title}</td>
                   <td>
-                    {user?.role === 'student' && activity.is_ready ? (
+                    {user?.role === 'student' && activity.is_ready && !activity.hidden ? (
+
                       (() => {
                         const isSubmitted = !!activity.submitted_at;
                         return (
@@ -96,50 +122,63 @@ export default function CourseActivitiesPage() {
                           </Button>
                         );
                       })()
-) : isInstructorLike ? (
-  isTest ? (
-    !activity.has_groups ? (
-      <Button
-        variant="primary"
-        onClick={() =>
-          navigate(`/test-setup/${courseId}/${activity.activity_id}`, {
-            state: { courseName },
-          })
-        }
-      >
-        Test Setup
-      </Button>
-    ) : (
-      <Button
-        variant="secondary"
-        onClick={() =>
-          navigate(`/view-tests/${courseId}/${activity.activity_id}`, {
-            state: { courseName },
-          })
-        }
-      >
-        View Tests
-      </Button>
-    )
-  ) : !activity.has_groups ? (
-    <Button variant="primary" onClick={() => handleDoActivity(activity, true)}>
-      Setup Groups
-    </Button>
-  ) : (
-    <Button
-      variant="secondary"
-      onClick={() =>
-        navigate(`/view-groups/${courseId}/${activity.activity_id}`, {
-          state: { courseName },
-        })
-      }
-    >
-      View Groups
-    </Button>
-  )
-) : (
-  <span>Not available</span>
-)}
+                    ) : isInstructorLike ? (
+                      <ButtonGroup>
+                        {
+                          isTest ? (
+                            !activity.has_groups ? (
+                              <Button
+                                variant="primary"
+                                onClick={() =>
+                                  navigate(`/test-setup/${courseId}/${activity.activity_id}`, {
+                                    state: { courseName },
+                                  })
+                                }
+                              >
+                                Test Setup
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="secondary"
+                                onClick={() =>
+                                  navigate(`/view-tests/${courseId}/${activity.activity_id}`, {
+                                    state: { courseName },
+                                  })
+                                }
+                              >
+                                View Tests
+                              </Button>
+                            )
+                          ) : !activity.has_groups ? (
+                            <Button variant="primary" onClick={() => handleDoActivity(activity, true)}>
+                              Setup Groups
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="secondary"
+                              onClick={() =>
+                                navigate(`/view-groups/${courseId}/${activity.activity_id}`, {
+                                  state: { courseName },
+                                })
+                              }
+                            >
+                              View Groups
+                            </Button>
+                          )
+                        }
+
+                        {/* 🔒 Hide / Unhide toggle */}
+                        <Button
+                          variant={activity.hidden ? 'success' : 'outline-danger'}
+                          onClick={() => toggleHidden(activity)}
+                        >
+                          {activity.hidden ? 'Unhide' : 'Hide'}
+                        </Button>
+                      </ButtonGroup>
+                    ) : (
+                      <span>Not available</span>
+                    )}
+
 
                   </td>
                 </tr>

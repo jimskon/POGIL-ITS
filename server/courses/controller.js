@@ -177,7 +177,8 @@ async function getCourseActivities(req, res) {
         ) AS submitted_at,
 
         COUNT(ai.id) AS group_count,
-        MAX(ai.status = 'in_progress') AS is_ready
+        MAX(ai.status = 'in_progress') AS is_ready,
+        MAX(COALESCE(ai.hidden, 0)) AS hidden
       FROM pogil_activities a
       JOIN courses c ON a.class_id = c.class_id
       LEFT JOIN activity_instances ai
@@ -199,6 +200,7 @@ async function getCourseActivities(req, res) {
       submitted_at: row.submitted_at || null,
       is_ready: !!row.is_ready,
       has_groups: row.group_count > 0,
+      hidden: !!row.hidden,
     }));
 
     res.json(activities);
@@ -669,6 +671,32 @@ async function getCourseTestResults(req, res) {
   }
 }
 
+// PUT /api/courses/:courseId/activities/:activityId/hidden
+// Body: { hidden: true/false }
+async function setCourseActivityHidden(req, res) {
+  const { courseId, activityId } = req.params;
+  const hidden = req.body?.hidden ? 1 : 0;
+
+  const role = req.user?.role;
+  if (!['instructor', 'root', 'creator'].includes(role)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    const [result] = await db.query(
+      `UPDATE activity_instances
+       SET hidden = ?
+       WHERE course_id = ? AND activity_id = ?`,
+      [hidden, courseId, activityId]
+    );
+
+    return res.json({ ok: true, hidden: !!hidden, affected: result.affectedRows || 0 });
+  } catch (err) {
+    console.error('❌ setCourseActivityHidden:', err);
+    return res.status(500).json({ error: 'Failed to update hidden flag' });
+  }
+}
+
 
 module.exports = {
   getAllCourses,
@@ -682,5 +710,6 @@ module.exports = {
   unenrollStudentFromCourse,
   getCourseInfo,
   getCourseProgress,
-  getCourseTestResults
+  getCourseTestResults,
+  setCourseActivityHidden,
 };
