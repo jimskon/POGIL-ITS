@@ -879,6 +879,44 @@ async function refreshTotalGroups(req, res) {
   }
 }
 
+// POST /api/activity-instances/:instanceId/test-settings
+// Body: { testStartAt, testDurationMinutes }
+async function updateTestSettings(req, res) {
+  const { instanceId } = req.params;
+  const { testStartAt, testDurationMinutes } = req.body || {};
+
+  if (!instanceId) return res.status(400).json({ error: 'Missing instanceId' });
+
+  const minutes = Number(testDurationMinutes);
+  if (!testStartAt || !Number.isFinite(minutes) || minutes <= 0) {
+    return res.status(400).json({ error: 'testStartAt and positive testDurationMinutes required' });
+  }
+
+  const d = new Date(testStartAt);
+  if (Number.isNaN(d.getTime())) {
+    return res.status(400).json({ error: 'Invalid testStartAt' });
+  }
+
+  // Store as UTC datetime string for MySQL
+  const startForDb = d.toISOString().slice(0, 19).replace('T', ' ');
+
+  try {
+    // Optional: wipe reopen window when you change the base window
+    await db.query(
+      `UPDATE activity_instances
+       SET test_start_at = ?,
+           test_duration_minutes = ?,
+           test_reopen_until = NULL
+       WHERE id = ?`,
+      [startForDb, minutes, instanceId]
+    );
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('❌ updateTestSettings error:', err);
+    return res.status(500).json({ error: 'Failed to update test settings' });
+  }
+}
 
 // NEW: Reopen a timed test for an instance
 async function reopenInstance(req, res) {
@@ -916,11 +954,11 @@ async function reopenInstance(req, res) {
     const now = new Date();
     const reopenUntil = new Date(now.getTime() + extendMinutes * 60000);
 
-    await db.query(
+     await db.query(
       `UPDATE activity_instances
-       SET test_reopen_until = ?
+       SET test_reopen_until = DATE_ADD(UTC_TIMESTAMP(), INTERVAL ? MINUTE)
        WHERE id = ?`,
-      [reopenUntil, instanceId]
+      [extendMinutes, instanceId]
     );
 
     return res.json({ ok: true, test_reopen_until: reopenUntil });
@@ -1333,7 +1371,7 @@ async function regradeTestInstance(req, res) {
        SET
          points_earned    = ?,
          points_possible  = ?,
-         graded_at        = NOW(),
+         graded_at        = UTC_TIMESTAMP(),
          review_complete  = 0,
          reviewed_at      = NULL
        WHERE id = ?`,
@@ -1650,8 +1688,8 @@ async function submitTest(req, res) {
          points_possible  = ?,
          progress_status  = 'completed',
          is_test          = 1,
-         submitted_at     = COALESCE(submitted_at, NOW()),
-         graded_at        = NOW()
+         submitted_at     = COALESCE(submitted_at, UTC_TIMESTAMP()),
+ graded_at        = UTC_TIMESTAMP()
        WHERE id = ?`,
       [totalEarnedPoints, totalMaxPoints, instanceId]
     );
@@ -1682,7 +1720,7 @@ async function markInstanceReviewed(req, res) {
     await db.query(
       `UPDATE activity_instances
        SET review_complete = 1,
-           reviewed_at     = NOW()
+           reviewed_at     = markInstanceReviewed()
        WHERE id = ?`,
       [instanceId]
     );
@@ -1711,8 +1749,8 @@ async function markTestSubmitted(req, res) {
          points_possible = ?,
          progress_status = 'completed',
          is_test         = 1,
-         submitted_at    = NOW(),
-         graded_at       = NOW()
+         submitted_at    = UTC_TIMESTAMP(),
+         graded_at       = UTC_TIMESTAMP()
        WHERE id = ?`,
       [totalEarnedPoints ?? 0, totalMaxPoints ?? 0, instanceId]
     );
@@ -1747,4 +1785,5 @@ module.exports = {
   markInstanceReviewed,
   regradeTestInstance,
   markTestSubmitted,
+  updateTestSettings,
 };

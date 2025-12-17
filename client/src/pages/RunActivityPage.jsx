@@ -21,6 +21,8 @@ import QuestionScorePanel from '../components/QuestionScorePanel';
 const DEBUG_FILES = false;
 const PAGE_TAG = 'RUN';
 
+
+
 // Map short role keys to full names
 const roleLabels = {
   qc: 'Quality Control',
@@ -131,6 +133,7 @@ export default function RunActivityPage({
   activeStudentId,
   setActiveStudentId,
 }) {
+  const dirtyKeysRef = useRef(new Set());
   const [lastEditTs, setLastEditTs] = useState(0);
   const { instanceId } = useParams();
   const location = useLocation();
@@ -175,8 +178,12 @@ export default function RunActivityPage({
   const toggleCodeViewMode = (rk, next) =>
     setCodeViewMode((prev) => ({ ...prev, [rk]: next }));
 
-  const updateLocalCode = (rk, code) =>
+  const updateLocalCode = (rk, code) => {
+    setLastEditTs(Date.now());
+    dirtyKeysRef.current.add(rk);
     setLocalCode((prev) => ({ ...prev, [rk]: code }));
+  };
+
 
   const userRoles = groupMembers
     .filter((m) => String(m.student_id) === String(user.id))
@@ -505,6 +512,8 @@ export default function RunActivityPage({
   }, [fileContents]);
 
   useEffect(() => {
+      if (isTestMode) return; // test mode: no “active student” concept
+
     const interval = setInterval(async () => {
       try {
         const res = await fetch(
@@ -521,12 +530,21 @@ export default function RunActivityPage({
 
   useEffect(() => {
     const interval = setInterval(() => {
+      // In test mode, NEVER refresh for an active student while the test is editable.
+      // Refreshing can only cause harm (overwrites), and you already save code on change.
+      if (isTestMode && isStudent && isActive && !testLockState.lockedAfter) {
+        return;
+      }
+
+      // Otherwise keep old behavior
       if (!isActive || Date.now() - lastEditTs > 15000) {
         loadActivity();
       }
     }, 10000);
+
     return () => clearInterval(interval);
-  }, [instanceId, isActive, lastEditTs]);
+  }, [instanceId, isActive, lastEditTs, isTestMode, isStudent, testLockState.lockedAfter]);
+
 
   useEffect(() => {
     const sendHeartbeat = async () => {
@@ -956,8 +974,18 @@ export default function RunActivityPage({
       );
       const answersData = await answersRes.json();
 
-      // 1) Merge into existingAnswers so renderBlocks can prefill
-      setExistingAnswers((prev) => ({ ...prev, ...answersData }));
+      setExistingAnswers((prev) => {
+        const next = { ...prev };
+
+        for (const [k, v] of Object.entries(answersData || {})) {
+          // Do NOT overwrite anything the student has edited locally but not fully settled
+          if (dirtyKeysRef.current.has(k)) continue;
+          next[k] = v;
+        }
+
+        return next;
+      });
+
 
       // 💾 NEW: hydrate fileContents from saved file:<filename> responses
       const savedFiles = {};
@@ -2121,6 +2149,8 @@ export default function RunActivityPage({
 
   async function handleCodeChange(responseKey, updatedCode, meta = {}) {
     setLastEditTs(Date.now());
+    dirtyKeysRef.current.add(responseKey);
+
     if (!isActive) return;
 
     setExistingAnswers((prev) => ({
@@ -2178,6 +2208,8 @@ export default function RunActivityPage({
           response: updatedCode,
         }),
       });
+      dirtyKeysRef.current.delete(responseKey);
+
 
       // NEW: no live guidance during tests
       if (isTestMode) {

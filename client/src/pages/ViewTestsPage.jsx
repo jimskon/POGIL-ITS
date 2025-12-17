@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
-import { Container, Table, Spinner, Alert, Button, Badge } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
-import { formatUtcToLocal } from '../utils/time';
+import { formatUtcToLocal, utcToLocalInputValue } from '../utils/time';
+import { Container, Table, Spinner, Alert, Button, Badge, Modal, Form } from 'react-bootstrap';
+
 
 export default function ViewTestsPage() {
   const { courseId, activityId } = useParams();
@@ -21,12 +22,28 @@ export default function ViewTestsPage() {
   const [regrading, setRegrading] = useState(new Set());
   const [reviewing, setReviewing] = useState(new Set());
 
+  const [editing, setEditing] = useState(null); // { instanceId, startAtLocal, durationMinutes }
+  const [savingEdit, setSavingEdit] = useState(false);
+
+
+
+  const toLocalInputValue = (utcString) => {
+    if (!utcString) return '';
+    const d = new Date(utcString);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
   const fetchTests = async () => {
     try {
       const res = await fetch(
         `${API_BASE_URL}/api/activity-instances/by-activity/${courseId}/${activityId}`
       );
       const data = await res.json();
+      console.log('RAW group[0]:', data.groups?.[0]);
+console.log('submitted_at raw:', data.groups?.[0]?.submitted_at);
+console.log('test_start_at raw:', data.groups?.[0]?.test_start_at);
 
       if (!Array.isArray(data.groups)) throw new Error('Bad response format');
 
@@ -40,6 +57,54 @@ export default function ViewTestsPage() {
       setLoading(false);
     }
   };
+
+  const openEdit = (t) => {
+    setEditing({
+      instanceId: t.instance_id,
+      startAtLocal: t.test_start_at ? utcToLocalInputValue(t.test_start_at) : '',
+      durationMinutes: t.test_duration_minutes ?? 30,
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+
+    // Basic validation
+    const minutes = Number(editing.durationMinutes);
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+      alert('Duration must be a positive number of minutes.');
+      return;
+    }
+    if (!editing.startAtLocal) {
+      alert('Please choose a start date/time.');
+      return;
+    }
+
+    setSavingEdit(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/activity-instances/${editing.instanceId}/test-settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          testStartAt: new Date(editing.startAtLocal).toISOString(),
+          testDurationMinutes: Number(editing.durationMinutes),
+        }),
+
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Failed to update test settings');
+
+      setEditing(null);
+      await fetchTests();
+    } catch (err) {
+      console.error('❌ Save test settings failed:', err);
+      alert(err.message || 'Failed to save test settings.');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
 
   useEffect(() => {
     if (!courseId || !activityId) return;
@@ -249,7 +314,16 @@ export default function ViewTestsPage() {
                         >
                           Reopen
                         </Button>
+
                       )}
+                      <Button
+                        variant="outline-primary"
+                        size="sm"
+                        onClick={() => openEdit(t)}
+                      >
+                        Edit
+                      </Button>
+
 
                       {isSubmitted && (
                         <Button
@@ -289,6 +363,46 @@ export default function ViewTestsPage() {
           </tbody>
         </Table>
       )}
+      <Modal show={!!editing} onHide={() => setEditing(null)} centered>
+        <Modal.Header closeButton>
+          <Modal.Title>Edit test timing</Modal.Title>
+        </Modal.Header>
+
+        <Modal.Body>
+          <Form.Group className="mb-3">
+            <Form.Label>Start date & time</Form.Label>
+            <Form.Control
+              type="datetime-local"
+              value={editing?.startAtLocal || ''}
+              onChange={(e) => setEditing((prev) => ({ ...prev, startAtLocal: e.target.value }))}
+            />
+          </Form.Group>
+
+          <Form.Group className="mb-3">
+            <Form.Label>Duration (minutes)</Form.Label>
+            <Form.Control
+              type="number"
+              min={1}
+              value={editing?.durationMinutes ?? 30}
+              onChange={(e) => setEditing((prev) => ({ ...prev, durationMinutes: e.target.value }))}
+            />
+          </Form.Group>
+
+          <div className="text-muted small">
+            Note: changing the start/duration affects lockout timing for this instance.
+          </div>
+        </Modal.Body>
+
+        <Modal.Footer>
+          <Button variant="secondary" onClick={() => setEditing(null)} disabled={savingEdit}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={saveEdit} disabled={savingEdit}>
+            {savingEdit ? 'Saving…' : 'Save'}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
     </Container>
   );
 }

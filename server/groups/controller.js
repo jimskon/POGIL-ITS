@@ -47,6 +47,56 @@ exports.getGroupsByInstance = async (req, res) => {
   }
 };
 
+async function isTestActivity(activityId) {
+  const [[row]] = await db.query(
+    `SELECT COALESCE(is_test, 0) AS is_test
+       FROM pogil_activities
+      WHERE id = ?`,
+    [activityId]
+  );
+  return !!row?.is_test;
+}
+
+// Create a new instance for a test (group of 1, no roles)
+// Copy timing fields from an existing instance if available.
+async function createNewTestInstance(conn, activityId, courseId) {
+  // next group_number
+  const [[{ next_num }]] = await conn.query(
+    `SELECT COALESCE(MAX(group_number), 0) + 1 AS next_num
+       FROM activity_instances
+      WHERE activity_id = ? AND course_id = ?`,
+    [activityId, courseId]
+  );
+
+  // copy timing defaults from any existing instance
+  const [[tmpl]] = await conn.query(
+    `SELECT test_start_at, test_duration_minutes, lock_before_start, lock_after_end
+       FROM activity_instances
+      WHERE activity_id = ? AND course_id = ?
+      ORDER BY id ASC
+      LIMIT 1`,
+    [activityId, courseId]
+  );
+
+  const [ins] = await conn.query(
+    `INSERT INTO activity_instances
+       (activity_id, course_id, status, group_number,
+        test_start_at, test_duration_minutes, lock_before_start, lock_after_end)
+     VALUES (?, ?, 'in_progress', ?, ?, ?, ?, ?)`,
+    [
+      activityId,
+      courseId,
+      next_num,
+      tmpl?.test_start_at ?? null,
+      tmpl?.test_duration_minutes ?? 0,
+      tmpl?.lock_before_start ?? 0,
+      tmpl?.lock_after_end ?? 0,
+    ]
+  );
+
+  return { id: ins.insertId, groupNumber: next_num };
+}
+
 // helper: which existing instance has space (<4)?
 async function pickGroupWithSpace(activityId, courseId) {
   const [rows] = await db.query(
@@ -184,14 +234,27 @@ exports.smartAddStudent = async (req, res) => {
       return res.status(409).json({ error: 'Student already in a group for this activity' });
     }
 
-    let group = await pickGroupWithSpace(activityId, courseId);
-    if (!group) group = await createNewGroup(activityId, courseId);
+    const testMode = await isTestActivity(activityId);
 
-    const role = await nextOpenRole(group.id);
-    const cleanRole =
-      role && ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(role)
-        ? role
-        : null;
+    let group;
+    let role = null;
+    let cleanRole = null;
+
+    if (testMode) {
+      // TEST: always create a brand-new instance (group of 1)
+      group = await createNewTestInstance(conn, activityId, courseId);
+    } else {
+      // NORMAL ACTIVITY: existing group logic
+      group = await pickGroupWithSpace(activityId, courseId);
+      if (!group) group = await createNewGroup(activityId, courseId);
+
+      role = await nextOpenRole(group.id);
+      cleanRole =
+        role && ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(role)
+          ? role
+          : null;
+    }
+
 
     await conn.query(
       `INSERT INTO group_members (activity_instance_id, student_id, role)

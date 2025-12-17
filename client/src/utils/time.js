@@ -38,36 +38,57 @@ export function normalizeDbDatetime(value) {
 }
 
 
-// Input:  "2025-12-04 02:59:00"  (UTC)
-// Output: "2025-12-03 9:59PM"    (local time)
-export function formatUtcToLocal(utcString) {
-  if (!utcString) return '';
-
-  // Match "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DDTHH:MM:SS"
-  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(utcString);
-  if (!m) return '';
-
-  const [, year, month, day, hour, minute, second = '0'] = m.map(Number);
-
-  // Treat parsed values as UTC
-  const d = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-  if (isNaN(d.getTime())) return '';
+// Input can be:
+//  - "2025-12-04 02:59:00"        (MySQL DATETIME stored as UTC)
+//  - "2025-12-04T02:59:00"        (no zone; treat as UTC)
+//  - "2025-12-04T02:59:00.000Z"   (ISO UTC)
+//  - Date object
+// Output: "YYYY-MM-DD h:mmAM" in *browser local time*
+export function formatUtcToLocal(value) {
+  if (!value) return '';
 
   const pad2 = (n) => String(n).padStart(2, '0');
 
-  const localYear = d.getFullYear();
-  const localMonth = pad2(d.getMonth() + 1);
-  const localDay = pad2(d.getDate());
+  const fmt = (d) => {
+    const y = d.getFullYear();
+    const m = pad2(d.getMonth() + 1);
+    const day = pad2(d.getDate());
 
-  let localHour = d.getHours();
-  const localMinute = pad2(d.getMinutes());
-  const ampm = localHour >= 12 ? 'PM' : 'AM';
+    let h = d.getHours();
+    const min = pad2(d.getMinutes());
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12;
+    if (h === 0) h = 12;
 
-  localHour = localHour % 12;
-  if (localHour === 0) localHour = 12; // 0 → 12AM / 12PM
+    return `${y}-${m}-${day} ${h}:${min}${ampm}`;
+  };
 
-  return `${localYear}-${localMonth}-${localDay} ${localHour}:${localMinute}${ampm}`;
+  // Date object?
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? '' : fmt(value);
+  }
+
+  const s = String(value).trim();
+
+  // MySQL DATETIME "YYYY-MM-DD HH:MM:SS" -> treat as UTC
+  let m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(s);
+  if (m) {
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const day = Number(m[3]);
+    const hour = Number(m[4]);
+    const minute = Number(m[5]);
+    const second = Number(m[6] ?? 0);
+
+    const d = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+    return Number.isNaN(d.getTime()) ? '' : fmt(d);
+  }
+
+  // ISO (with Z / offset / milliseconds) -> Date parses it correctly as UTC
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? '' : fmt(d);
 }
+
 
 // Input:  "2025-12-04 02:59:00" or "2025-12-04T02:59:00"
 // Output: Date object (local representation, but constructed from UTC fields)

@@ -18,6 +18,8 @@ router.post('/:instanceId/reopen', controller.reopenInstance);
 // ✅ Regrade this test instance using stored answers
 router.post('/:instanceId/regrade', controller.regradeTestInstance);
 
+router.post('/:instanceId/test-settings', controller.updateTestSettings);
+
 // ✅ Mark test as submitted (cached totals)
 router.post('/:instanceId/mark-test-submitted', controller.markTestSubmitted);
 
