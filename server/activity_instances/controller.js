@@ -89,6 +89,32 @@ function parseGoogleDocHTML(html) {
 
 // ======== Helpers for timed tests ========
 
+function normQid(qid) {
+  return String(qid ?? '').trim();
+}
+
+
+function normalizeBaseId(id) {
+  let s = String(id ?? '').trim().toLowerCase();
+  s = s.replace(/[^\x20-\x7E]/g, '');
+
+  if (/^\d+[a-z]+$/.test(s)) return s;
+
+  const m = s.match(/^(\d+)(.+)$/);
+  if (!m) return s;
+
+  const num = m[1];
+  const rest = m[2];
+  const bad = rest[0];
+  const tail = rest.slice(1);
+
+  const map = { '{': 'aa', '|': 'ab', '}': 'ac', '~': 'ad' };
+  if (map[bad]) return num + map[bad] + tail;
+
+  return s;
+}
+
+
 function computeTestWindow(instance) {
   const { test_start_at, test_duration_minutes, test_reopen_until } = instance || {};
   if (!test_start_at || !test_duration_minutes) return null;
@@ -525,7 +551,7 @@ async function submitGroupResponses(req, res) {
 
     // Group answers by base question id (e.g., 2a from 2aFA1)
     for (const [qid, value] of Object.entries(answers)) {
-      const baseMatch = qid.match(/^([0-9]+[a-zA-Z])/); // 2a from 2aFA1
+      const baseMatch = qid.match(/^([0-9]+[a-zA-Z]+)/);
       const base = baseMatch ? baseMatch[1] : null;
       if (!base) continue;
 
@@ -539,13 +565,14 @@ async function submitGroupResponses(req, res) {
       let allFollowupsAnswered = true;
 
       for (const [qid, value] of Object.entries(group)) {
-        responseMap.set(qid, value);
+        responseMap.set(normQid(qid), value);
 
-        if (qid === base && value.trim().length > 0) {
+        if (normQid(qid) === normQid(base) && String(value).trim().length > 0) {
           hasMain = true;
         }
 
-        const fMatch = qid.match(/^([0-9]+[a-zA-Z])F(\d+)$/);
+        const fMatch = qid.match(/^([0-9]+[a-zA-Z]+)F(\d+)$/);
+
         if (fMatch) {
           const followupNum = fMatch[2];
           const faKey = `${base}FA${followupNum}`;
@@ -558,12 +585,12 @@ async function submitGroupResponses(req, res) {
       const isComplete = hasMain && allFollowupsAnswered;
 
       // Per-question completion marker (e.g., 2aS)
-      responseMap.set(`${base}S`, isComplete ? 'completed' : 'inprogress');
++ responseMap.set(`${base}S`, isComplete ? 'completed' : 'inprogress'); // force uppercase S marker
 
       // Per-group completion marker (e.g., 2state)
       const groupNum = base.match(/^(\d+)/)?.[1];
       if (groupNum) {
-        const groupStateKey = `${groupNum}state`;
+        const groupStateKey = `${groupNum}state`; // always lowercase 'state'
         if (!responseMap.has(groupStateKey)) {
           responseMap.set(groupStateKey, isComplete ? 'completed' : 'inprogress');
         } else if (responseMap.get(groupStateKey) !== 'completed' && isComplete) {
@@ -1014,6 +1041,18 @@ function parseScoreSpec(specRaw) {
   return out;
 }
 
+function indexToLetters(i) {
+  // 0->a, 25->z, 26->aa, 27->ab, ...
+  let n = i + 1;
+  let s = '';
+  while (n > 0) {
+    n--; // make 0-based for modulo
+    s = String.fromCharCode(97 + (n % 26)) + s;
+    n = Math.floor(n / 26);
+  }
+  return s;
+}
+
 // Helper: flatten Google doc into trimmed lines (same as you already do)
 async function loadTestQuestionsForInstance(instanceId) {
   const [[row]] = await db.query(
@@ -1023,6 +1062,21 @@ async function loadTestQuestionsForInstance(instanceId) {
      WHERE ai.id = ?`,
     [instanceId]
   );
+  // 0->a, 25->z, 26->aa, 27->ab ...
+  function alpha(i0) {
+    let n = i0 + 1;   // 1-based
+    let s = '';
+    while (n > 0) {
+      n--;
+      s = String.fromCharCode(97 + (n % 26)) + s;
+      n = Math.floor(n / 26);
+    }
+    return s;
+  }
+
+  function normalizeKey(s) {
+    return String(s ?? '').trim().toLowerCase();
+  }
 
   if (!row) throw new Error(`Activity instance ${instanceId} not found`);
   if (!row.sheet_url) throw new Error(`No sheet_url for activity_id ${row.activity_id}`);
@@ -1044,46 +1098,154 @@ async function loadTestQuestionsForInstance(instanceId) {
   const questions = [];
   let current = null;
 
-  for (const raw of lines) {
-    const line = raw.trim();
+  // NEW: question id generation state
+  let groupNum = 0;            // increments on each \questiongroup
+  let qIndexInGroup = 0;       // 0-based within group
+  let sawAnyGroupTag = false;  // if no groups exist, we treat as group 1
 
-    // New question
-    if (line.startsWith('\\question')) {
+  // NEW: rubric capture state
+  let inScore = false;
+  let scoreBucket = null; // 'code'|'output'|'response'
+  let scoreBuffer = [];
+
+
+  const flushScore = () => {
+    if (!current || !scoreBucket) return;
+
+    const instructionsRaw = scoreBuffer.join('\n').trim();
+    const pts = current.scores?.[scoreBucket] ?? 0;
+
+    current.scores[scoreBucket] = {
+      points: typeof pts === 'number' ? pts : 0,
+      instructionsRaw: instructionsRaw || '(none)',
+    };
+
+    inScore = false;
+    scoreBucket = null;
+    scoreBuffer = [];
+  };
+
+  for (const raw of lines) {
+    const line = String(raw || '').trim();
+    if (!line) continue;
+
+    if (line.startsWith('\\questiongroup{')) {
+      flushScore();
       if (current) questions.push(current);
 
-      // Your format is usually: \question{Question text...}
-      const m = line.match(/^\\question\{([\s\S]*?)\}\s*$/);
-      const qText = m ? m[1].trim() : line.replace(/^\\question\s*/, '').trim();
-
-      current = {
-        id: null,          // we'll assign ids later for regrade mapping
-        text: qText,
-        scores: {},
-      };
+      sawAnyGroupTag = true;
+      groupNum += 1;
+      qIndexInGroup = 0;
+      current = null;
       continue;
     }
 
-    // Score tag
-    if (line.startsWith('\\score') && current) {
-      const m = line.match(/^\\score\{([^}]*)\}/);
-      if (m) {
-        current.scores = parseScoreSpec(m[1]);
+    if (line === '\\endquestiongroup') {
+      flushScore();
+      if (current) questions.push(current);
+
+      current = null;
+      continue;
+    }
+    // Start a new question: \question{...}
+    const isQuestionLine = line.startsWith('\\question{');
+    if (isQuestionLine) {
+      flushScore();
+      if (current) questions.push(current);
+
+      // Capture the text inside \question{...} (same line)
+      const qTag = line.match(/^\\question\{([\s\S]*?)\}\s*$/);
+
+      // If someone put trailing text after the closing }, keep it
+      let qText = '';
+      let after = '';
+
+      if (qTag) {
+        qText = qTag[1].trim();
+        // since regex anchors to end-of-line, "after" is always empty here
+      } else {
+        // Fallback: find the first "{", last "}" on the line
+        const open = line.indexOf('{');
+        const close = line.lastIndexOf('}');
+        if (open >= 0 && close > open) {
+          qText = line.slice(open + 1, close).trim();
+          after = line.slice(close + 1).trim();
+        } else {
+          qText = line.replace(/^\\question\s*/, '').trim();
+        }
       }
+
+      const effectiveGroup = sawAnyGroupTag ? groupNum : 1;   // if no \questiongroup, group=1
+      const suffix = indexToLetters(qIndexInGroup++);         // a, b, ..., z, aa, ab, ...
+      const qid = `${effectiveGroup}${suffix}`.toLowerCase(); // 1a, 1b, ... 2a, ...
+
+      current = { id: qid, text: qText, scores: {} };
+      if (after) current.text += ' ' + after;
+
+
       continue;
     }
 
-    // Accumulate extra lines into question text (optional)
-    if (current) {
-      // Stop at end markers if you want; but keeping it simple:
-      if (!line.startsWith('\\end')) {
-        current.text = current.text ? (current.text + ' ' + line) : line;
+
+    if (!current) continue;
+    // Start \score{...}
+    const sm = line.match(/\\score\{([^}]*)\}/);
+    if (sm) {
+      flushScore();
+
+      const spec = parseScoreSpec(sm[1]);
+      current.scores = { ...current.scores, ...spec };
+
+      // ✅ Robust bucket detection: whichever key parseScoreSpec found
+      if (spec.response != null) scoreBucket = 'response';
+      else if (spec.code != null) scoreBucket = 'code';
+      else if (spec.output != null) scoreBucket = 'output';
+      else scoreBucket = null;
+
+      if (scoreBucket) {
+        inScore = true;
+        scoreBuffer = [];
+
+        // ✅ If there is text after the closing } on the same line,
+        // capture it as the first rubric line.
+        const after = line.slice(line.indexOf(sm[0]) + sm[0].length).trim();
+        if (after) scoreBuffer.push(after);
       }
+
       continue;
+    }
+
+
+    // End score block
+    if (line.startsWith('\\endscore')) {
+      flushScore();
+      continue;
+    }
+
+    // Capture rubric lines
+    if (inScore) {
+      scoreBuffer.push(line);
+      continue;
+    }
+
+    // Optional: append other non-\end lines into question text
+    if (!line.startsWith('\\end')) {
+      current.text = current.text ? (current.text + ' ' + line) : line;
     }
   }
 
+  flushScore();
   if (current) questions.push(current);
+  console.log("🧾 Parsed questions summary:",
+    questions.map(q => ({
+      textStart: (q.text || '').slice(0, 40),
+      scores: q.scores
+    }))
+  );
+  console.log("🧾 Parsed question IDs:", questions.map(q => q.id));
+
   return questions;
+
 }
 
 async function getBaseQidsFirstSeen(conn, instanceId) {
@@ -1153,6 +1315,15 @@ async function regradeTestInstance(req, res) {
     conn = await db.getConnection();
     await conn.beginTransaction();
 
+    await conn.query(
+      `DELETE FROM responses
+   WHERE activity_instance_id = ?
+     AND (
+       question_id IN ('testTotalScore','testMaxScore','testSummary')
+       OR LOWER(question_id) REGEXP '(codescore|runscore|responsescore|codefeedback|runfeedback|responsefeedback)$'
+     )`,
+      [instanceId]
+    );
     // Pick any student in this instance as the "answer owner"
     const [[memberRow]] = await conn.query(
       `SELECT student_id
@@ -1164,26 +1335,102 @@ async function regradeTestInstance(req, res) {
     );
     const defaultAnswererId = memberRow?.student_id || 0;
 
-    // Load all stored responses for this instance
+    // Load all stored responses for this instance (case-insensitive keying)
     const [rows] = await conn.query(
       `SELECT question_id, response
-       FROM responses
-       WHERE activity_instance_id = ?`,
+   FROM responses
+   WHERE activity_instance_id = ?`,
       [instanceId]
     );
 
     const answers = {};
     for (const row of rows) {
-      answers[row.question_id] = row.response ?? '';
+      const k = normQid(row.question_id);     // just trim+lowercase
+      answers[k] = row.response ?? '';
     }
 
-    // Map parsed question order -> base qids found in DB
-    const baseIds = await getBaseQidsFirstSeen(conn, instanceId);
-    console.log('🧭 [regrade] baseIds from DB (first-seen):', baseIds.slice(0, 60));
 
-    for (let i = 0; i < questions.length; i++) {
-      if (baseIds[i]) questions[i].id = baseIds[i];
+    function normalizeBaseId(id) {
+      let s = String(id ?? '').trim().toLowerCase();
+
+      // Drop non-printing chars (your existing idea)
+      s = s.replace(/[^\x20-\x7E]/g, '');
+
+      // If it's already good: 1a, 1z, 1aa, 10bc, etc.
+      if (/^\d+[a-z]+$/.test(s)) return s;
+
+      // Legacy single bad char after the digits: 1{ 1| 1} 1~ 1 etc
+      const m = s.match(/^(\d+)(.+)$/);
+      if (!m) return s;
+
+      const num = m[1];
+      const rest = m[2];              // begins with the bad char + suffix like CodeScore
+      const bad = rest[0];
+      const tail = rest.slice(1);
+
+      // map known legacy chars -> aa,ab,ac,ad (and your 0x81..0x85 ones if present after stripping)
+      const map = {
+        '{': 'aa',
+        '|': 'ab',
+        '}': 'ac',
+        '~': 'ad',
+      };
+
+      // If the bad char survived and is one of these:
+      if (map[bad]) return num + map[bad] + tail;
+
+      return s;
     }
+
+    function splitBaseId(id) {
+      const m = normalizeBaseId(id).match(/^(\d+)([a-z]+)$/);
+      if (!m) return null;
+      return { n: Number(m[1]), suffix: m[2] };
+    }
+
+    function lettersToIndex(s) {
+      // a->0 ... z->25, aa->26, ab->27 ...
+      let n = 0;
+      for (const ch of s) {
+        const v = ch.charCodeAt(0) - 96; // a=1..z=26
+        if (v < 1 || v > 26) return null;
+        n = n * 26 + v;
+      }
+      return n - 1;
+    }
+
+    function compareBaseIds(a, b) {
+      const A = splitBaseId(a);
+      const B = splitBaseId(b);
+      if (!A && !B) return String(a).localeCompare(String(b));
+      if (!A) return 1;
+      if (!B) return -1;
+      if (A.n !== B.n) return A.n - B.n;
+      return lettersToIndex(A.suffix) - lettersToIndex(B.suffix);
+    }
+
+
+    const docBaseIds = Array.from(
+      new Set(
+        questions
+          .map(q => normalizeBaseId(q.id || q.qid))
+          .filter(id => !!splitBaseId(id))
+      )
+    ).sort(compareBaseIds);
+
+    console.log('🧭 [regrade] docBaseIds:', docBaseIds);
+
+
+    // Force questions to use doc IDs in stable order (optional, but keeps things aligned)
+    let qi = 0;
+    for (const q of questions) {
+      const cid = normalizeBaseId(q.id || q.qid);
+      if (splitBaseId(cid)) {
+        q.id = cid;
+        qi++;
+      }
+    }
+
 
     const upsertResponse = async (qid, value, type = 'text') => {
       if (value == null) return;
@@ -1215,15 +1462,24 @@ async function regradeTestInstance(req, res) {
     let totalMaxPoints = 0;
     const questionResults = [];
 
+    const qById = new Map();
     for (const q of questions) {
-      const baseId = q.id || q.qid;
-      if (!baseId) continue;
+      const bid = normalizeBaseId(q.id || q.qid);
+      if (splitBaseId(bid) && !qById.has(bid)) {
+        qById.set(bid, { ...q, id: bid });
+      }
+    }
+
+    for (const baseId of docBaseIds) {
+      const q = qById.get(baseId);
+      if (!q) continue;
+
 
       const text = q.text || '';
       const scores = q.scores || {};
 
       const maxCodePts = bucketPoints(scores.code);
-      const maxRunPts  = bucketPoints(scores.output);
+      const maxRunPts = bucketPoints(scores.output);
       const maxRespPts = bucketPoints(scores.response);
 
       if (maxCodePts <= 0 && maxRunPts <= 0 && maxRespPts <= 0) {
@@ -1241,7 +1497,7 @@ async function regradeTestInstance(req, res) {
         if (!key.toLowerCase().startsWith(codePrefix)) continue;
 
         codeCells.push({
-          qid: key,
+          qid: normQid(key),
           code: String(value),
           lang: 'cpp',
           label: key,
@@ -1249,8 +1505,9 @@ async function regradeTestInstance(req, res) {
       }
 
       // output
-      const outputKey = `${baseId}Output`;
-      const outputText = answers[outputKey] ? String(answers[outputKey]).trim() : '';
+      const outputKey = `${baseId}output`; // lowercase
+      const outputText = String(answers[outputKey] || '').trim();
+
 
       console.log('🧪 [regrade] artifacts for', baseId, {
         writtenPresent: !!written,
@@ -1296,7 +1553,7 @@ async function regradeTestInstance(req, res) {
 
     const summaryText =
       questionResults
-        .map(qr => `Question ${qr.qid} – Total ${(qr.codeScore||0)+(qr.runScore||0)+(qr.responseScore||0)}/${qr.maxCodePts+qr.maxRunPts+qr.maxRespPts}`)
+        .map(qr => `Question ${qr.qid} – Total ${(qr.codeScore || 0) + (qr.runScore || 0) + (qr.responseScore || 0)}/${qr.maxCodePts + qr.maxRunPts + qr.maxRespPts}`)
         .join('\n') +
       `\n\nOverall: ${totalEarnedPoints}/${totalMaxPoints}`;
 
@@ -1363,7 +1620,8 @@ async function submitTest(req, res) {
     };
 
     for (const q of questions) {
-      const baseId = q.id || q.qid;
+      const baseId = normalizeBaseId(q.id || q.qid);
+
       if (!baseId) {
         console.error('❌ submitTest: question missing id:', q);
         continue;
@@ -1441,7 +1699,7 @@ async function submitTest(req, res) {
 
       // 3) Run output that grading used
       if (outputText) {
-        await upsertResponse(`${baseId}Output`, outputText, 'run_output');
+        await upsertResponse(normQid(`${baseId}output`), outputText, 'run_output');
       }
 
       console.log('🧪 submitTest artifacts for', baseId, {
@@ -1525,14 +1783,13 @@ async function submitTest(req, res) {
         );
       };
 
-      await upsert(`${baseId}CodeScore`, codeScore);
-      await upsert(`${baseId}CodeFeedback`, codeFeedback);
+      await upsert(normQid(`${baseId}CodeScore`), codeScore);
+      await upsert(normQid(`${baseId}CodeFeedback`), codeFeedback);
+      await upsert(normQid(`${baseId}RunScore`), runScore);
+      await upsert(normQid(`${baseId}RunFeedback`), runFeedback);
+      await upsert(normQid(`${baseId}ResponseScore`), responseScore);
+      await upsert(normQid(`${baseId}ResponseFeedback`), responseFeedback);
 
-      await upsert(`${baseId}RunScore`, runScore);
-      await upsert(`${baseId}RunFeedback`, runFeedback);
-
-      await upsert(`${baseId}ResponseScore`, responseScore);
-      await upsert(`${baseId}ResponseFeedback`, responseFeedback);
     }
 
     const lines = [];

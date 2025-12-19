@@ -32,6 +32,66 @@ const roleLabels = {
 const normalizeStatus = (raw) =>
   raw === 'completed' ? 'complete' : (raw || 'inprogress');
 
+// -------------------------
+// Canonical response-key helpers
+// -------------------------
+const canon = {
+  // group state stays like "1state"
+  groupState: (groupIndex) => `${groupIndex + 1}state`,
+
+  // per-question state is now "1aa-s" (legacy was "1aaS")
+  qState: (qid) => `${qid}-s`,
+  qStateLegacy: (qid) => `${qid}S`,
+
+  // scores/feedback: "1aa-code-score", etc (legacy was "1aaCodeScore")
+  score: (qid, bucket) => `${qid}-${bucket}-score`,          // bucket: code|run|response
+  fb: (qid, bucket) => `${qid}-${bucket}-feedback`,       // bucket: code|run|response
+
+  scoreLegacy: (qid, bucket) => {
+    const cap = bucket === 'run' ? 'Run' : bucket === 'code' ? 'Code' : 'Response';
+    return `${qid}${cap}Score`;
+  },
+  fbLegacy: (qid, bucket) => {
+    const cap = bucket === 'run' ? 'Run' : bucket === 'code' ? 'Code' : 'Response';
+    return `${qid}${cap}Feedback`;
+  },
+
+  // code cells: "1aa-code-1" (legacy was "1aacode1")
+  code: (qid, i1) => `${qid}-code-${i1}`,
+  codeLegacy: (qid, i1) => `${qid}code${i1}`,
+
+  // output key (you haven't migrated this; leave as-is unless you do)
+  output: (qid) => `${qid}output`,
+};
+
+// -------------------------
+// Code-key parsing helpers (canonical + legacy)
+// -------------------------
+function isCodeKey(k) {
+  return /(?:-code-\d+|code\d+)$/.test(String(k));
+}
+
+function baseQidFromCodeKey(k) {
+  return String(k).replace(/(?:-code-\d+|code\d+)$/, '');
+}
+
+function codeKeyPrefixForQid(qid) {
+  // canonical prefix is `${qid}-code-`, legacy is `${qid}code`
+  return { canonPrefix: `${qid}-code-`, legacyPrefix: `${qid}code` };
+}
+
+// read helper: try canonical first, then legacy fallbacks
+function readAnswer(existingAnswers, key, legacyKeys = []) {
+  const hit = existingAnswers?.[key];
+  if (hit && Object.prototype.hasOwnProperty.call(hit, 'response')) return hit.response;
+  for (const lk of legacyKeys) {
+    const v = existingAnswers?.[lk];
+    if (v && Object.prototype.hasOwnProperty.call(v, 'response')) return v.response;
+  }
+  return undefined;
+}
+
+
 function isNoAI(val) {
   return String(val ?? '').trim().toLowerCase() === 'none';
 }
@@ -39,7 +99,7 @@ function isNoAI(val) {
 // NEW: helper — grab current code textarea values for a question id prefix (qid like "2c")
 function getCodeTextareaValues(container, qid) {
   const tAs = container.querySelectorAll(
-    `textarea[data-response-key^="${qid}code"]`
+    `textarea[data-response-key^="${qid}code"], textarea[data-response-key^="${qid}-code-"]`
   );
   return Array.from(tAs).map((ta) => (ta.value || '').trim());
 }
@@ -47,7 +107,7 @@ function getCodeTextareaValues(container, qid) {
 // Infer lang for a code cell like "2acode1" by looking up the matching question block.
 function getLangForResponseKey(responseKey, groups) {
   // base QID like "2c" from "2ccode1"
-  const baseQid = String(responseKey).replace(/code\d+$/, '');
+  const baseQid = baseQidFromCodeKey(responseKey);
 
   // find the question block that owns this responseKey
   let found = null;
@@ -159,6 +219,7 @@ export default function RunActivityPage({
   const [skulptLoaded, setSkulptLoaded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [textFeedbackShown, setTextFeedbackShown] = useState({});
+  const autoFiredRef = useRef(false);
 
   // per-group “ignore AI, let me continue” overrides
   const [overrideGroups, setOverrideGroups] = useState({});
@@ -208,7 +269,8 @@ export default function RunActivityPage({
     let count = 0;
 
     while (count < groups.length) {
-      const raw = existingAnswers[`${count + 1}state`]?.response;
+      const raw = existingAnswers[canon.groupState(count)]?.response;
+
       const status = normalizeStatus(raw);
 
       if (status !== 'complete') break;
@@ -512,7 +574,7 @@ export default function RunActivityPage({
   }, [fileContents]);
 
   useEffect(() => {
-      if (isTestMode) return; // test mode: no “active student” concept
+    if (isTestMode) return; // test mode: no “active student” concept
 
     const interval = setInterval(async () => {
       try {
@@ -645,9 +707,9 @@ export default function RunActivityPage({
         [responseKey]: feedback ?? null,
       }));
 
-      const m = responseKey.match(/^(.*?)(?:code\d+)$/);
-      if (!m) return;
-      const qid = m[1];
+      if (!isCodeKey(responseKey)) return;
+      const qid = baseQidFromCodeKey(responseKey);
+
       const block = findQuestionBlockByQid(qid);
 
       // If it's code-only: NEVER show follow-ups; guidance only.
@@ -824,8 +886,8 @@ export default function RunActivityPage({
           remainingSeconds = diff > 0 ? diff : 0;
 
           // Time’s up: trigger auto-submit once for the active student
-          if (diff <= 0 && !autoFired && isStudent && isActive && !autoSubmitted) {
-            autoFired = true;
+          if (diff <= 0 && !autoFiredRef.current && isStudent && isActive && !autoSubmitted && !isSubmitting) {
+            autoFiredRef.current = true;
             setAutoSubmitted(true);
             try {
               await handleSubmit(false);
@@ -835,8 +897,9 @@ export default function RunActivityPage({
           }
 
           // After end of window, lock the test
-          if (diff <= 0 || autoSubmitted || activity?.submitted_at) {
-            lockedAfter = true;
+          if (diff <= 0) {
+            // Time is up, but only hard-lock once the backend confirms submission.
+            lockedAfter = !!activity?.submitted_at;
           }
         }
       } else {
@@ -1301,52 +1364,75 @@ export default function RunActivityPage({
 
     if (total > 0) {
       for (let i = 0; i < total; i++) {
-        const key = `${qid}code${i + 1}`;
-        const fromState = existingAnswers[key]?.response;
+        const key = canon.code(qid, i + 1);
+        const legacyKey = canon.codeLegacy(qid, i + 1);
+
+        // Prefer localCode if present (student may be editing locally)
+        const fromLocal =
+          (localCode && Object.prototype.hasOwnProperty.call(localCode, key) ? localCode[key] : undefined) ??
+          (localCode && Object.prototype.hasOwnProperty.call(localCode, legacyKey) ? localCode[legacyKey] : undefined);
+
+
+        const fromState =
+          existingAnswers[key]?.response ??
+          existingAnswers[legacyKey]?.response;
 
         const authored =
           block.pythonBlocks?.[i]?.content ??
           block.cppBlocks?.[i]?.content ??
           block.codeBlocks?.[i]?.content ??
           '';
-
         let fromDOM = '';
-        const ta = container?.querySelector(
+        const taCanon = container?.querySelector(
           `textarea[data-response-key="${key}"]`
         );
+        const taLegacy = container?.querySelector(
+          `textarea[data-response-key="${legacyKey}"]`
+        );
+
+        const ta = taCanon || taLegacy;
         if (ta && typeof ta.value === 'string') fromDOM = ta.value;
 
-        const chosen = fromState ?? fromDOM ?? authored ?? '';
+
+        const chosen = fromLocal ?? fromState ?? fromDOM ?? authored ?? '';
         result.push({ key, code: chosen, template: authored });
       }
       return result;
     }
 
     // …fallback if parser didn't annotate
-    const prefix = `${qid}code`;
+    const { canonPrefix, legacyPrefix } = codeKeyPrefixForQid(qid);
+
     const keys = Object.keys(existingAnswers)
-      .filter((k) => k.startsWith(prefix))
+      .filter((k) => k.startsWith(canonPrefix) || k.startsWith(legacyPrefix))
       .sort((a, b) => {
-        const ai = Number(a.replace(prefix, '')) || 0;
-        const bi = Number(b.replace(prefix, '')) || 0;
-        return ai - bi;
+        // extract trailing number from either -code-N or codeN
+        const getN = (s) => {
+          const m = String(s).match(/(?:-code-(\d+)|code(\d+))$/);
+          return Number(m?.[1] || m?.[2] || 0);
+        };
+        return getN(a) - getN(b);
       });
 
     if (keys.length === 0) {
       const tAs =
         container?.querySelectorAll(
-          `textarea[data-response-key^="${prefix}"]`
+          `textarea[data-response-key^="${legacyPrefix}"], textarea[data-response-key^="${canonPrefix}"]`
         ) || [];
       if (tAs.length) {
         Array.from(tAs).forEach((ta, idx) => {
           const key =
-            ta.getAttribute('data-response-key') || `${prefix}${idx + 1}`;
+            ta.getAttribute('data-response-key') ||
+            `${canonPrefix}${idx + 1}`;
           result.push({ key, code: ta.value || '', template: '' });
         });
       } else {
         result.push({
-          key: `${prefix}1`,
-          code: existingAnswers[`${prefix}1`]?.response || '',
+          key: `${canonPrefix}1`,
+          code:
+            existingAnswers[`${canonPrefix}1`]?.response ||
+            existingAnswers[`${legacyPrefix}1`]?.response ||
+            '',
           template: '',
         });
       }
@@ -1387,14 +1473,16 @@ export default function RunActivityPage({
     // DOM textareas
     const taCount = container
       ? container.querySelectorAll(
-        `textarea[data-response-key^="${qid}code"]`
+        `textarea[data-response-key^="${qid}code"], textarea[data-response-key^="${qid}-code-"]`
+
       ).length
       : 0;
 
     // existing answers
     const ansCount = Object.keys(existingAnswers || {}).filter((k) =>
-      k.startsWith(`${qid}code`)
+      k.startsWith(`${qid}code`) || k.startsWith(`${qid}-code-`)
     ).length;
+
 
     const anyCode = anyParserCode || taCount > 0 || ansCount > 0;
 
@@ -1593,12 +1681,12 @@ export default function RunActivityPage({
         // per-question states: e.g., "1aS", "1bS", ...
         qBlocks.forEach((b) => {
           const qid = `${b.groupId}${b.id}`;
-          stateAnswers[`${qid}S`] = 'completed';
+          stateAnswers[canon.qState(qid)] = 'complete';
         });
 
         // per-group state: "1state", "2state", ...
-        const stateKey = `${currentQuestionGroupIndex + 1}state`;
-        stateAnswers[stateKey] = 'completed';
+        stateAnswers[canon.groupState(currentQuestionGroupIndex)] = 'complete';
+
 
         // call the existing group submit endpoint just like the old code
         await fetch(
@@ -1680,7 +1768,7 @@ export default function RunActivityPage({
           const msg =
             'Modify the starter program to solve the task, then run again.';
           setFollowupsShown((prev) => ({ ...prev, [qid]: msg }));
-          answers[`${qid}S`] = 'inprogress';
+          answers[canon.qState(qid)] = 'inprogress';
           unanswered.push(`${qid} (code not changed)`);
           codeCells.forEach(({ key, code }) => (answers[key] = code));
           continue;
@@ -1697,7 +1785,7 @@ export default function RunActivityPage({
           const msg =
             'Please write or modify the starter code, then submit again.';
           setFollowupsShown((prev) => ({ ...prev, [qid]: msg }));
-          answers[`${qid}S`] = 'inprogress';
+          answers[canon.qState(qid)] = 'inprogress';
           unanswered.push(`${qid} (no code)`);
           continue;
         }
@@ -1774,8 +1862,9 @@ export default function RunActivityPage({
               return x;
             });
 
-            answers[`${qid}S`] =
-              nextAttempts >= 3 ? 'completed' : 'inprogress';
+            answers[canon.qState(qid)] =
+              nextAttempts >= 3 ? 'complete' : 'inprogress';
+
             if (nextAttempts < 3)
               unanswered.push(`${qid} (improve code)`);
 
@@ -1788,7 +1877,7 @@ export default function RunActivityPage({
               });
             }
           } else {
-            answers[`${qid}S`] = 'completed';
+            answers[canon.qState(qid)] = 'complete';
 
             codeCells.forEach(({ key }) => {
               setCodeFeedbackShown((prev) => ({ ...prev, [key]: null }));
@@ -1812,7 +1901,7 @@ export default function RunActivityPage({
           console.error('❌ AI code evaluation failed:', err);
           const msg = 'Couldn’t check your program. Try again.';
           setFollowupsShown((prev) => ({ ...prev, [qid]: msg }));
-          answers[`${qid}S`] = 'inprogress';
+          answers[canon.qState(qid)] = 'inprogress';
           unanswered.push(`${qid} (evaluation error)`);
         }
 
@@ -1857,7 +1946,7 @@ export default function RunActivityPage({
       // If nothing at all was entered → required
       if (!aiInput) {
         unanswered.push(`${qid} (base)`);
-        answers[`${qid}S`] = 'inprogress';
+        answers[canon.qState(qid)] = 'inprogress';
 
         // also clear any old suggestion
         setTextFeedbackShown((prev) => {
@@ -1916,7 +2005,7 @@ export default function RunActivityPage({
 
 
       // ---- Completion for this question ----
-      answers[`${qid}S`] = suggestion ? 'inprogress' : 'completed';
+      answers[canon.qState(qid)] = suggestion ? 'inprogress' : 'complete';
 
       if (suggestion) {
         unanswered.push(`${qid} (AI feedback)`);
@@ -1946,7 +2035,9 @@ export default function RunActivityPage({
       const suggestion = textFeedbackShown[qid];
 
       const status = normalizeStatus(
-        answers[`${qid}S`] ?? existingAnswers[`${qid}S`]?.response
+        answers[canon.qState(qid)] ??
+        readAnswer(existingAnswers, canon.qState(qid), [canon.qStateLegacy(qid)])
+
       );
 
       // Pending if there is an AI suggestion and the question isn't marked complete
@@ -1958,7 +2049,8 @@ export default function RunActivityPage({
       if (!isCodeOnlyMap[qid]) return false;
 
       const status = normalizeStatus(
-        answers[`${qid}S`] ?? existingAnswers[`${qid}S`]?.response
+        answers[canon.qState(qid)] ??
+        readAnswer(existingAnswers, canon.qState(qid), [canon.qStateLegacy(qid)])
       );
       if (status === 'complete') return false;
 
@@ -1991,8 +2083,9 @@ export default function RunActivityPage({
         ? 'completed'
         : 'inprogress';
 
-    const stateKey = `${currentQuestionGroupIndex + 1}state`;
-    answers[stateKey] = computedState;
+    answers[canon.groupState(currentQuestionGroupIndex)] =
+      computedState === 'completed' ? 'complete' : computedState;
+
 
     if (computedState === 'inprogress') {
       const msgParts = [];
@@ -2100,14 +2193,13 @@ export default function RunActivityPage({
       return Number.isNaN(n) ? '' : String(n);
     };
 
-    answers[`${qid}ResponseScore`] = toNumOrNull(local.respScore);
-    answers[`${qid}RunScore`] = toNumOrNull(local.runScore);
-    answers[`${qid}CodeScore`] = toNumOrNull(local.codeScore);
+    answers[canon.score(qid, 'response')] = toNumOrNull(local.respScore);
+    answers[canon.score(qid, 'run')] = toNumOrNull(local.runScore);
+    answers[canon.score(qid, 'code')] = toNumOrNull(local.codeScore);
 
-    // Free-text feedback
-    answers[`${qid}ResponseFeedback`] = local.respExplain ?? '';
-    answers[`${qid}RunFeedback`] = local.runExplain ?? '';
-    answers[`${qid}CodeFeedback`] = local.codeExplain ?? '';
+    answers[canon.fb(qid, 'response')] = local.respExplain ?? '';
+    answers[canon.fb(qid, 'run')] = local.runExplain ?? '';
+    answers[canon.fb(qid, 'code')] = local.codeExplain ?? '';
 
     try {
       // Persist overrides to DB
@@ -2171,7 +2263,7 @@ export default function RunActivityPage({
 
     if (meta?.__broadcastOnly) return;
 
-    const baseQid = String(responseKey).replace(/code\d+$/, '');
+    const baseQid = baseQidFromCodeKey(responseKey);
     if (qidsNoFURef.current?.has(baseQid)) {
       socket?.emit('feedback:update', {
         instanceId,
@@ -2194,6 +2286,7 @@ export default function RunActivityPage({
         feedback: null,
         followup: null,
       });
+      return;
     }
 
     try {
@@ -2295,7 +2388,7 @@ export default function RunActivityPage({
         setCodeFeedbackShown((prev) => ({ ...prev, [responseKey]: null }));
       }
 
-      const baseQid2 = String(responseKey).replace(/code\d+$/, '');
+      const baseQid2 = baseQidFromCodeKey(responseKey);
       setFollowupsShown((prev) => {
         const x = { ...prev };
         delete x[baseQid2];
@@ -2315,61 +2408,54 @@ export default function RunActivityPage({
 
   // Helper: tri-band scores + feedback for a base question id like "1a"
   function getQuestionScores(qid, block) {
-    const codeScoreRaw =
-      existingAnswers[`${qid}CodeScore`]?.response ??
-      existingAnswers[`${qid}codeScore`]?.response;
+    const codeScoreRaw = readAnswer(existingAnswers, canon.score(qid, 'code'), [
+      canon.scoreLegacy(qid, 'code'),
+      `${qid}codeScore`,
+    ]);
+    const runScoreRaw = readAnswer(existingAnswers, canon.score(qid, 'run'), [
+      canon.scoreLegacy(qid, 'run'),
+      `${qid}runScore`,
+    ]);
+    const respScoreRaw = readAnswer(existingAnswers, canon.score(qid, 'response'), [
+      canon.scoreLegacy(qid, 'response'),
+      `${qid}responseScore`,
+    ]);
 
-    const runScoreRaw =
-      existingAnswers[`${qid}RunScore`]?.response ??
-      existingAnswers[`${qid}runScore`]?.response;
+    const codeExplain = readAnswer(existingAnswers, canon.fb(qid, 'code'), [
+      canon.fbLegacy(qid, 'code'),
+      `${qid}CodeExplain`,
+    ]) || '';
 
-    const respScoreRaw =
-      existingAnswers[`${qid}ResponseScore`]?.response ??
-      existingAnswers[`${qid}responseScore`]?.response;
+    const runExplain = readAnswer(existingAnswers, canon.fb(qid, 'run'), [
+      canon.fbLegacy(qid, 'run'),
+      `${qid}RunExplain`,
+    ]) || '';
 
-    const codeScore = codeScoreRaw != null ? Number(codeScoreRaw) : null;
-    const runScore = runScoreRaw != null ? Number(runScoreRaw) : null;
-    const respScore = respScoreRaw != null ? Number(respScoreRaw) : null;
+    const respExplain = readAnswer(existingAnswers, canon.fb(qid, 'response'), [
+      canon.fbLegacy(qid, 'response'),
+      `${qid}ResponseExplain`,
+    ]) || '';
 
-    const codeExplain =
-      existingAnswers[`${qid}CodeFeedback`]?.response ||
-      existingAnswers[`${qid}CodeExplain`]?.response ||
-      '';
-
-    const runExplain =
-      existingAnswers[`${qid}RunFeedback`]?.response ||
-      existingAnswers[`${qid}RunExplain`]?.response ||
-      '';
-
-    const respExplain =
-      existingAnswers[`${qid}ResponseFeedback`]?.response ||
-      existingAnswers[`${qid}ResponseExplain`]?.response ||
-      '';
+    const codeScore = codeScoreRaw != null && codeScoreRaw !== '' ? Number(codeScoreRaw) : null;
+    const runScore = runScoreRaw != null && runScoreRaw !== '' ? Number(runScoreRaw) : null;
+    const respScore = respScoreRaw != null && respScoreRaw !== '' ? Number(respScoreRaw) : null;
 
     const bucketPoints = (bucket) => {
       if (!bucket) return 0;
       if (typeof bucket === 'number') return bucket;
-      if (typeof bucket === 'object' && typeof bucket.points === 'number') {
-        return bucket.points;
-      }
+      if (typeof bucket === 'object' && typeof bucket.points === 'number') return bucket.points;
       return 0;
     };
 
     const scores = block?.scores || {};
     const maxCode = bucketPoints(scores.code);
-    const maxRun = bucketPoints(scores.output);
+    const maxRun = bucketPoints(scores.output ?? scores.run);
     const maxResp = bucketPoints(scores.response);
 
     const hasAnyScore =
-      codeScoreRaw != null ||
-      runScoreRaw != null ||
-      respScoreRaw != null ||
-      Object.prototype.hasOwnProperty.call(existingAnswers, `${qid}CodeScore`) ||
-      Object.prototype.hasOwnProperty.call(existingAnswers, `${qid}RunScore`) ||
-      Object.prototype.hasOwnProperty.call(
-        existingAnswers,
-        `${qid}ResponseScore`
-      );
+      (codeScoreRaw != null && codeScoreRaw !== '') ||
+      (runScoreRaw != null && runScoreRaw !== '') ||
+      (respScoreRaw != null && respScoreRaw !== '');
 
     const earnedTotal =
       (codeScore != null ? codeScore : 0) +
@@ -2380,17 +2466,10 @@ export default function RunActivityPage({
 
     return {
       hasAnyScore,
-      codeScore,
-      runScore,
-      respScore,
-      codeExplain,
-      runExplain,
-      respExplain,
-      maxCode,
-      maxRun,
-      maxResp,
-      earnedTotal,
-      maxTotal,
+      codeScore, runScore, respScore,
+      codeExplain, runExplain, respExplain,
+      maxCode, maxRun, maxResp,
+      earnedTotal, maxTotal,
     };
   }
 
@@ -2438,7 +2517,7 @@ export default function RunActivityPage({
         })}
 
         {groups.map((group, index) => {
-          const stateKey = `${index + 1}state`;
+          const stateKey = canon.groupState(index);
           const rawState = existingAnswers[stateKey]?.response;
           const isComplete = normalizeStatus(rawState) === 'complete';
           const isCurrent = index === currentQuestionGroupIndex;
@@ -2492,8 +2571,11 @@ export default function RunActivityPage({
               // any code feedback for cells like "1acode1", "1acode2", ...
               const hasCodeFb = Object.entries(codeFeedbackShown || {}).some(
                 ([key, fb]) =>
-                  key.startsWith(`${qid}code`) && fb && String(fb).trim() !== ''
+                  (key.startsWith(`${qid}code`) || key.startsWith(`${qid}-code-`)) &&
+                  fb &&
+                  String(fb).trim() !== ''
               );
+
 
               return hasTextSuggestion || hasFU || hasCodeFb;
             });

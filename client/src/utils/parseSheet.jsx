@@ -249,6 +249,17 @@ export default function FileBlock({
   );
 }
 
+function indexToLetters0(i) {
+  // 0 => a, 25 => z, 26 => aa, 27 => ab, ...
+  let n = i + 1; // convert to 1-based
+  let s = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(97 + rem) + s; // 97 = 'a'
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
 
 
 export function parseSheetToBlocks(lines) {
@@ -257,7 +268,7 @@ export function parseSheetToBlocks(lines) {
   let isTest = false;
   const blocks = [];
   let groupNumber = 0;
-  let questionLetterCode = 97;
+  let questionIndex = 0;   // 0 -> a, 25 -> z, 26 -> aa, ...
   let responseId = 1;
 
   let currentQuestion = null;
@@ -730,6 +741,8 @@ export function parseSheetToBlocks(lines) {
     // questiongroup: \questiongroup{...}
     // questiongroup: \questiongroup{...}
     if (trimmed.startsWith('\\questiongroup{')) {
+      questionIndex = 0;
+
       flushCurrentBlock();
 
       const m = trimmed.match(/\\questiongroup\{([\s\S]+?)\}/);
@@ -739,8 +752,19 @@ export function parseSheetToBlocks(lines) {
       // Always create a group intro (tests and non-tests)
       groupNumber++;
       inGroup = true;
-      questionLetterCode = 97;  // reset per group if you want a,b,c,...
-      blocks.push({ type: 'groupIntro', groupId: groupNumber, content });
+      if (trimmed.startsWith('\\questiongroup{')) {
+        questionIndex = 0;
+        flushCurrentBlock();
+
+        const m = trimmed.match(/\\questiongroup\{([\s\S]+?)\}/);
+        const contentRaw = m ? m[1] : '';
+        const content = format(contentRaw.trimStart());
+
+        groupNumber++;
+        inGroup = true;
+        blocks.push({ type: 'groupIntro', groupId: groupNumber, content });
+        continue;
+      } blocks.push({ type: 'groupIntro', groupId: groupNumber, content });
 
       continue;
     }
@@ -761,7 +785,7 @@ export function parseSheetToBlocks(lines) {
         ? trimmed.slice(open + 1, close)
         : trimmed.slice(open + 1);
 
-      const id = String.fromCharCode(questionLetterCode++);
+      const id = indexToLetters0(questionIndex++);
       const rawClean = raw.trimStart();
       currentQuestion = {
         type: 'question',
@@ -1158,7 +1182,7 @@ export function renderBlocks(blocks, options = {}) {
             fileContents={canonicalContents}
             setFileContents={setFileContents}
             editable={canEdit}
-            // no onFileChange → files remain local-only, never broadcast/persisted
+          // no onFileChange → files remain local-only, never broadcast/persisted
           />
         </div>
       );

@@ -10,7 +10,12 @@ exports.createResponse = async (req, res) => {
   try {
     await db.query(
       `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-       VALUES (?, ?, 'text', ?, ?)`,
+       VALUES (?, ?, 'text', ?, ?)
+       ON DUPLICATE KEY UPDATE
+         response = VALUES(response),
+         response_type = VALUES(response_type),
+         answered_by_user_id = VALUES(answered_by_user_id),
+         updated_at = CURRENT_TIMESTAMP`,
       [instanceId, questionId, responseText, answeredBy]
     );
 
@@ -21,6 +26,7 @@ exports.createResponse = async (req, res) => {
   }
 };
 
+
 exports.createOrUpdateCodeResponse = async (req, res) => {
   const { activity_instance_id, question_id, user_id, response } = req.body;
 
@@ -28,22 +34,22 @@ exports.createOrUpdateCodeResponse = async (req, res) => {
   try {
     await conn.beginTransaction();
 
-    // Step 1: Insert or update the response
+    // Step 1: Insert or update the response, and always get its id
     const [result] = await conn.query(
       `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-       VALUES (?, ?, 'python', ?, ?)
-       ON DUPLICATE KEY UPDATE response = VALUES(response)`,
+   VALUES (?, ?, 'python', ?, ?)
+   ON DUPLICATE KEY UPDATE
+     id = LAST_INSERT_ID(id),
+     response_type = VALUES(response_type),
+     response = VALUES(response),
+     answered_by_user_id = VALUES(answered_by_user_id),
+     updated_at = CURRENT_TIMESTAMP`,
       [activity_instance_id, question_id, response, user_id]
     );
 
-    const [responseRow] = await conn.query(
-      `SELECT id FROM responses
-       WHERE activity_instance_id = ? AND question_id = ? AND answered_by_user_id = ?`,
-      [activity_instance_id, question_id, user_id]
-    );
-
-    const responseId = responseRow?.[0]?.id;
+    const responseId = result.insertId;
     if (!responseId) throw new Error('Missing response ID');
+
 
     // Step 2: Call AI to evaluate code
     const aiData = await evaluateCode({
@@ -188,7 +194,7 @@ exports.bulkSaveResponses = async (req, res) => {
     const entries = Object.entries(answers);
     for (const [questionId, responseText] of entries) {
       // 🛑 Skip saving if this is a follow-up (prompt or answer) that already exists
-      const isFollowup = /^(\d+[a-z]F\d*)$/.test(questionId); // Matches both F1 and FA1
+      const isFollowup = /^(\d+[a-z]F(A)?\d+)$/.test(questionId);
       if (isFollowup) {
         const [existing] = await db.query(
           `SELECT id FROM responses WHERE activity_instance_id = ? AND question_id = ?`,
@@ -228,8 +234,9 @@ exports.saveFeedback = async (req, res) => {
   try {
     // Step 1: Find the response ID to attach feedback to
     const [rows] = await db.query(
-      `SELECT id FROM responses WHERE activity_instance_id = ? AND question_id = ? AND answered_by_user_id = ?`,
-      [activity_instance_id, question_id, user_id]
+      `SELECT id FROM responses
+   WHERE activity_instance_id = ? AND question_id = ?`,
+      [activity_instance_id, question_id]
     );
 
     const responseId = rows?.[0]?.id;
