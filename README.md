@@ -1,8 +1,66 @@
 # POGIL-ITS
-A system for dynamic intelligent POGILs
 
-Install:
-# POGIL ITS Setup on Ubuntu 24.04
+**An Intelligent Tutoring System for Process Oriented Guided Inquiry Learning**
+
+## About POGIL-ITS
+
+POGIL-ITS is a web-based intelligent tutoring system designed to facilitate collaborative, inquiry-based learning activities. It provides an interactive platform where students work together in small groups on Process Oriented Guided Inquiry Learning (POGIL) activities with real-time AI-powered feedback and guidance.
+
+### What is POGIL?
+
+POGIL (Process Oriented Guided Inquiry Learning) is an evidence-based pedagogy that uses guided inquiry and collaborative learning to help students develop critical thinking and problem-solving skills. Students work in teams on specially designed activities that guide them through an exploration to construct understanding.
+
+### What Does POGIL-ITS Do?
+
+POGIL-ITS enhances traditional POGIL activities by providing:
+
+- **Dynamic Activity Delivery**: Activities are loaded from Google Docs with custom markup language support
+- **Intelligent Feedback**: AI-powered evaluation of student responses using OpenAI's GPT models
+- **Interactive Coding Environment**: Built-in Python code execution with Skulpt for programming activities, including turtle graphics support
+- **Real-time Collaboration**: Live synchronization between group members using WebSockets
+- **Role-Based Learning**: Support for POGIL team roles (Manager, Recorder, Presenter, Quality Control, etc.)
+- **Instructor Dashboard**: Tools for instructors to create courses, manage students, and monitor group progress
+- **Activity Management**: Create, organize, and deploy POGIL activities across multiple courses
+
+## Key Features
+
+- 🎓 **Multi-role Support**: Students, Instructors, Creators, and Root users with appropriate permissions
+- 🤖 **AI-Powered Feedback**: Contextual feedback and follow-up questions based on student responses
+- 💻 **Python Code Execution**: Run and test Python code directly in the browser
+- 👥 **Group Collaboration**: Real-time synchronization of code and responses within student groups
+- 📊 **Progress Tracking**: Monitor student and group progress through activities
+- 📝 **Custom Markup Language**: Rich activity authoring with LaTeX-inspired syntax
+- 🔄 **Activity Instances**: Multiple groups can work on the same activity simultaneously
+- 🎨 **Turtle Graphics**: Visual programming support with Python turtle module
+
+## Technology Stack
+
+### Frontend
+- **React 18** - UI framework
+- **Vite** - Build tool and development server
+- **React Router** - Client-side routing
+- **React Bootstrap** - UI components
+- **Socket.IO Client** - Real-time communication
+- **Skulpt** - In-browser Python execution
+- **Prism.js** - Code syntax highlighting
+
+### Backend
+- **Node.js** - Runtime environment
+- **Express.js** - Web application framework
+- **Socket.IO** - WebSocket server for real-time features
+- **MariaDB/MySQL** - Relational database
+- **OpenAI API** - AI-powered feedback generation
+- **Google Docs API** - Activity content management
+- **bcrypt** - Password hashing
+- **express-session** - Session management
+
+### Infrastructure
+- **Apache** - Web server and reverse proxy
+- **PM2** - Process manager (optional)
+
+---
+
+# Installation Guide
 
 This guide walks through installing Apache, MariaDB, Node.js, and setting up the POGIL ITS project on Ubuntu 24.04.
 
@@ -358,6 +416,74 @@ You must get this from Jim Skon
 
 ## To get the schma from mysql
 mysqldump -u root -p --no-data --routines --triggers pogil_db > pogil_db_full_schema.sql
+
+---
+
+## Usage
+
+### For Students
+1. Register for an account or log in
+2. Enroll in a course using the course code provided by your instructor
+3. Join a group activity when started by your instructor
+4. Collaborate with your team on POGIL activities
+5. Receive real-time AI feedback on your responses
+
+### For Instructors
+1. Create a course and share the enrollment code with students
+2. Add POGIL activities from Google Docs to your course
+3. Start activity instances for student groups
+4. Monitor student progress in real-time
+5. Review completed activities and student responses
+
+### For Activity Creators
+1. Create POGIL activities using Google Docs
+2. Use the POGIL markup language (see MarkUp.md) for formatting
+3. Include special tags for AI guidance and code exercises
+4. Share activities with instructors
+
+## Project Structure
+
+```
+POGIL-ITS/
+├── client/                 # React frontend application
+│   ├── src/
+│   │   ├── components/    # Reusable React components
+│   │   ├── pages/         # Page components
+│   │   ├── context/       # React context providers
+│   │   ├── utils/         # Utility functions
+│   │   └── routes/        # Routing configuration
+│   └── dist/              # Production build output
+├── server/                # Express.js backend
+│   ├── activities/        # Activity management routes
+│   ├── auth/              # Authentication routes
+│   ├── courses/           # Course management routes
+│   ├── groups/            # Group management routes
+│   ├── ai/                # AI feedback controller
+│   └── index.js           # Main server file
+├── schema.sql             # Database schema
+├── MarkUp.md              # POGIL markup language guide
+├── er.md                  # Entity-relationship diagram
+└── README.md              # This file
+```
+
+## Documentation
+
+- **MarkUp.md** - Complete guide to POGIL markup language for activity authoring
+- **er.md** - Database entity-relationship diagram
+- **CPPREADME.md** - Additional notes on C++ support (experimental)
+- **Production.md** - Production deployment notes
+
+## Contributing
+
+This project is developed for educational purposes. For questions or contributions, please contact the project maintainer.
+
+## License
+
+This project is maintained by Kenyon College. Please contact the repository owner for licensing information.
+
+## Support
+
+For technical support or questions about POGIL-ITS, please open an issue on the GitHub repository.
 
 
 # To reset git back to head
