@@ -1223,7 +1223,7 @@ async function regradeTestInstance(req, res) {
       const scores = q.scores || {};
 
       const maxCodePts = bucketPoints(scores.code);
-      const maxRunPts  = bucketPoints(scores.output);
+      const maxRunPts = bucketPoints(scores.output);
       const maxRespPts = bucketPoints(scores.response);
 
       if (maxCodePts <= 0 && maxRunPts <= 0 && maxRespPts <= 0) {
@@ -1249,8 +1249,16 @@ async function regradeTestInstance(req, res) {
       }
 
       // output
-      const outputKey = `${baseId}Output`;
-      const outputText = answers[outputKey] ? String(answers[outputKey]).trim() : '';
+      let outputText = '';
+      const rxOut1 = new RegExp(`^${escapeRegExp(baseId)}output$`, 'i');
+      const rxOut2 = new RegExp(`^${escapeRegExp(baseId)}-output$`, 'i');
+
+      for (const [k, v] of Object.entries(answers)) {
+        if (rxOut1.test(k) || rxOut2.test(k)) {
+          outputText = String(v || '').trim();
+          break;
+        }
+      }
 
       console.log('🧪 [regrade] artifacts for', baseId, {
         writtenPresent: !!written,
@@ -1296,7 +1304,7 @@ async function regradeTestInstance(req, res) {
 
     const summaryText =
       questionResults
-        .map(qr => `Question ${qr.qid} – Total ${(qr.codeScore||0)+(qr.runScore||0)+(qr.responseScore||0)}/${qr.maxCodePts+qr.maxRunPts+qr.maxRespPts}`)
+        .map(qr => `Question ${qr.qid} – Total ${(qr.codeScore || 0) + (qr.runScore || 0) + (qr.responseScore || 0)}/${qr.maxCodePts + qr.maxRunPts + qr.maxRespPts}`)
         .join('\n') +
       `\n\nOverall: ${totalEarnedPoints}/${totalMaxPoints}`;
 
@@ -1327,6 +1335,11 @@ async function regradeTestInstance(req, res) {
 async function submitTest(req, res) {
   const { instanceId } = req.params;
   const { studentId, answers, questions = [] } = req.body || {};
+
+  function escapeRegExp(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
 
   if (!instanceId || !studentId || !answers) {
     return res
@@ -1394,27 +1407,25 @@ async function submitTest(req, res) {
       });
 
       const written = (answers[baseId] || '').trim();
-
       const codeCells = [];
-      const codePrefix = (baseId + 'code').toLowerCase();
+      const rxOld = new RegExp(`^${escapeRegExp(baseId)}code(\\d+)$`, 'i');
+      const rxNew = new RegExp(`^${escapeRegExp(baseId)}-code-(\\d+)$`, 'i');
 
       for (const [key, value] of Object.entries(answers)) {
         if (!value || !String(value).trim()) continue;
 
-        const lowerKey = key.toLowerCase();
-        if (!lowerKey.startsWith(codePrefix)) continue;
+        let m = key.match(rxOld);
+        if (!m) m = key.match(rxNew);
+        if (!m) continue;
 
-        const labelMatch = key.match(/code(\d+)$/i);
-        const label = labelMatch ? labelMatch[1] : key;
-
+        const n = m[1];
         codeCells.push({
-          qid: key,                 // <--- NEW: the exact answer key
+          qid: key,
           code: String(value),
           lang: 'cpp',
-          label: `code ${label}`,
+          label: `code ${n}`,
         });
       }
-
 
       let outputText = '';
       const outputPrefix = (baseId + 'output').toLowerCase();
