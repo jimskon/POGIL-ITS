@@ -105,6 +105,7 @@ function collapseBracedCommands(rawLines) {
 
 export default function FileBlock({
   filename,
+  fileKey, 
   initialContent = '',
   fileContents,
   editable,
@@ -172,7 +173,7 @@ export default function FileBlock({
 
     // 👇 NEW: notify parent so it can broadcast / persist
     if (onFileChange) {
-      onFileChange(updated);
+      onFileChange(fileKey ?? `file:${filename}`, updated, { filename });
     }
   };
 
@@ -251,10 +252,13 @@ export default function FileBlock({
 
 
 
-export function parseSheetToBlocks(lines) {
+export function parseSheetToBlocks(lines, options = {}) {
   //console.log("🧑‍💻 parseSheetToBlocks invoked");
   lines = collapseBracedCommands(lines);
   let isTest = false;
+  const legacyTestNumbering = options.legacyTestNumbering !== false;
+// default true unless explicitly set to false
+
   const blocks = [];
   let groupNumber = 0;
   let questionLetterCode = 97;
@@ -767,7 +771,9 @@ export function parseSheetToBlocks(lines) {
         type: 'question',
         id,
         groupId: groupNumber,
-        label: `${id}.`,
+label: (isTest && !legacyTestNumbering)
+  ? `${groupNumber}${id}.`
+  : `${id}.`,
         responseId: responseId++,
         prompt: format(rawClean),
         responseLines: 1,
@@ -957,16 +963,17 @@ export function parseSheetToBlocks(lines) {
 
   flushCurrentBlock();
 
-  // For tests: renumber all questions sequentially: 1., 2., 3., ...
-  if (isTest) {
-    let q = 0;
-    for (const b of blocks) {
-      if (b.type === 'question') {
-        q += 1;
-        b.label = `${q}.`;
-      }
+// Legacy tests only: renumber all questions sequentially: 1., 2., 3., ...
+if (isTest && legacyTestNumbering) {
+  let q = 0;
+  for (const b of blocks) {
+    if (b.type === 'question') {
+      q += 1;
+      b.label = `${q}.`;
     }
   }
+}
+
 
   return blocks;
 }
@@ -1131,38 +1138,40 @@ export function renderBlocks(blocks, options = {}) {
       );
     }
 
-    if (block.type === 'file') {
-      const isReadonly = !!block.readonly;
+if (block.type === 'file') {
+  const isReadonly = !!block.readonly;
+  const filename = block.filename;
 
-      // All file editing is local-only, per user.
-      // fileContents/setFileContents live only in this client,
-      // are NOT synced via socket or saved to the DB.
-      const filename = block.filename;
-      const canonicalContents = fileContents || {};
-      const initialContent = block.content || '';
+  const canonicalContents = fileContents || {};
+  const initialContent = block.content || '';
 
-      // What this user currently has in memory
-      const effectiveContent =
-        Object.prototype.hasOwnProperty.call(canonicalContents, filename)
-          ? canonicalContents[filename]
-          : initialContent;
+  const effectiveContent =
+    Object.prototype.hasOwnProperty.call(canonicalContents, filename)
+      ? canonicalContents[filename]
+      : initialContent;
 
-      // Everyone can edit non-readonly files, regardless of active/observer
-      const canEdit = !isReadonly;
+  // If you want ONLY active student to edit in RUN mode:
+  // const canEdit = !isReadonly && editable && isActive;
 
-      return (
-        <div key={`file-wrap-${block.filename}-${index}`} className="mb-3">
-          <FileBlock
-            filename={block.filename}
-            initialContent={effectiveContent}
-            fileContents={canonicalContents}
-            setFileContents={setFileContents}
-            editable={canEdit}
-            // no onFileChange → files remain local-only, never broadcast/persisted
-          />
-        </div>
-      );
-    }
+  // If you want anyone to edit non-readonly files (your current behavior):
+  const canEdit = !isReadonly;
+
+  const keyForDb = `file:${filename}`;
+
+  return (
+    <div key={`file-wrap-${filename}-${index}`} className="mb-3">
+      <FileBlock
+        filename={filename}
+        fileKey={keyForDb}                 // ✅ NEW
+        initialContent={effectiveContent}
+        fileContents={canonicalContents}
+        setFileContents={setFileContents}
+        editable={canEdit}
+        onFileChange={onFileChange}        // ✅ NEW (wired through)
+      />
+    </div>
+  );
+}
 
 
 

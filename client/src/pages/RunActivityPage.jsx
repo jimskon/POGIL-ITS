@@ -160,6 +160,7 @@ export default function RunActivityPage({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [textFeedbackShown, setTextFeedbackShown] = useState({});
 
+
   // per-group “ignore AI, let me continue” overrides
   const [overrideGroups, setOverrideGroups] = useState({});
 
@@ -170,6 +171,8 @@ export default function RunActivityPage({
     remainingSeconds: null,
   });
   const [autoSubmitted, setAutoSubmitted] = useState(false);
+
+  const [nonLegacyForUI, setNonLegacyForUI] = useState(false);
 
   const isLockedFU = (qid) => qidsNoFURef.current?.has(qid);
 
@@ -242,6 +245,21 @@ export default function RunActivityPage({
       )
     );
   }, [activity, groups]);
+
+  // ✅ Non-legacy test if its test_start_at is on/after 2026-01-01 UTC
+  const isNonLegacyTest = useMemo(() => {
+    if (!isTestMode) return false;
+
+    const start = activity?.test_start_at
+      ? parseUtcDbDatetime(activity.test_start_at)
+      : null;
+
+    if (!start) return false; // unknown => treat as legacy
+
+    const cutoff = new Date(Date.UTC(2026, 0, 1, 0, 0, 0)); // 2026-01-01 UTC
+    return start.getTime() >= cutoff.getTime();
+  }, [isTestMode, activity?.test_start_at]);
+
 
   useEffect(() => {
     console.log('[RUN] isTestMode:', isTestMode);
@@ -462,9 +480,13 @@ export default function RunActivityPage({
   };
 
   // For manual edits in <FileBlock> textareas
-  // For manual edits in <FileBlock> textareas
   const handleFileChange = (fileKey, newText, meta = {}) => {
-    const filename = meta.filename || fileKey;
+    const handleFileChange = (fileKey, newText, meta = {}) => {
+      const raw = meta.filename || fileKey || '';
+      const filename = raw.startsWith('file:') ? raw.slice('file:'.length) : raw;
+
+    };
+
 
     // Update local canonical file contents
     setFileContents((prev) => {
@@ -512,7 +534,7 @@ export default function RunActivityPage({
   }, [fileContents]);
 
   useEffect(() => {
-      if (isTestMode) return; // test mode: no “active student” concept
+    if (isTestMode) return; // test mode: no “active student” concept
 
     const interval = setInterval(async () => {
       try {
@@ -1077,7 +1099,30 @@ export default function RunActivityPage({
           )}`
         );
         const { lines } = await docRes.json();
-        const blocks = parseSheetToBlocks(lines);
+        // ---- compute test + legacy flags from the fresh instanceData ----
+        const isTestNow =
+          (!!instanceData?.test_start_at && Number(instanceData?.test_duration_minutes) > 0) ||
+          !!instanceData?.is_test;
+
+        const cutoff = new Date(Date.UTC(2026, 0, 1, 0, 0, 0)); // 2026-01-01 UTC
+        const startNow = instanceData?.test_start_at
+          ? parseUtcDbDatetime(instanceData.test_start_at)
+          : null;
+
+        const isNonLegacyNow =
+          isTestNow && startNow && startNow.getTime() >= cutoff.getTime();
+
+        console.log('[RUN] parse flags:', {
+          test_start_at: instanceData?.test_start_at,
+          startNow,
+          isTestNow,
+          isNonLegacyNow,
+        });
+        setNonLegacyForUI(!!isNonLegacyNow);
+
+        const blocks = parseSheetToBlocks(lines, {
+          legacyTestNumbering: !isNonLegacyNow,
+        });
 
         const activityContextBlock = blocks.find(
           (b) => b.type === 'header' && b.tag === 'activitycontext'
@@ -1535,14 +1580,31 @@ export default function RunActivityPage({
     if (isSubmitting) return;
     setIsSubmitting(true);
 
-    const container = document.querySelector('[data-current-group="true"]');
-    if (!container) {
-      alert('Error: No editable group found.');
-      setIsSubmitting(false);
-      return;
+    let container = null;
+    let blocks = null;
+
+    // ✅ TEST MODE: collect from the whole page + all question blocks
+    if (isTestMode) {
+      container = document;
+
+      // Grab ALL blocks from ALL groups so we grade everything.
+      blocks = groups.flatMap((g) => [g.intro, ...(g.content || [])]);
+    } else {
+      // ✅ LEARNING MODE: unchanged behavior (one group at a time)
+      container = document.querySelector('[data-current-group="true"]');
+      if (!container) {
+        alert('Error: No editable group found.');
+        setIsSubmitting(false);
+        return;
+      }
+
+      const currentGroup = groups[currentQuestionGroupIndex];
+      blocks = [currentGroup.intro, ...currentGroup.content];
     }
 
     // Non-blocking sync of visible code edits (no AI call here)
+    // In test mode this now syncs *all* code boxes.
+    // In learning mode it syncs current group only.
     const codeTextareas = container.querySelectorAll('textarea[id^="sk-code-"]');
     codeTextareas.forEach((textarea) => {
       const responseKey = textarea.getAttribute('data-response-key');
@@ -1552,8 +1614,6 @@ export default function RunActivityPage({
       }
     });
 
-    const currentGroup = groups[currentQuestionGroupIndex];
-    const blocks = [currentGroup.intro, ...currentGroup.content];
 
     // ---------- TEST MODE PATH ----------
     if (isTestMode) {
@@ -1584,44 +1644,6 @@ export default function RunActivityPage({
           );
           setIsSubmitting(false);
           return;
-        }
-
-        // ✅ ALSO mark this group as completed using the old mechanism
-        const qBlocks = blocks.filter((b) => b.type === 'question');
-        const stateAnswers = {};
-
-        // per-question states: e.g., "1aS", "1bS", ...
-        qBlocks.forEach((b) => {
-          const qid = `${b.groupId}${b.id}`;
-          stateAnswers[`${qid}S`] = 'completed';
-        });
-
-        // per-group state: "1state", "2state", ...
-        const stateKey = `${currentQuestionGroupIndex + 1}state`;
-        stateAnswers[stateKey] = 'completed';
-
-        // call the existing group submit endpoint just like the old code
-        await fetch(
-          `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              groupIndex: currentQuestionGroupIndex,
-              studentId: user.id,
-              groupState: 'completed',
-              answers: stateAnswers,
-            }),
-          }
-        );
-
-        // if this was the last group, mark the whole instance complete (same as old code)
-        if (currentQuestionGroupIndex + 1 === groups.length) {
-          await fetch(`${API_BASE_URL}/api/responses/mark-complete`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ instanceId }),
-          });
         }
 
         await loadActivity();
@@ -2447,9 +2469,9 @@ export default function RunActivityPage({
           const testEditable =
             isTestMode &&
             isStudent &&
-            !testLockState.lockedBefore &&
             !testLockState.lockedAfter &&
             !isSubmitted;
+
 
           const editable = isTestMode
             ? testEditable
@@ -2471,12 +2493,9 @@ export default function RunActivityPage({
           //  return null;
           //}
           const showGroup =
-            // Instructors always see everything
-            isInstructor ||
-            // Students in test mode:
-            (isTestMode && isStudent && !testLockState.lockedBefore) ||
-            // Learning mode: show completed groups and current group
-            (!isTestMode && (isComplete || isCurrent));
+            isTestMode
+              ? true
+              : (isInstructor || isComplete || isCurrent);
 
           if (!showGroup) return null;
 
@@ -2596,7 +2615,7 @@ export default function RunActivityPage({
                 const showScorePanel =
                   isTestMode &&
                   (isInstructor || isSubmitted);   // <- the key gating fix
-
+                const displayNumber = isNonLegacyTest ? qid : globalQuestionCounter;
                 return (
                   <div key={`group-${index}-block-${bIndex}`} className="mb-2">
                     {renderedBlock}
@@ -2604,7 +2623,7 @@ export default function RunActivityPage({
                     {showScorePanel && (
                       <QuestionScorePanel
                         qid={qid}
-                        displayNumber={globalQuestionCounter}
+                        displayNumber={displayNumber}
                         scores={scores}
                         allowEdit={allowEdit}
                         onSave={handleSaveQuestionScores}
@@ -2616,27 +2635,22 @@ export default function RunActivityPage({
               })}
 
 
-              {editable && (
+              {/* ✅ Per-group buttons ONLY in non-test mode */}
+              {editable && !isTestMode && (
                 <div className="mt-2">
                   <Button onClick={() => handleSubmit(false)} disabled={isSubmitting}>
                     {isSubmitting ? (
                       <>
-                        <Spinner
-                          animation="border"
-                          size="sm"
-                          className="me-2"
-                        />
+                        <Spinner animation="border" size="sm" className="me-2" />
                         Loading...
                       </>
-                    ) : isTestMode ? (
-                      'Submit Test'
                     ) : (
                       'Submit and Continue'
                     )}
                   </Button>
 
                   {/* Let students bypass AI gating in learning mode */}
-                  {!isTestMode && hasAIGuidanceForGroup && (
+                  {hasAIGuidanceForGroup && (
                     <Button
                       variant="outline-secondary"
                       size="sm"
@@ -2654,6 +2668,22 @@ export default function RunActivityPage({
             </div>
           );
         })}
+
+        {/* ✅ Single Submit Test button (ONLY once, after all groups) */}
+        {isTestMode && isStudent && !testLockState.lockedAfter && !isSubmitted && (
+          <div className="mt-3">
+            <Button onClick={() => handleSubmit(false)} disabled={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <Spinner animation="border" size="sm" className="me-2" />
+                  Submitting...
+                </>
+              ) : (
+                'Submit Test'
+              )}
+            </Button>
+          </div>
+        )}
 
         {groups.length > 0 &&
           currentQuestionGroupIndex === groups.length && (
@@ -2688,6 +2718,8 @@ export default function RunActivityPage({
               .join(', ')}
         </div>
       )}
+
+
 
       <RunActivityFloatingTimer
         isTestMode={isTestMode}
