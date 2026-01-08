@@ -9,7 +9,7 @@ router.get('/admin/users', async (req, res) => {
   try {
     const [users] = await db.query('SELECT id, email, name, role FROM users'); // ✅ correct query
 
-    console.log("✅ Users fetched:", users);
+    //console.log("✅ Users fetched:", users);
     res.json(users); // directly send the array
   } catch (err) {
     console.error("❌ DB error:", err.message);
