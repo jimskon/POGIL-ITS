@@ -107,7 +107,7 @@ export default function ViewGroupsPage() {
     }
   };
 
-  const handleAdd = async () => {
+  const handleAddToGroup = async () => {
     if (!selectedAdd) return;
     try {
       await fetch(
@@ -124,6 +124,35 @@ export default function ViewGroupsPage() {
     } catch (err) {
       console.error('❌ Error adding student:', err);
       alert('Failed to add student');
+    }
+  };
+
+  const handleAddAsSoloGroup = async () => {
+    if (!selectedAdd) return;
+
+    if (
+      !window.confirm(
+        'Create a new group with this student only (group of one)?'
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await fetch(
+        `${API_BASE_URL}/api/groups/${activityId}/${courseId}/add-solo`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ studentId: Number(selectedAdd) }),
+        }
+      );
+      setSelectedAdd('');
+      await refreshStudents();
+      await fetchGroups();
+    } catch (err) {
+      console.error('❌ Error creating solo group:', err);
+      alert('Failed to create group of one');
     }
   };
 
@@ -172,9 +201,25 @@ export default function ViewGroupsPage() {
             </option>
           ))}
         </Form.Select>
-        <Button onClick={handleAdd} disabled={!selectedAdd}>
-          Add
-        </Button>
+
+        <div className="d-flex gap-2">
+          <Button
+            variant="primary"
+            onClick={handleAddToGroup}
+            disabled={!selectedAdd}
+          >
+            Add to group
+          </Button>
+
+          <Button
+            variant="outline-secondary"
+            onClick={handleAddAsSoloGroup}
+            disabled={!selectedAdd}
+          >
+            Group of one
+          </Button>
+        </div>
+
 
         <Form.Select
           value={selectedRemove}

@@ -183,7 +183,81 @@ export default function ManageCoursesPage() {
 
       <h4 className="mt-4">Add New Course</h4>
       <Form className="mb-3">
-        {/* ... rest unchanged ... */}
+        <Row>
+          <Col md={4}>
+            <Form.Group>
+              <Form.Label>Name</Form.Label>
+              <Form.Control
+                value={newCourse.name}
+                onChange={(e) => handleChange("name", e.target.value)}
+              />
+            </Form.Group>
+          </Col>
+          <Col md={2}>
+            <Form.Group>
+              <Form.Label>Code</Form.Label>
+              <Form.Control
+                value={newCourse.code}
+                onChange={(e) => handleChange("code", e.target.value)}
+              />
+            </Form.Group>
+          </Col>
+          <Col md={2}>
+            <Form.Group>
+              <Form.Label>Section</Form.Label>
+              <Form.Control
+                value={newCourse.section}
+                onChange={(e) => handleChange("section", e.target.value)}
+              />
+            </Form.Group>
+          </Col>
+          <Col md={2}>
+            <Form.Group>
+              <Form.Label>Semester</Form.Label>
+              <Form.Select
+                value={newCourse.semester}
+                onChange={(e) => handleChange("semester", e.target.value)}
+              >
+                <option value="fall">Fall</option>
+                <option value="spring">Spring</option>
+                <option value="summer">Summer</option>
+              </Form.Select>
+            </Form.Group>
+          </Col>
+          <Col md={2}>
+            <Form.Group>
+              <Form.Label>Year</Form.Label>
+              <Form.Control
+                type="number"
+                value={newCourse.year}
+                onChange={(e) => handleChange("year", parseInt(e.target.value))}
+              />
+            </Form.Group>
+          </Col>
+        </Row>
+        <Row className="mt-3">
+          <Col md={6}>
+            <Form.Group>
+              <Form.Label>Class</Form.Label>
+              <Form.Select
+                value={newCourse.class_id}
+                onChange={(e) =>
+                  handleChange("class_id", parseInt(e.target.value))
+                }
+              >
+                <option value="">Select a class</option>
+                {classList.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Form.Select>
+            </Form.Group>
+          </Col>
+        </Row>
+        <Button className="mt-3" onClick={handleAddCourse}>
+          Add Course
+        </Button>
       </Form>
     </Container>
   );

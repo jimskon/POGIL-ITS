@@ -1,135 +1,80 @@
-// ManageCourseProgressPage.jsx
+// src/pages/ManageCourseStudentsPage.jsx
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Table, Button, Container } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
 import { useUser } from '../context/UserContext';
 
-const statusColor = {
-  completed: 'green',
-  in_progress: 'orange',
-  not_started: 'lightgray'
-};
 
-export default function ManageCourseProgressPage() {
-  const { courseId } = useParams();
-  const { user } = useUser();
-  const [students, setStudents] = useState([]);
-  const [activities, setActivities] = useState([]);
-  const navigate = useNavigate();
+export default function ManageCourseStudentsPage() {
+    const { courseId } = useParams();
+    const { user } = useUser();
+    const [students, setStudents] = useState([]);
+    const navigate = useNavigate();
+    const [courseInfo, setCourseInfo] = useState(null);
 
-  useEffect(() => {
-    fetch(`${API_BASE_URL}/api/courses/${courseId}/progress`, {
-      credentials: 'include',
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        setStudents(data.students || []);
-        setActivities(data.activities || []);
-      })
-      .catch((err) => console.error('Failed to load progress:', err));
-  }, [courseId]);
 
-  const renderActivityCell = (student, activity) => {
-    const progress = student.progress?.[activity.id];
 
-    // No record – treat as not started
-    if (!progress) {
-      return (
-        <td key={activity.id} style={{ textAlign: 'center', color: statusColor.not_started }}>
-          —
-        </td>
-      );
-    }
+    console.log("ManageCourseStudentsPage rendered!!!", courseId, user);
 
-    const {
-      status = 'not_started',
-      completedGroups = 0,
-      totalGroups = 0,
-    } = progress;
+    useEffect(() => {
+        fetch(`${API_BASE_URL}/api/courses/${courseId}/info`)
+            .then((res) => res.json())
+            .then((data) => {
+                console.log("Fetched course info:", data);
+                setCourseInfo(data);
+            })
+            .catch((err) => console.error("Failed to load course info", err));
+    }, [courseId]);
 
-    // If we know totalGroups, show n/m with coloring
-    if (totalGroups > 0) {
-      const n = completedGroups || 0;
-      const m = totalGroups;
-      const isComplete = status === 'completed' || n >= m;
 
-      const color = isComplete
-        ? statusColor.completed
-        : status === 'in_progress'
-        ? statusColor.in_progress
-        : statusColor.not_started;
+    useEffect(() => {
+        fetch(`${API_BASE_URL}/api/courses/${courseId}/students`)
+            .then((res) => res.json())
+            .then(setStudents)
+            .catch(err => console.error("Failed to load students:", err));
+    }, [courseId]);
 
-      return (
-        <td key={activity.id} style={{ textAlign: 'center' }}>
-          <span style={{ color, fontWeight: isComplete ? 'bold' : 'normal' }}>
-            {n}/{m}
-          </span>
-        </td>
-      );
-    }
+    const handleRemove = async (studentId) => {
+        if (!window.confirm("Remove this user from the course?")) return;
+        await fetch(`${API_BASE_URL}/api/courses/${courseId}/unenroll/${studentId}`, {
+            method: "DELETE",
+        });
+        setStudents(students.filter(s => s.id !== studentId));
+    };
+    console.log("user ID", user.id);
+    console.log("instructor ID", courseInfo?.instructor_id);
+    if (!user || !courseInfo) return <Container className="mt-4">Loading...</Container>;
 
-    // No totalGroups known: fall back to status text
-    if (status === 'completed') {
-      return (
-        <td key={activity.id} style={{ textAlign: 'center', color: statusColor.completed }}>
-          Done
-        </td>
-      );
-    }
-
-    if (status === 'in_progress') {
-      return (
-        <td key={activity.id} style={{ textAlign: 'center', color: statusColor.in_progress }}>
-          In progress
-        </td>
-      );
-    }
 
     return (
-      <td key={activity.id} style={{ textAlign: 'center', color: statusColor.not_started }}>
-        —
-      </td>
-    );
-  };
+        <Container className="mt-4">
+            <h3>Enrolled Students for {courseInfo?.name || "..."}</h3>
+            <Table striped bordered hover>
+                <thead>
+                    <tr>
+                        <th>Name</th><th>Email</th><th>Role</th>
+                        {(user.role === 'root' || user.role === 'creator' || user.role === 'instructor') && <th>Actions</th>}
+                    </tr>
+                </thead>
+                <tbody>
+                    {students.map(s => (
+                        <tr key={s.id}>
+                            <td>{s.name}</td>
+                            <td>{s.email}</td>
+                            <td>{s.role}</td>
+                            {(user.role === 'root' || user.role === 'creator' || user.id === courseInfo.instructor_id) && (
+                                <td>
+                                    <Button variant="danger" size="sm" onClick={() => handleRemove(s.id)}>Remove</Button>
+                                </td>
+                            )}
 
-  return (
-    <Container className="mt-4">
-      <h3>Student Progress</h3>
-      <Table bordered>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th>Complete</th>
-            <th>Partial</th>
-            {activities.map((a) => (
-              <th key={a.id}>{a.name}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {students.map((s) => (
-            <tr key={s.id}>
-              <td>{s.name}</td>
-              <td>{s.completeCount}</td>
-              <td>{s.partialCount}</td>
-              {activities.map((a) => renderActivityCell(s, a))}
-            </tr>
-          ))}
-        </tbody>
-      </Table>
-      <div className="d-flex gap-2">
-        <Button variant="secondary" onClick={() => navigate(-1)}>
-          Back
-        </Button>
-        {/* Optional: link to tests page if you’ve wired a route like /courses/:courseId/tests */}
-        <Button
-          variant="outline-primary"
-          onClick={() => navigate(`/courses/${courseId}/tests`)}
-        >
-          View Test Results
-        </Button>
-      </div>
-    </Container>
-  );
+                        </tr>
+                    ))}
+                </tbody>
+            </Table>
+            <Button variant="secondary" onClick={() => navigate(-1)}>Back</Button>
+        </Container>
+    );
 }
+//       

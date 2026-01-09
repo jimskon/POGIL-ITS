@@ -135,6 +135,19 @@ export default function GroupSetupPage() {
       }
     }
 
+    if (size === 3 && rawGroups.length >= 2) {
+      const last = rawGroups[rawGroups.length - 1];
+
+      // If we ended with a single student (e.g., 25 → …, 3, 1)
+      if (last.length === 1) {
+        const one = rawGroups.pop();      // [1]
+        const three = rawGroups.pop();    // [3]
+
+        const merged = [...three, ...one]; // total 4
+        rawGroups.push(merged.slice(0, 2));
+        rawGroups.push(merged.slice(2, 4));
+      }
+    }
     const rolePriority = ['facilitator', 'analyst', 'qc', 'spokesperson'];
 
     const finalGroups = rawGroups.map(group => {

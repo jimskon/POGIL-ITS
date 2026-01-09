@@ -2169,171 +2169,202 @@ export default function RunActivityPage({
     }
   }
 
-  async function handleCodeChange(responseKey, updatedCode, meta = {}) {
-    setLastEditTs(Date.now());
-    dirtyKeysRef.current.add(responseKey);
+async function handleCodeChange(responseKey, updatedCode, meta = {}) {
+  setLastEditTs(Date.now());
+  dirtyKeysRef.current.add(responseKey);
 
-    if (!isActive) return;
+  if (!isActive) return;
 
-    setExistingAnswers((prev) => ({
-      ...prev,
-      [responseKey]: {
-        ...(prev[responseKey] || {}),
-        response: updatedCode,
-        type: 'text',
-      },
-    }));
+  setExistingAnswers((prev) => ({
+    ...prev,
+    [responseKey]: {
+      ...(prev[responseKey] || {}),
+      response: updatedCode,
+      type: 'text',
+    },
+  }));
 
-    socket?.emit('response:update', {
-      instanceId,
-      responseKey,
-      value: updatedCode,
-      answeredBy: user.id,
-    });
+  socket?.emit('response:update', {
+    instanceId,
+    responseKey,
+    value: updatedCode,
+    answeredBy: user.id,
+  });
 
-    if (meta?.__broadcastOnly) return;
+  // ✅ IMPORTANT:
+  // If the student types again, immediately clear any old code guidance so it
+  // doesn't "stick" while we wait for re-evaluation.
+  if (!meta?.__broadcastOnly) {
+    setCodeFeedbackShown((prev) => ({ ...prev, [responseKey]: null }));
 
     const baseQid = String(responseKey).replace(/code\d+$/, '');
-    if (qidsNoFURef.current?.has(baseQid)) {
+    setFollowupsShown((prev) => {
+      const next = { ...prev };
+      delete next[baseQid];
+      return next;
+    });
+
+    socket?.emit('feedback:update', {
+      instanceId,
+      responseKey,
+      feedback: null,
+      followup: null,
+    });
+  }
+
+  if (meta?.__broadcastOnly) return;
+
+  const baseQid = String(responseKey).replace(/code\d+$/, '');
+  if (qidsNoFURef.current?.has(baseQid)) {
+    socket?.emit('feedback:update', {
+      instanceId,
+      responseKey,
+      feedback: null,
+      followup: null,
+    });
+    setFollowupsShown((prev) => {
+      const next = { ...prev };
+      delete next[baseQid];
+      return next;
+    });
+    return;
+  }
+
+  if (!window.Sk || !skulptLoaded) {
+    socket?.emit('feedback:update', {
+      instanceId,
+      responseKey,
+      feedback: null,
+      followup: null,
+    });
+  }
+
+  try {
+    // Save code
+    await fetch(`${API_BASE_URL}/api/responses/code`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question_id: responseKey,
+        activity_instance_id: instanceId,
+        user_id: user?.id,
+        response: updatedCode,
+      }),
+    });
+    dirtyKeysRef.current.delete(responseKey);
+
+    // NEW: no live guidance during tests
+    if (isTestMode) {
       socket?.emit('feedback:update', {
         instanceId,
         responseKey,
         feedback: null,
         followup: null,
-      });
-      setFollowupsShown((prev) => {
-        const next = { ...prev };
-        delete next[baseQid];
-        return next;
       });
       return;
     }
 
-    if (!window.Sk || !skulptLoaded) {
+    if (!updatedCode || !updatedCode.trim()) {
       socket?.emit('feedback:update', {
         instanceId,
         responseKey,
         feedback: null,
         followup: null,
       });
+      return;
     }
 
-    try {
-      // Save code
-      await fetch(`${API_BASE_URL}/api/responses/code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question_id: responseKey,
-          activity_instance_id: instanceId,
-          user_id: user?.id,
-          response: updatedCode,
-        }),
-      });
-      dirtyKeysRef.current.delete(responseKey);
+    const lang = getLangForResponseKey(responseKey, groups);
 
-
-      // NEW: no live guidance during tests
-      if (isTestMode) {
-        socket?.emit('feedback:update', {
-          instanceId,
-          responseKey,
-          feedback: null,
-          followup: null,
-        });
-        return;
-      }
-
-      if (!updatedCode || !updatedCode.trim()) {
-        socket?.emit('feedback:update', {
-          instanceId,
-          responseKey,
-          feedback: null,
-          followup: null,
-        });
-        return;
-      }
-
-      const lang = getLangForResponseKey(responseKey, groups);
-
-      let perQuestionGuideLines = [cleanLines(meta?.feedbackPrompt || '')];
-      if (lang === 'python') {
-        perQuestionGuideLines.push(
-          'Environment constraint: f-strings are unavailable; do not suggest or use them.',
-          "Explicit override: Ignore spacing in prompts and around commas; do not request changes like 'remove an extra space' if the program meets the requirements."
-        );
-      }
-      const perQuestionGuide = perQuestionGuideLines
-        .filter(Boolean)
-        .join('\n');
-
-      const activityGuide = [
-        activity?.aicodeguidance || '',
-        activity?.activitycontext || '',
-        `Student level: ${activity?.studentlevel || 'intro'}`,
-      ]
-        .filter(Boolean)
-        .join('\n');
-
-      const guidanceBlob = `${perQuestionGuide}\n---\n${activityGuide}`;
-
-      const isCodeOnlyQ = !meta?.hasTextResponse && !meta?.hasTableResponse;
-
-      const qt =
-        meta?.questionText && meta.questionText.trim()
-          ? meta.questionText.trim()
-          : 'Write and run code.';
-
-      const evalResp = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          questionText: qt,
-          studentCode: updatedCode,
-          codeVersion: (codeVersionsRef.current[responseKey] =
-            (codeVersionsRef.current[responseKey] || 0) + 1),
-          guidance: guidanceBlob,
-          isCodeOnly: isCodeOnlyQ,
-          lang,
-        }),
-      });
-
-      if (!evalResp.ok) {
-        return;
-      }
-
-      const data = await evalResp.json();
-      let feedback = String(data?.feedback ?? '').trim();
-      let followup = String(data?.followup ?? '').trim();
-
-      if (!feedback && followup) {
-        feedback = followup;
-        followup = '';
-      }
-
-      if (feedback) {
-        setCodeFeedbackShown((prev) => ({ ...prev, [responseKey]: feedback }));
-      } else {
-        setCodeFeedbackShown((prev) => ({ ...prev, [responseKey]: null }));
-      }
-
-      const baseQid2 = String(responseKey).replace(/code\d+$/, '');
-      setFollowupsShown((prev) => {
-        const x = { ...prev };
-        delete x[baseQid2];
-        return x;
-      });
-
-      socket?.emit('feedback:update', {
-        instanceId,
-        responseKey,
-        feedback: feedback || null,
-        followup: null,
-      });
-    } catch (err) {
-      console.error('handleCodeChange failed:', err);
+    let perQuestionGuideLines = [cleanLines(meta?.feedbackPrompt || '')];
+    if (lang === 'python') {
+      perQuestionGuideLines.push(
+        'Environment constraint: f-strings are unavailable; do not suggest or use them.',
+        "Explicit override: Ignore spacing in prompts and around commas; do not request changes like 'remove an extra space' if the program meets the requirements."
+      );
     }
+    const perQuestionGuide = perQuestionGuideLines
+      .filter(Boolean)
+      .join('\n');
+
+    const activityGuide = [
+      activity?.aicodeguidance || '',
+      activity?.activitycontext || '',
+      `Student level: ${activity?.studentlevel || 'intro'}`,
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    const guidanceBlob = `${perQuestionGuide}\n---\n${activityGuide}`;
+
+    const isCodeOnlyQ = !meta?.hasTextResponse && !meta?.hasTableResponse;
+
+    const qt =
+      meta?.questionText && meta.questionText.trim()
+        ? meta.questionText.trim()
+        : 'Write and run code.';
+
+    // ✅ Version stamp for THIS evaluation
+    const myVersion =
+      (codeVersionsRef.current[responseKey] =
+        (codeVersionsRef.current[responseKey] || 0) + 1);
+
+    const evalResp = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        questionText: qt,
+        studentCode: updatedCode,
+        codeVersion: myVersion, // ✅ send version
+        guidance: guidanceBlob,
+        isCodeOnly: isCodeOnlyQ,
+        lang,
+      }),
+    });
+
+    if (!evalResp.ok) {
+      return;
+    }
+
+    const data = await evalResp.json();
+
+    // ✅ Ignore stale responses (older AI result arriving after a newer edit)
+    if (codeVersionsRef.current[responseKey] !== myVersion) {
+      return;
+    }
+
+    let feedback = String(data?.feedback ?? '').trim();
+    let followup = String(data?.followup ?? '').trim();
+
+    if (!feedback && followup) {
+      feedback = followup;
+      followup = '';
+    }
+
+    if (feedback) {
+      setCodeFeedbackShown((prev) => ({ ...prev, [responseKey]: feedback }));
+    } else {
+      setCodeFeedbackShown((prev) => ({ ...prev, [responseKey]: null }));
+    }
+
+    const baseQid2 = String(responseKey).replace(/code\d+$/, '');
+    setFollowupsShown((prev) => {
+      const x = { ...prev };
+      delete x[baseQid2];
+      return x;
+    });
+
+    socket?.emit('feedback:update', {
+      instanceId,
+      responseKey,
+      feedback: feedback || null,
+      followup: null,
+    });
+  } catch (err) {
+    console.error('handleCodeChange failed:', err);
   }
+}
+
 
   // Helper: tri-band scores + feedback for a base question id like "1a"
   function getQuestionScores(qid, block) {
