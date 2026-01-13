@@ -105,7 +105,7 @@ function collapseBracedCommands(rawLines) {
 
 export default function FileBlock({
   filename,
-  fileKey, 
+  fileKey,
   initialContent = '',
   fileContents,
   editable,
@@ -256,8 +256,8 @@ export function parseSheetToBlocks(lines, options = {}) {
   //console.log("🧑‍💻 parseSheetToBlocks invoked");
   lines = collapseBracedCommands(lines);
   let isTest = false;
-  const legacyTestNumbering = options.legacyTestNumbering !== false;
-// default true unless explicitly set to false
+  const legacyTestNumbering = options.legacyTestNumbering === true;
+  // default true unless explicitly set to false
 
   const blocks = [];
   let groupNumber = 0;
@@ -771,9 +771,8 @@ export function parseSheetToBlocks(lines, options = {}) {
         type: 'question',
         id,
         groupId: groupNumber,
-label: (isTest && !legacyTestNumbering)
-  ? `${groupNumber}${id}.`
-  : `${id}.`,
+        label: `${id}.`,   // display: a., b., c. (all modes)
+
         responseId: responseId++,
         prompt: format(rawClean),
         responseLines: 1,
@@ -963,16 +962,16 @@ label: (isTest && !legacyTestNumbering)
 
   flushCurrentBlock();
 
-// Legacy tests only: renumber all questions sequentially: 1., 2., 3., ...
-if (isTest && legacyTestNumbering) {
-  let q = 0;
-  for (const b of blocks) {
-    if (b.type === 'question') {
-      q += 1;
-      b.label = `${q}.`;
+  // Legacy tests only: renumber all questions sequentially: 1., 2., 3., ...
+  if (isTest && legacyTestNumbering) {
+    let q = 0;
+    for (const b of blocks) {
+      if (b.type === 'question') {
+        q += 1;
+        b.label = `${q}.`;
+      }
     }
   }
-}
 
 
   return blocks;
@@ -1138,40 +1137,40 @@ export function renderBlocks(blocks, options = {}) {
       );
     }
 
-if (block.type === 'file') {
-  const isReadonly = !!block.readonly;
-  const filename = block.filename;
+    if (block.type === 'file') {
+      const isReadonly = !!block.readonly;
+      const filename = block.filename;
 
-  const canonicalContents = fileContents || {};
-  const initialContent = block.content || '';
+      const canonicalContents = fileContents || {};
+      const initialContent = block.content || '';
 
-  const effectiveContent =
-    Object.prototype.hasOwnProperty.call(canonicalContents, filename)
-      ? canonicalContents[filename]
-      : initialContent;
+      const effectiveContent =
+        Object.prototype.hasOwnProperty.call(canonicalContents, filename)
+          ? canonicalContents[filename]
+          : initialContent;
 
-  // If you want ONLY active student to edit in RUN mode:
-  // const canEdit = !isReadonly && editable && isActive;
+      // If you want ONLY active student to edit in RUN mode:
+      // const canEdit = !isReadonly && editable && isActive;
 
-  // If you want anyone to edit non-readonly files (your current behavior):
-  const canEdit = !isReadonly;
+      // If you want anyone to edit non-readonly files (your current behavior):
+      const canEdit = !isReadonly;
 
-  const keyForDb = `file:${filename}`;
+      const keyForDb = `file:${filename}`;
 
-  return (
-    <div key={`file-wrap-${filename}-${index}`} className="mb-3">
-      <FileBlock
-        filename={filename}
-        fileKey={keyForDb}                 // ✅ NEW
-        initialContent={effectiveContent}
-        fileContents={canonicalContents}
-        setFileContents={setFileContents}
-        editable={canEdit}
-        onFileChange={onFileChange}        // ✅ NEW (wired through)
-      />
-    </div>
-  );
-}
+      return (
+        <div key={`file-wrap-${filename}-${index}`} className="mb-3">
+          <FileBlock
+            filename={filename}
+            fileKey={keyForDb}                 // ✅ NEW
+            initialContent={effectiveContent}
+            fileContents={canonicalContents}
+            setFileContents={setFileContents}
+            editable={canEdit}
+            onFileChange={onFileChange}        // ✅ NEW (wired through)
+          />
+        </div>
+      );
+    }
 
 
 
