@@ -388,22 +388,42 @@ async function getCourseProgress(req, res) {
     );
 
     // 3) Pull cached instance progress for these activities in this course
-    const [instanceRows] = await db.query(
-      `
-      SELECT
-        ai.activity_id,
-        ai.total_groups,
-        ai.completed_groups,
-        ai.progress_status,
-        gm.student_id
-      FROM activity_instances ai
-      JOIN pogil_activities a ON a.id = ai.activity_id
-      JOIN group_members gm   ON gm.activity_instance_id = ai.id
-      WHERE ai.course_id = ?
-        AND COALESCE(a.is_test, 0) = 0
-      `,
-      [courseId]
-    );
+const [instanceRows] = await db.query(
+  `
+  SELECT
+    ai.activity_id,
+    ai.points_earned,
+    ai.points_possible,
+    ai.progress_status,
+    gm.student_id,
+    ai.id AS instance_id,
+    COALESCE(ai.graded_at, ai.submitted_at) AS last_ts
+  FROM activity_instances ai
+  JOIN pogil_activities a ON a.id = ai.activity_id
+  JOIN group_members gm   ON gm.activity_instance_id = ai.id
+  JOIN (
+    SELECT
+      gm2.student_id,
+      ai2.activity_id,
+      MAX(COALESCE(ai2.graded_at, ai2.submitted_at)) AS last_ts,
+      MAX(ai2.id) AS last_id
+    FROM activity_instances ai2
+    JOIN pogil_activities a2 ON a2.id = ai2.activity_id
+    JOIN group_members gm2   ON gm2.activity_instance_id = ai2.id
+    WHERE ai2.course_id = ?
+      AND COALESCE(a2.is_test, 0) = 1
+    GROUP BY gm2.student_id, ai2.activity_id
+  ) latest
+    ON latest.student_id = gm.student_id
+   AND latest.activity_id = ai.activity_id
+   AND COALESCE(ai.graded_at, ai.submitted_at) = latest.last_ts
+   AND ai.id = latest.last_id
+  WHERE ai.course_id = ?
+    AND COALESCE(a.is_test, 0) = 1
+  `,
+  [courseId, courseId]
+);
+
 
     // 4) Build per-student structure
     const progressByStudent = new Map();
@@ -456,8 +476,8 @@ async function getCourseProgress(req, res) {
         (completed_groups && total_groups && completed_groups >= total_groups
           ? 'completed'
           : completed_groups > 0
-          ? 'in_progress'
-          : 'not_started');
+            ? 'in_progress'
+            : 'not_started');
 
       const entry = {
         status,
@@ -549,23 +569,42 @@ async function getCourseTestResults(req, res) {
       return res.json({ tests: [], students: [] });
     }
 
-    // 3) Pull cached test instance scores for this course
-    const [instanceRows] = await db.query(
-      `
-      SELECT
-        ai.activity_id,
-        ai.points_earned,
-        ai.points_possible,
-        ai.progress_status,
-        gm.student_id
-      FROM activity_instances ai
-      JOIN pogil_activities a ON a.id = ai.activity_id
-      JOIN group_members gm   ON gm.activity_instance_id = ai.id
-      WHERE ai.course_id = ?
-        AND COALESCE(a.is_test, 0) = 1
-      `,
-      [courseId]
-    );
+    // 3) Pull LATEST cached test instance scores for this course (one row per student x test)
+const [instanceRows] = await db.query(
+  `
+  SELECT
+    ai.activity_id,
+    ai.points_earned,
+    ai.points_possible,
+    ai.progress_status,
+    gm.student_id,
+    ai.id AS instance_id
+  FROM activity_instances ai
+  JOIN pogil_activities a ON a.id = ai.activity_id
+  JOIN group_members gm   ON gm.activity_instance_id = ai.id
+  JOIN (
+    SELECT
+      gm2.student_id,
+      ai2.activity_id,
+      MAX(COALESCE(ai2.graded_at, ai2.submitted_at, ai2.start_time)) AS last_ts,
+      MAX(ai2.id) AS last_id
+    FROM activity_instances ai2
+    JOIN pogil_activities a2 ON a2.id = ai2.activity_id
+    JOIN group_members gm2   ON gm2.activity_instance_id = ai2.id
+    WHERE ai2.course_id = ?
+      AND COALESCE(a2.is_test, 0) = 1
+    GROUP BY gm2.student_id, ai2.activity_id
+  ) latest
+    ON latest.student_id = gm.student_id
+   AND latest.activity_id = ai.activity_id
+   AND COALESCE(ai.graded_at, ai.submitted_at, ai.start_time) = latest.last_ts
+   AND ai.id = latest.last_id
+  WHERE ai.course_id = ?
+    AND COALESCE(a.is_test, 0) = 1
+  `,
+  [courseId, courseId]
+);
+
 
     // 4) Build per-student structure
     const resultsByStudent = new Map();
@@ -585,7 +624,7 @@ async function getCourseTestResults(req, res) {
       completed: 2,
     };
 
-    function betterScore(a, b) {
+    /*function betterScore(a, b) {
       if (!a) return b;
       if (!b) return a;
 
@@ -606,9 +645,9 @@ async function getCourseTestResults(req, res) {
       if (bPossible > aPossible) return b;
 
       return a;
-    }
+    }*/
 
-    // 5) Fill per-student per-test from cached instance rows
+    // 5) Fill per-student per-test from LATEST instance rows (no "best score" merging)
     for (const row of instanceRows) {
       const {
         student_id,
@@ -623,26 +662,24 @@ async function getCourseTestResults(req, res) {
 
       let status = progress_status || 'not_started';
 
-      // If we have pointsPossible > 0, treat as graded/complete
+      // If we have pointsPossible > 0, treat as completed (graded)
       if (!status || status === 'in_progress') {
-        if (points_possible && points_possible > 0) {
+        if (points_possible && Number(points_possible) > 0) {
           status = 'completed';
-        } else if (points_earned && points_earned > 0) {
+        } else if (points_earned && Number(points_earned) > 0) {
           status = 'in_progress';
         } else {
           status = 'not_started';
         }
       }
 
-      const entry = {
+      student.scores[activity_id] = {
         status,
         pointsEarned: points_earned != null ? Number(points_earned) : null,
         pointsPossible: points_possible != null ? Number(points_possible) : null,
       };
-
-      const existing = student.scores[activity_id];
-      student.scores[activity_id] = betterScore(existing, entry);
     }
+
 
     // 6) Ensure every test has a slot for every student
     for (const student of resultsByStudent.values()) {

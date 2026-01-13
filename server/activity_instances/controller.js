@@ -6,6 +6,9 @@ const { google } = require('googleapis');
 const { authorize } = require('../utils/googleAuth');
 const { gradeTestQuestion } = require('../ai/controller');
 
+function escapeRegExp(str = '') {
+  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 // ========== DOC PARSING ==========
 function parseGoogleDocHTML(html) {
@@ -770,6 +773,12 @@ async function getInstancesForActivityInCourse(req, res) {
         test_duration_minutes: inst.test_duration_minutes,
         test_reopen_until: inst.test_reopen_until,
         submitted_at: inst.submitted_at,
+        submitted_at: inst.submitted_at,
+        graded_at: inst.graded_at,
+        review_complete: inst.review_complete,
+        reviewed_at: inst.reviewed_at,
+        points_earned: inst.points_earned,
+        points_possible: inst.points_possible,
         members: members.map(m => ({
           student_id: m.student_id,
           name: m.student_name,
@@ -1046,26 +1055,29 @@ async function loadTestQuestionsForInstance(instanceId) {
 
   for (const raw of lines) {
     const line = raw.trim();
-
+    let qIndex = 0;
     // New question
-    if (line.startsWith('\\question')) {
+    // New question (must be \question{...})
+    if (/^\\question\{/.test(line)) {
       if (current) questions.push(current);
 
-      // Your format is usually: \question{Question text...}
       const m = line.match(/^\\question\{([\s\S]*?)\}\s*$/);
-      const qText = m ? m[1].trim() : line.replace(/^\\question\s*/, '').trim();
-
-      current = {
-        id: null,          // we'll assign ids later for regrade mapping
-        text: qText,
-        scores: {},
-      };
+      const qText = m ? m[1].trim() : ''; // if multi-paragraph, you'll append later
+      current = { id: null, text: qText, scores: {} };
       continue;
     }
+
+    // Skip question groups entirely
+    if (/^\\questiongroup\{/.test(line)) {
+      continue;
+    }
+
 
     // Score tag
     if (line.startsWith('\\score') && current) {
       const m = line.match(/^\\score\{([^}]*)\}/);
+      console.log('SCORE LINE for Q', qIndex, 'RAW=', line, 'PARSED=', m?.[1]);
+
       if (m) {
         current.scores = parseScoreSpec(m[1]);
       }
@@ -1235,30 +1247,42 @@ async function regradeTestInstance(req, res) {
 
       // code cells from stored answers
       const codeCells = [];
-      const codePrefix = (baseId + 'code').toLowerCase();
+      const rxOld = new RegExp(`^${escapeRegExp(baseId)}code(\\d+)$`, 'i');
+      const rxNew = new RegExp(`^${escapeRegExp(baseId)}-code-(\\d+)$`, 'i');
+
       for (const [key, value] of Object.entries(answers)) {
         if (!value || !String(value).trim()) continue;
-        if (!key.toLowerCase().startsWith(codePrefix)) continue;
 
+        let m = key.match(rxOld);
+        if (!m) m = key.match(rxNew);
+        if (!m) continue;
+
+        const n = m[1];
         codeCells.push({
           qid: key,
           code: String(value),
           lang: 'cpp',
-          label: key,
+          label: `code ${n}`,
         });
       }
 
-      // output
-      let outputText = '';
-      const rxOut1 = new RegExp(`^${escapeRegExp(baseId)}output$`, 'i');
-      const rxOut2 = new RegExp(`^${escapeRegExp(baseId)}-output$`, 'i');
 
-      for (const [k, v] of Object.entries(answers)) {
-        if (rxOut1.test(k) || rxOut2.test(k)) {
-          outputText = String(v || '').trim();
-          break;
+      // output saved by submitTest as `${baseId}Output`
+      let outputText = String(answers[`${baseId}Output`] || '').trim();
+
+      // Back-compat fallbacks (only if you used other key styles at some point)
+      if (!outputText) {
+        const rxOut1 = new RegExp(`^${escapeRegExp(baseId)}output$`, 'i');
+        const rxOut2 = new RegExp(`^${escapeRegExp(baseId)}-output$`, 'i');
+
+        for (const [k, v] of Object.entries(answers)) {
+          if (rxOut1.test(k) || rxOut2.test(k)) {
+            outputText = String(v || '').trim();
+            break;
+          }
         }
       }
+
 
       console.log('🧪 [regrade] artifacts for', baseId, {
         writtenPresent: !!written,
@@ -1335,11 +1359,6 @@ async function regradeTestInstance(req, res) {
 async function submitTest(req, res) {
   const { instanceId } = req.params;
   const { studentId, answers, questions = [] } = req.body || {};
-
-  function escapeRegExp(s) {
-    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-
 
   if (!instanceId || !studentId || !answers) {
     return res
