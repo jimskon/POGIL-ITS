@@ -586,6 +586,7 @@ async function gradeTestQuestion({
   codeCells = [], // [{ code: "...", lang?: "cpp"|"python", label?: "..." }, ...]
   outputText = "", // captured program output, if any
   rubric = {}, // same as scores in most calls
+  detailedFeedback = true, // default ON for now
 }) {
   const bucketPoints = (bucket) => {
     if (bucket == null) return 0;
@@ -633,16 +634,16 @@ async function gradeTestQuestion({
     stripHtml(respBucket.instructionsRaw || respBucket.instructionsHtml || "") ||
     "(none)";
 
-console.log('🧮 [gradeTestQuestion] INPUTS', {
-  q: (questionText || '').slice(0, 80),
-  maxCodePts, maxRunPts, maxRespPts,
-  hasResponseText: !!(responseText || '').trim(),
-  codeCellsCount: Array.isArray(codeCells) ? codeCells.length : 0,
-  hasOutputText: !!(outputText || '').trim(),
-  codeRubricLen: codeRubricText.length,
-  runRubricLen: runRubricText.length,
-  respRubricLen: responseRubricText.length,
-});
+  console.log('🧮 [gradeTestQuestion] INPUTS', {
+    q: (questionText || '').slice(0, 80),
+    maxCodePts, maxRunPts, maxRespPts,
+    hasResponseText: !!(responseText || '').trim(),
+    codeCellsCount: Array.isArray(codeCells) ? codeCells.length : 0,
+    hasOutputText: !!(outputText || '').trim(),
+    codeRubricLen: codeRubricText.length,
+    runRubricLen: runRubricText.length,
+    respRubricLen: responseRubricText.length,
+  });
   // ---- Build code bundle for the prompt ----
   const codeBundle = codeCells
     .map((cell, idx) => {
@@ -719,17 +720,33 @@ console.log('🧮 [gradeTestQuestion] INPUTS', {
     userLines.push("");
   }
 
-  userLines.push(
-    `Return strict JSON only in this form:\n` +
-    `{"codeScore": number, "codeFeedback": string|null, ` +
-    `"runScore": number, "runFeedback": string|null, ` +
-    `"responseScore": number, "responseFeedback": string|null}\n` +
-    `- codeScore must be between 0 and ${maxCodePts}.\n` +
-    `- runScore must be between 0 and ${maxRunPts}.\n` +
-    `- responseScore must be between 0 and ${maxRespPts}.\n` +
-    `- For any band with full credit, feedback for that band MUST be null.\n` +
-    `- For bands with less than full credit, feedback should be ONE short sentence explaining why.`
-  );
+userLines.push(
+  `Return strict JSON only in this form:\n` +
+  `{"codeScore": number, "codeFeedback": string|null, ` +
+  `"runScore": number, "runFeedback": string|null, ` +
+  `"responseScore": number, "responseFeedback": string|null}\n` +
+  `- codeScore must be between 0 and ${maxCodePts}.\n` +
+  `- runScore must be between 0 and ${maxRunPts}.\n` +
+  `- responseScore must be between 0 and ${maxRespPts}.\n` +
+  `- For any band with full credit, feedback for that band MUST be null.\n` +
+
+  // 🔑 Core change starts here
+  `- For bands with less than full credit, feedback must explain the MEDICAL or CONCEPTUAL issue only.\n` +
+  `- DO NOT mention grading, points, rubrics, scores, or how to improve a score.\n` +
+  `- DO NOT give advice about future answers (forbidden phrases include: "to get full credit", "you should", "consider providing", "next time").\n` +
+  `- Ignore minor spelling or typographical errors if the intended meaning is clear.\n` +
+
+  `- If the RESPONSE is multiple-choice (single letter a/b/c/d):\n` +
+  `  * First line: "Correct answer: <letter>."\n` +
+  `  * Then ONE sentence explaining why the chosen option is medically incorrect.\n` +
+  `  * Then ONE sentence explaining why the correct option is medically correct.\n` +
+  `  * Do NOT say "invalid", "incorrect response format", or similar.\n` +
+
+  `- If the RESPONSE is short-answer:\n` +
+  `  * Explain what key clinical concept is missing, incorrect, or incomplete.\n` +
+  `  * Frame the explanation as medical reasoning, not scoring guidance.\n`
+);
+
 
   const user = userLines.join("\n");
 

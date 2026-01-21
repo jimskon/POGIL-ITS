@@ -49,7 +49,12 @@ export default function NavBar({ bgColor = "dark", fixed = false, statusText = "
 
 
         <Container>
-          <Navbar.Brand as={Link} to="/dashboard" className="d-flex align-items-center gap-2">
+          <Navbar.Brand
+            href="https://cs.jimskon.com/colearn-ai-collaborative-learning-with-ai-support/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="d-flex align-items-center gap-2"
+          >
             <img src={`${import.meta.env.BASE_URL}images/SKON-logo.png`} alt="skön LLC Logo" style={{ height: 30 }} />
 
             coLearn AI

@@ -43,7 +43,7 @@ CREATE TABLE `activity_instances` (
   `points_earned` int(11) DEFAULT NULL,
   `points_possible` int(11) DEFAULT NULL,
   `test_start_at` datetime DEFAULT NULL COMMENT 'Scheduled start time for timed tests',
-  `test_duration_minutes` int(10) unsigned NOT NULL DEFAULT 0 COMMENT 'Time limit in minutes (0 = no limit)',
+  `test_duration_minutes` int(10) unsigned NOT NULL DEFAULT 0 COMMENT 'Time limit in minutes for timed tests (0 = no limit)',
   `test_reopen_until` datetime DEFAULT NULL COMMENT 'Optional reopen-until time for this instance',
   `submitted_at` datetime DEFAULT NULL COMMENT 'When the instance was finally submitted',
   `graded_at` datetime DEFAULT NULL,
@@ -56,10 +56,10 @@ CREATE TABLE `activity_instances` (
   KEY `idx_activity_instances_test_start` (`test_start_at`),
   KEY `idx_ai_course_activity_test` (`course_id`,`activity_id`,`is_test`),
   KEY `idx_ai_progress_status` (`progress_status`),
-  CONSTRAINT `activity_instances_ibfk_1` FOREIGN KEY (`activity_id`) REFERENCES `pogil_activities` (`id`),
-  CONSTRAINT `activity_instances_ibfk_2` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`),
-  CONSTRAINT `activity_instances_ibfk_3` FOREIGN KEY (`active_student_id`) REFERENCES `users` (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=1733 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  CONSTRAINT `activity_instances_ibfk_1` FOREIGN KEY (`activity_id`) REFERENCES `pogil_activities` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `activity_instances_ibfk_2` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `activity_instances_ibfk_3` FOREIGN KEY (`active_student_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB AUTO_INCREMENT=280 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `course_enrollments`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -69,11 +69,11 @@ CREATE TABLE `course_enrollments` (
   `course_id` int(11) NOT NULL,
   `student_id` int(11) NOT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `course_id` (`course_id`,`student_id`),
+  UNIQUE KEY `uniq_course_student` (`course_id`,`student_id`),
   KEY `student_id` (`student_id`),
   CONSTRAINT `course_enrollments_ibfk_1` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`) ON DELETE CASCADE,
   CONSTRAINT `course_enrollments_ibfk_2` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=817 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=962 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `courses`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -81,20 +81,20 @@ DROP TABLE IF EXISTS `courses`;
 CREATE TABLE `courses` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `name` text NOT NULL,
-  `code` text NOT NULL,
-  `section` text NOT NULL,
+  `code` varchar(191) NOT NULL,
+  `section` varchar(191) NOT NULL,
   `semester` enum('fall','spring','summer') NOT NULL,
   `year` int(11) NOT NULL,
   `instructor_id` int(11) DEFAULT NULL,
   `class_id` int(11) DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `unique_course` (`code`(255),`section`(255),`semester`,`year`),
+  UNIQUE KEY `unique_course` (`code`,`section`,`semester`,`year`),
   KEY `instructor_id` (`instructor_id`),
   KEY `class_id` (`class_id`),
   CONSTRAINT `courses_ibfk_1` FOREIGN KEY (`instructor_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
   CONSTRAINT `courses_ibfk_2` FOREIGN KEY (`class_id`) REFERENCES `pogil_classes` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=56 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=40 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `event_log`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -103,7 +103,7 @@ CREATE TABLE `event_log` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `user_id` int(11) DEFAULT NULL,
   `activity_instance_id` int(11) DEFAULT NULL,
-  `event_type` text NOT NULL,
+  `event_type` varchar(191) NOT NULL,
   `details` text DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
@@ -122,9 +122,9 @@ CREATE TABLE `feedback` (
   `feedback_text` text NOT NULL,
   `generated_at` timestamp NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
-  KEY `feedback_ibfk_1` (`response_id`),
-  CONSTRAINT `feedback_ibfk_1` FOREIGN KEY (`response_id`) REFERENCES `responses` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=3472 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  KEY `idx_feedback_response` (`response_id`),
+  CONSTRAINT `fk_feedback_response` FOREIGN KEY (`response_id`) REFERENCES `responses` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `followups`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -137,7 +137,7 @@ CREATE TABLE `followups` (
   `generated_at` timestamp NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
   KEY `response_id` (`response_id`),
-  CONSTRAINT `followups_ibfk_1` FOREIGN KEY (`response_id`) REFERENCES `responses` (`id`)
+  CONSTRAINT `followups_ibfk_1` FOREIGN KEY (`response_id`) REFERENCES `responses` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `group_members`;
@@ -152,10 +152,11 @@ CREATE TABLE `group_members` (
   `last_heartbeat` datetime DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `unique_member_role` (`activity_instance_id`,`role`),
+  KEY `idx_gm_instance_student` (`activity_instance_id`,`student_id`),
   KEY `student_id` (`student_id`),
   CONSTRAINT `group_members_ibfk_1` FOREIGN KEY (`activity_instance_id`) REFERENCES `activity_instances` (`id`) ON DELETE CASCADE,
   CONSTRAINT `group_members_ibfk_2` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=3796 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=390 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `pending_users`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -169,7 +170,7 @@ CREATE TABLE `pending_users` (
   `created_at` timestamp NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
   UNIQUE KEY `email` (`email`)
-) ENGINE=InnoDB AUTO_INCREMENT=95 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=29 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `pogil_activities`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -189,7 +190,7 @@ CREATE TABLE `pogil_activities` (
   KEY `created_by` (`created_by`),
   CONSTRAINT `pogil_activities_ibfk_1` FOREIGN KEY (`class_id`) REFERENCES `pogil_classes` (`id`) ON DELETE CASCADE,
   CONSTRAINT `pogil_activities_ibfk_2` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=266 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=101 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `pogil_classes`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -203,7 +204,7 @@ CREATE TABLE `pogil_classes` (
   UNIQUE KEY `name` (`name`),
   KEY `created_by` (`created_by`),
   CONSTRAINT `pogil_classes_ibfk_1` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=26 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=10 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `responses`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -211,35 +212,36 @@ DROP TABLE IF EXISTS `responses`;
 CREATE TABLE `responses` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `activity_instance_id` int(11) NOT NULL,
-  `question_id` text NOT NULL,
+  `question_id` varchar(64) NOT NULL,
   `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
-  `response` text NOT NULL,
+  `response` mediumtext DEFAULT NULL,
   `submitted_at` timestamp NULL DEFAULT current_timestamp(),
   `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   `answered_by_user_id` int(11) NOT NULL,
   PRIMARY KEY (`id`),
-  KEY `activity_instance_id` (`activity_instance_id`),
-  KEY `answered_by_user_id` (`answered_by_user_id`),
-  CONSTRAINT `responses_ibfk_1` FOREIGN KEY (`activity_instance_id`) REFERENCES `activity_instances` (`id`) ON DELETE CASCADE,
-  CONSTRAINT `responses_ibfk_2` FOREIGN KEY (`answered_by_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=28099161 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  UNIQUE KEY `unique_response` (`activity_instance_id`,`question_id`),
+  KEY `idx_ai_qid` (`activity_instance_id`,`question_id`),
+  KEY `idx_answered_by` (`answered_by_user_id`),
+  CONSTRAINT `fk_responses_ai` FOREIGN KEY (`activity_instance_id`) REFERENCES `activity_instances` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_responses_user` FOREIGN KEY (`answered_by_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB AUTO_INCREMENT=201168 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `users`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;
 CREATE TABLE `users` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
-  `name` text NOT NULL,
-  `email` text NOT NULL,
+  `name` varchar(255) NOT NULL,
+  `email` varchar(255) NOT NULL,
   `password_hash` text NOT NULL,
   `role` enum('root','creator','instructor','student','grader') NOT NULL DEFAULT 'student',
   `created_by` int(11) DEFAULT NULL,
   `created_at` timestamp NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
-  UNIQUE KEY `email` (`email`) USING HASH,
+  UNIQUE KEY `email` (`email`),
   KEY `created_by` (`created_by`),
   CONSTRAINT `users_ibfk_1` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=249 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=58 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 
