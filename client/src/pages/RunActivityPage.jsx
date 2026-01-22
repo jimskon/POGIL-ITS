@@ -164,13 +164,15 @@ export default function RunActivityPage({
   // per-group “ignore AI, let me continue” overrides
   const [overrideGroups, setOverrideGroups] = useState({});
 
-  // NEW: test timing lock state + auto-submit guard
   const [testLockState, setTestLockState] = useState({
     lockedBefore: false,
     lockedAfter: false,
     remainingSeconds: null,
   });
-  const [autoSubmitted, setAutoSubmitted] = useState(false);
+
+  // NEW: UI-only “time expired” flag for tests (locks editing, shows submit alert)
+  const [timeExpired, setTimeExpired] = useState(false);
+
 
   const [nonLegacyForUI, setNonLegacyForUI] = useState(false);
 
@@ -481,43 +483,24 @@ export default function RunActivityPage({
 
   // For manual edits in <FileBlock> textareas
   const handleFileChange = (fileKey, newText, meta = {}) => {
-    const handleFileChange = (fileKey, newText, meta = {}) => {
-      const raw = meta.filename || fileKey || '';
-      const filename = raw.startsWith('file:') ? raw.slice('file:'.length) : raw;
+    const raw = meta.filename || fileKey || '';
+    const filename = raw.startsWith('file:') ? raw.slice('file:'.length) : raw;
 
-    };
-
-
-    // Update local canonical file contents
     setFileContents((prev) => {
       const updated = { ...prev, [filename]: newText };
       fileContentsRef.current = updated;
-
-      if (DEBUG_FILES) {
-        console.debug(
-          `[${PAGE_TAG}] handleFileChange → ${filename}: ${(prev[filename] ?? '').length}→${(newText ?? '').length}`
-        );
-      }
-
       return updated;
     });
 
-    // 🔄 Broadcast live to observers (if your server handles 'file:update')
     if (isActive && socket && instanceId) {
-      socket.emit('file:update', {
-        instanceId,
-        fileKey,
-        filename,
-        value: newText,
-      });
+      socket.emit('file:update', { instanceId, fileKey, filename, value: newText });
     }
 
-    // 💾 NEW: persist file contents in responses table
     if (isActive && instanceId && user?.id) {
-      // question_id pattern: file:<filename>
       saveResponse(instanceId, `file:${filename}`, newText).catch(() => { });
     }
   };
+
 
 
 
@@ -554,7 +537,7 @@ export default function RunActivityPage({
     const interval = setInterval(() => {
       // In test mode, NEVER refresh for an active student while the test is editable.
       // Refreshing can only cause harm (overwrites), and you already save code on change.
-      if (isTestMode && isStudent && isActive && !testLockState.lockedAfter) {
+      if (isTestMode && isStudent && !activity?.submitted_at) {
         return;
       }
 
@@ -565,7 +548,7 @@ export default function RunActivityPage({
     }, 10000);
 
     return () => clearInterval(interval);
-  }, [instanceId, isActive, lastEditTs, isTestMode, isStudent, testLockState.lockedAfter]);
+  }, [instanceId, isActive, lastEditTs, isTestMode, isStudent, activity?.submitted_at]);
 
 
   useEffect(() => {
@@ -807,85 +790,47 @@ export default function RunActivityPage({
     autoSubmitted,
   ]);*/
 
-  useEffect(() => {
-    // If this isn’t a test or we don’t know the window yet, clear any locks.
-    if (!isTestMode || !testWindow) {
-      setTestLockState({
-        lockedBefore: false,
-        lockedAfter: false,
-        remainingSeconds: null,
-      });
-      return;
+useEffect(() => {
+  if (!isTestMode || !testWindow) {
+    setTestLockState({ lockedBefore: false, lockedAfter: false, remainingSeconds: null });
+    setTimeExpired(false);
+    return;
+  }
+
+  const { start, end } = testWindow;
+
+  const tick = () => {
+    const now = new Date();
+    const isSubmittedNow = !!activity?.submitted_at;   // ✅ not stale
+
+    let lockedBefore = false;
+    let lockedAfter = isSubmittedNow;                  // ✅ DB truth only
+    let remainingSeconds = 0;
+
+    if (!isSubmittedNow) {
+      if (now < start) {
+        lockedBefore = true;
+        remainingSeconds = Math.max(0, Math.floor((start.getTime() - now.getTime()) / 1000));
+      } else {
+        lockedBefore = false;
+        remainingSeconds = Math.max(0, Math.floor((end.getTime() - now.getTime()) / 1000));
+      }
+    } else {
+      lockedBefore = false;
+      remainingSeconds = 0;
     }
 
-    // Only students care about lock state + auto-submit.
-    // Instructors can see everything regardless.
-    const isSubmitted = !!activity?.submitted_at;
+    setTestLockState({ lockedBefore, lockedAfter, remainingSeconds });
 
-    const { start, end } = testWindow;
+    // ✅ derive expiration solely from remainingSeconds + submitted state
+    const expiredNow = !isSubmittedNow && !lockedBefore && remainingSeconds === 0;
+    setTimeExpired(expiredNow);
+  };
 
-    let autoFired = false;
-
-
-    const tick = async () => {
-      const now = new Date();
-
-      let lockedBefore = false;
-      let lockedAfter = isSubmitted;
-      let remainingSeconds = null;
-
-      if (!isSubmitted) {
-        if (now < start) {
-          // Before the test window opens
-          lockedBefore = true;
-          lockedAfter = false;
-          remainingSeconds = Math.floor((start.getTime() - now.getTime()) / 1000);
-        } else {
-          // During or after the test window
-          const diff = Math.floor((end.getTime() - now.getTime()) / 1000);
-          remainingSeconds = diff > 0 ? diff : 0;
-
-          // Time’s up: trigger auto-submit once for the active student
-          if (diff <= 0 && !autoFired && isStudent && isActive && !autoSubmitted) {
-            autoFired = true;
-            setAutoSubmitted(true);
-            try {
-              await handleSubmit(false);
-            } catch (err) {
-              console.error('Auto-submit failed:', err);
-            }
-          }
-
-          // After end of window, lock the test
-          if (diff <= 0 || autoSubmitted || activity?.submitted_at) {
-            lockedAfter = true;
-          }
-        }
-      } else {
-        // Already submitted; fully locked
-        lockedAfter = true;
-        remainingSeconds = 0;
-      }
-
-      setTestLockState({ lockedBefore, lockedAfter, remainingSeconds });
-    };
-
-    // Run once immediately and then every second
-    tick();
-    const id = setInterval(() => {
-      // We intentionally ignore the promise returned by tick here
-      tick();
-    }, 1000);
-
-    return () => clearInterval(id);
-  }, [
-    isTestMode,
-    testWindow,
-    isStudent,
-    isActive,
-    autoSubmitted,
-    activity?.submitted_at,
-  ]);
+  tick();
+  const id = setInterval(tick, 1000);
+  return () => clearInterval(id);
+}, [isTestMode, testWindow, activity?.submitted_at]);
 
 
   if (loading) {
@@ -1622,6 +1567,10 @@ export default function RunActivityPage({
           blocks,
           container
         );
+        console.log('[TEST SUBMIT payload]', {
+          answersCount: Object.keys(answers).length,
+          questionsCount: questions.length,
+        });
 
         const res = await fetch(
           `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-test`,
@@ -2500,8 +2449,9 @@ export default function RunActivityPage({
           const testEditable =
             isTestMode &&
             isStudent &&
-            !testLockState.lockedAfter &&
-            !isSubmitted;
+            !isSubmitted &&
+            !timeExpired;
+
 
 
           const editable = isTestMode
@@ -2699,9 +2649,21 @@ export default function RunActivityPage({
             </div>
           );
         })}
+        {isTestMode && isStudent && timeExpired && !isSubmitted && (
+          <Alert variant="warning" className="mt-3">
+            <div className="d-flex justify-content-between align-items-center">
+              <div>
+                <strong>Time is up.</strong> Your test is now locked. Press Submit to record your answers.
+              </div>
+              <Button onClick={() => handleSubmit(false)} disabled={isSubmitting}>
+                {isSubmitting ? 'Submitting…' : 'Submit Test'}
+              </Button>
+            </div>
+          </Alert>
+        )}
 
         {/* ✅ Single Submit Test button (ONLY once, after all groups) */}
-        {isTestMode && isStudent && !testLockState.lockedAfter && !isSubmitted && (
+        {isTestMode && isStudent && !timeExpired && !isSubmitted && (
           <div className="mt-3">
             <Button onClick={() => handleSubmit(false)} disabled={isSubmitting}>
               {isSubmitting ? (
