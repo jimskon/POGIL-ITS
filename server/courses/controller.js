@@ -176,6 +176,16 @@ async function getCourseActivities(req, res) {
           LIMIT 1
         ) AS submitted_at,
 
+        (
+          SELECT ai2.status
+          FROM activity_instances ai2
+          JOIN group_members gm ON gm.activity_instance_id = ai2.id
+          WHERE ai2.activity_id = a.id
+            AND ai2.course_id = c.id
+            AND gm.student_id = ?
+          LIMIT 1
+        ) AS instance_status,
+
         COUNT(ai.id) AS group_count,
         MAX(ai.status = 'in_progress') AS is_ready,
         MAX(COALESCE(ai.hidden, 0)) AS hidden
@@ -188,16 +198,24 @@ async function getCourseActivities(req, res) {
       GROUP BY a.id, a.name, a.order_index, a.is_test
       ORDER BY a.order_index ASC
       `,
-      [userId, userId, courseId]
+      // ✅ FIXED: 4 params for 4 placeholders
+      [userId, userId, userId, courseId]
     );
 
     const activities = rows.map((row) => ({
       activity_id: row.activity_id,
       title: row.activity_name,
       order_index: row.activity_index,
-      isTest: !!row.is_test,          // 👈 canonical flag, camelCased for frontend
+      isTest: !!row.is_test,
       instance_id: row.instance_id || null,
       submitted_at: row.submitted_at || null,
+
+      instance_status: row.instance_status || null,
+      is_complete:
+        row.instance_status === 'complete' ||
+        row.instance_status === 'completed' ||
+        !!row.submitted_at,
+
       is_ready: !!row.is_ready,
       has_groups: row.group_count > 0,
       hidden: !!row.hidden,
@@ -209,6 +227,7 @@ async function getCourseActivities(req, res) {
     res.status(500).json({ error: "Failed to fetch activities" });
   }
 }
+
 
 
 // GET all courses a user is enrolled in
@@ -388,8 +407,8 @@ async function getCourseProgress(req, res) {
     );
 
     // 3) Pull cached instance progress for these activities in this course
-const [instanceRows] = await db.query(
-  `
+    const [instanceRows] = await db.query(
+      `
   SELECT
     ai.activity_id,
     ai.points_earned,
@@ -421,8 +440,8 @@ const [instanceRows] = await db.query(
   WHERE ai.course_id = ?
     AND COALESCE(a.is_test, 0) = 1
   `,
-  [courseId, courseId]
-);
+      [courseId, courseId]
+    );
 
 
     // 4) Build per-student structure
@@ -570,8 +589,8 @@ async function getCourseTestResults(req, res) {
     }
 
     // 3) Pull LATEST cached test instance scores for this course (one row per student x test)
-const [instanceRows] = await db.query(
-  `
+    const [instanceRows] = await db.query(
+      `
   SELECT
     ai.activity_id,
     ai.points_earned,
@@ -602,8 +621,8 @@ const [instanceRows] = await db.query(
   WHERE ai.course_id = ?
     AND COALESCE(a.is_test, 0) = 1
   `,
-  [courseId, courseId]
-);
+      [courseId, courseId]
+    );
 
 
     // 4) Build per-student structure

@@ -5,8 +5,19 @@ const pool = require('../db');
 const router = express.Router();
 const nodemailer = require('nodemailer');
 
+
 // ===== Config =====
+// Registration-only: skip email + code verification
 const DEV_AUTO_VERIFY = String(process.env.AUTH_DEV_AUTO_VERIFY).toLowerCase() === 'true';
+
+// Login-only: skip password verification
+const DEV_PASSWORDLESS_LOGIN =
+  String(process.env.AUTH_DEV_PASSWORDLESS_LOGIN).toLowerCase() === 'true';
+
+console.log('[auth] DEV_AUTO_VERIFY =', DEV_AUTO_VERIFY);
+console.log('[auth] DEV_PASSWORDLESS_LOGIN =', DEV_PASSWORDLESS_LOGIN, 'raw =', process.env.AUTH_DEV_PASSWORDLESS_LOGIN);
+
+
 const HAVE_MAIL_CREDS = !!(process.env.EMAIL_USER && process.env.EMAIL_PASS);
 
 // Safe transporter (only when creds exist)
@@ -149,7 +160,13 @@ router.post('/verify', async (req, res) => {
 // POST /auth/login
 router.post('/login', async (req, res) => {
   const { email, password } = req.body || {};
-  if (!email || !password) return res.status(400).json({ error: 'Missing email/password' });
+  
+  if (!email) return res.status(400).json({ error: 'Missing email' });
+
+  // Only require password if passwordless mode is OFF
+  if (!DEV_PASSWORDLESS_LOGIN && !password) {
+    return res.status(400).json({ error: 'Missing password' });
+  }
 
   try {
     const conn = await pool.getConnection();
@@ -158,8 +175,13 @@ router.post('/login', async (req, res) => {
       if (rows.length === 0) return res.status(400).json({ error: 'Invalid email or password' });
 
       const user = rows[0];
-      const match = await bcrypt.compare(password, user.password_hash);
-      if (!match) return res.status(400).json({ error: 'Invalid email or password' });
+
+      if (DEV_PASSWORDLESS_LOGIN) {
+        console.warn(`⚠️ [auth] PASSWORDLESS LOGIN enabled; bypassing password for ${email}`);
+      } else {
+        const match = await bcrypt.compare(password, user.password_hash);
+        if (!match) return res.status(400).json({ error: 'Invalid email or password' });
+      }
 
       req.session.userId = user.id;
       return res.status(200).json({ id: user.id, name: user.name, role: user.role });
@@ -171,6 +193,7 @@ router.post('/login', async (req, res) => {
     return res.status(500).json({ error: 'Login failed' });
   }
 });
+
 
 // ===================== PASSWORD RESET (unchanged) =====================
 const passwordResetCodes = new Map(); // key = email, value = code

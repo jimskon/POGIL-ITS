@@ -109,16 +109,21 @@ export default function CourseActivitiesPage() {
                 <tr key={activity.activity_id}>
                   <td>{title}</td>
                   <td>
-                    {user?.role === 'student' && activity.is_ready && !activity.hidden ? (
+                    {user?.role === 'student' && activity.instance_id && !activity.hidden ? (
 
                       (() => {
-                        const isSubmitted = !!activity.submitted_at;
+                        //const isSubmitted = !!activity.submitted_at;
+                        const isComplete = !!activity.is_complete;
+
                         return (
                           <Button
-                            variant={isSubmitted ? 'primary' : 'success'}
+                            //variant={isSubmitted ? 'primary' : 'success'}
+                            variant={isComplete ? 'primary' : 'success'}
+
                             onClick={() => handleDoActivity(activity)}
                           >
-                            {isSubmitted ? 'Review' : 'Start'}
+                            {/* {isSubmitted ? 'Review' : 'Start'} */}
+                            {isComplete ? 'Review' : 'Start'}
                           </Button>
                         );
                       })()
