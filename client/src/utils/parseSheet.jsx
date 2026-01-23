@@ -172,9 +172,9 @@ export default function FileBlock({
     }
 
     // 👇 NEW: notify parent so it can broadcast / persist
-    if (onFileChange) {
-      onFileChange(fileKey ?? `file:${filename}`, updated, { filename });
-    }
+    //if (onFileChange) {
+    //  onFileChange(fileKey ?? `file:${filename}`, updated, { filename });
+    //}
   };
 
   // TAB inserts tab; ENTER auto-indents
@@ -532,6 +532,7 @@ export function parseSheetToBlocks(lines, options = {}) {
         // ALSO append to canonical codeBlocks with a provisional entry (content set on \endcpp)
         const nextIndex =
           (currentQuestion.codeBlocks?.length || 0) + 1;
+          if (!currentQuestion.codeBlocks) currentQuestion.codeBlocks = [];
         currentQuestion.codeBlocks.push({
           lang: 'cpp',
           index: nextIndex,
@@ -1161,12 +1162,12 @@ export function renderBlocks(blocks, options = {}) {
         <div key={`file-wrap-${filename}-${index}`} className="mb-3">
           <FileBlock
             filename={filename}
-            fileKey={keyForDb}                 // ✅ NEW
+            //fileKey={keyForDb}                 
             initialContent={effectiveContent}
             fileContents={canonicalContents}
             setFileContents={setFileContents}
             editable={canEdit}
-            onFileChange={onFileChange}        // ✅ NEW (wired through)
+            //onFileChange={onFileChange}       
           />
         </div>
       );
