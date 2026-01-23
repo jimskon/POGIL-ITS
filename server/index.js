@@ -22,8 +22,8 @@ const allowedOrigins = new Set([
   "https://colearn-ai.com",
   "https://www.colearn-ai.com",
   "https://jimskon.com",
-  "https://csits.kenyon.edu"
-
+  "https://csits.kenyon.edu",
+  "https://csdev.kenyon.edu"
 ]);
 
 app.use(cors({

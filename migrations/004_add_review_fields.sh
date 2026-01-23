@@ -27,10 +27,9 @@ echo "--------------"
 
 mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" <<'EOF'
 ALTER TABLE activity_instances
-  ADD COLUMN IF NOT EXISTS submitted_at DATETIME NULL AFTER updated_at,
-  ADD COLUMN IF NOT EXISTS graded_at DATETIME NULL AFTER submitted_at,
-  ADD COLUMN IF NOT EXISTS review_complete TINYINT(1) NOT NULL DEFAULT 0 AFTER graded_at,
-  ADD COLUMN IF NOT EXISTS reviewed_at DATETIME NULL AFTER review_complete;
+  ADD COLUMN IF NOT EXISTS submitted_at DATETIME NULL COMMENT 'When the instance was finally submitted',
+  ADD COLUMN IF NOT EXISTS graded_at DATETIME NULL,
+  ADD COLUMN IF NOT EXISTS review_complete TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS reviewed_at DATETIME NULL;
 EOF
-
 echo "✅ Migration complete: submitted_at, graded_at, review_complete, reviewed_at ensured on activity_instances"
