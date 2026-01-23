@@ -134,6 +134,50 @@ export default function RunActivityPage({
   setActiveStudentId,
 }) {
   const dirtyKeysRef = useRef(new Set());
+  // Tracks which base questions have been edited since last AI evaluation.
+  // Prevents loadActivity() from rehydrating stale suggestions while student is revising.
+  const dirtyTextQidsRef = useRef(new Set());
+
+  function baseQidFromResponseKey(key) {
+    const k = String(key || '');
+
+    // ignore group state + meta keys
+    if (/^\d+state$/i.test(k)) return null;
+    if (/(?:^|[^A-Za-z0-9])AF$/i.test(k)) return null;
+    if (/(?:^|[^A-Za-z0-9])F\d+$/i.test(k)) return null;
+    if (/(?:^|[^A-Za-z0-9])FA\d+$/i.test(k)) return null;
+    if (/(?:^|[^A-Za-z0-9])S$/i.test(k)) return null; // qidS
+
+    // candidate qid is leading "<digits><letters>" like "2a", "12ab"
+    const m = k.match(/^(\d+[a-z]+)/i);
+    if (!m) return null;
+    const qid = m[1].toLowerCase();
+
+    // Only treat as a base-answer update if this key is for that question
+    if (k === qid) return qid;
+    if (k.startsWith(`${qid}table`)) return qid;
+    if (k.startsWith(`${qid}output`)) return qid;
+    if (k.startsWith(`${qid}code`)) return qid;
+
+    return null;
+  }
+
+
+  function clearTextSuggestionForQid(qid) {
+    setTextFeedbackShown((prev) => {
+      const next = { ...prev };
+      delete next[qid];
+      return next;
+    });
+
+    // optional but safe if anything still uses followupsShown for text
+    setFollowupsShown((prev) => {
+      const next = { ...prev };
+      delete next[qid];
+      return next;
+    });
+  }
+
   const [lastEditTs, setLastEditTs] = useState(0);
   const { instanceId } = useParams();
   const location = useLocation();
@@ -629,17 +673,55 @@ export default function RunActivityPage({
     if (!socket) return;
 
     const handleUpdate = ({ responseKey, value, followupPrompt, answeredBy }) => {
+      // Ignore our own echoes
       if (answeredBy && String(answeredBy) === String(user?.id)) return;
 
-      // Just mirror base text answers (no more FA1 special-casing)
+      // Always mirror the updated response into prefill
       setExistingAnswers((prev) => ({
         ...prev,
         [responseKey]: {
-          ...prev[responseKey],
+          ...(prev[responseKey] || {}),
           response: value,
           type: 'text',
         },
       }));
+
+      // ✅ IMPORTANT: Only update/clear the yellow AI prompt on observers
+      // when we receive updates to the AI state keys themselves.
+      //
+      // Base answer typing (qid, table cells, etc) must NOT clear the prompt.
+
+      // If the server/active student pushes the suggestion text key (e.g., "2aF1")
+      const mF1 = String(responseKey || '').match(/^(.*)F1$/);
+      if (mF1) {
+        const qid = mF1[1];
+        const txt = String(value ?? '').trim();
+
+        setTextFeedbackShown((prev) => {
+          const next = { ...prev };
+          if (txt) next[qid] = txt;
+          else delete next[qid];
+          return next;
+        });
+        return;
+      }
+
+      // If the server/active student pushes the AI flag (e.g., "2aAF")
+      const mAF = String(responseKey || '').match(/^(.*)AF$/);
+      if (mAF) {
+        const qid = mAF[1];
+        const af = String(value ?? '').trim().toLowerCase();
+
+        // When resolved (or anything not "active"), the yellow prompt should disappear for observers
+        if (af !== 'active') {
+          setTextFeedbackShown((prev) => {
+            const next = { ...prev };
+            delete next[qid];
+            return next;
+          });
+        }
+        return;
+      }
     };
 
     socket.on('response:update', handleUpdate);
@@ -679,6 +761,7 @@ export default function RunActivityPage({
       socket.off('feedback:update');
     };
   }, [socket, groups, user?.id]);
+
 
   useEffect(() => {
     if (!isActive || !user?.id || !instanceId) return;
@@ -790,47 +873,47 @@ export default function RunActivityPage({
     autoSubmitted,
   ]);*/
 
-useEffect(() => {
-  if (!isTestMode || !testWindow) {
-    setTestLockState({ lockedBefore: false, lockedAfter: false, remainingSeconds: null });
-    setTimeExpired(false);
-    return;
-  }
-
-  const { start, end } = testWindow;
-
-  const tick = () => {
-    const now = new Date();
-    const isSubmittedNow = !!activity?.submitted_at;   // ✅ not stale
-
-    let lockedBefore = false;
-    let lockedAfter = isSubmittedNow;                  // ✅ DB truth only
-    let remainingSeconds = 0;
-
-    if (!isSubmittedNow) {
-      if (now < start) {
-        lockedBefore = true;
-        remainingSeconds = Math.max(0, Math.floor((start.getTime() - now.getTime()) / 1000));
-      } else {
-        lockedBefore = false;
-        remainingSeconds = Math.max(0, Math.floor((end.getTime() - now.getTime()) / 1000));
-      }
-    } else {
-      lockedBefore = false;
-      remainingSeconds = 0;
+  useEffect(() => {
+    if (!isTestMode || !testWindow) {
+      setTestLockState({ lockedBefore: false, lockedAfter: false, remainingSeconds: null });
+      setTimeExpired(false);
+      return;
     }
 
-    setTestLockState({ lockedBefore, lockedAfter, remainingSeconds });
+    const { start, end } = testWindow;
 
-    // ✅ derive expiration solely from remainingSeconds + submitted state
-    const expiredNow = !isSubmittedNow && !lockedBefore && remainingSeconds === 0;
-    setTimeExpired(expiredNow);
-  };
+    const tick = () => {
+      const now = new Date();
+      const isSubmittedNow = !!activity?.submitted_at;   // ✅ not stale
 
-  tick();
-  const id = setInterval(tick, 1000);
-  return () => clearInterval(id);
-}, [isTestMode, testWindow, activity?.submitted_at]);
+      let lockedBefore = false;
+      let lockedAfter = isSubmittedNow;                  // ✅ DB truth only
+      let remainingSeconds = 0;
+
+      if (!isSubmittedNow) {
+        if (now < start) {
+          lockedBefore = true;
+          remainingSeconds = Math.max(0, Math.floor((start.getTime() - now.getTime()) / 1000));
+        } else {
+          lockedBefore = false;
+          remainingSeconds = Math.max(0, Math.floor((end.getTime() - now.getTime()) / 1000));
+        }
+      } else {
+        lockedBefore = false;
+        remainingSeconds = 0;
+      }
+
+      setTestLockState({ lockedBefore, lockedAfter, remainingSeconds });
+
+      // ✅ derive expiration solely from remainingSeconds + submitted state
+      const expiredNow = !isSubmittedNow && !lockedBefore && remainingSeconds === 0;
+      setTimeExpired(expiredNow);
+    };
+
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [isTestMode, testWindow, activity?.submitted_at]);
 
 
   if (loading) {
@@ -994,27 +1077,29 @@ useEffect(() => {
         return merged;
       });
 
-      // 3) Restore text AI guidance from saved F1 entries (e.g., "2aF1" → question "2a"),
-      //    but only if we're NOT in "requirements-only" mode.
+      // 3) Restore text AI guidance, but ONLY if AF says it's active.
       if (!isRequirementsOnly) {
         const restoredTextFeedback = {};
 
-        for (const [key, entry] of Object.entries(answersData)) {
-          if (!key.endsWith('F1')) continue;      // keys like "2aF1"
-          const baseQid = key.slice(0, -2);       // "2aF1" → "2a"
+        for (const [key, entry] of Object.entries(answersData || {})) {
+          if (!key.endsWith('F1')) continue;        // "2aF1"
+          const qid = key.slice(0, -2);             // "2a"
+          // ✅ Don't resurrect stale suggestions while student is actively revising locally
+          if (dirtyTextQidsRef.current.has(qid)) continue;
           const text = (entry?.response || '').trim();
-          if (text) {
-            restoredTextFeedback[baseQid] = text;
+          if (!text) continue;
+
+          const afRaw = answersData[`${qid}AF`]?.response;
+          const af = String(afRaw ?? 'active').trim().toLowerCase(); // default active
+
+          if (af === 'active') {
+            restoredTextFeedback[qid] = text;
           }
         }
 
-        if (Object.keys(restoredTextFeedback).length > 0) {
-          setTextFeedbackShown((prev) => ({
-            ...prev,
-            ...restoredTextFeedback,
-          }));
-        }
+        setTextFeedbackShown((prev) => ({ ...prev, ...restoredTextFeedback }));
       }
+
 
       // 4) Restore stored follow-up *answers* (e.g., "2aFA1"), if you ever use them
       const restoredFollowups = {};
@@ -1519,6 +1604,24 @@ useEffect(() => {
     return { answers, questions };
   }
 
+  function emitTextAIState(qid, { f1, af }) {
+    if (!socket || !instanceId) return;
+
+    // Broadcast as normal response updates so observers’ existing handler picks it up
+    socket.emit('response:update', {
+      instanceId,
+      responseKey: `${qid}F1`,
+      value: f1 ?? '',
+      answeredBy: user.id,
+    });
+
+    socket.emit('response:update', {
+      instanceId,
+      responseKey: `${qid}AF`,
+      value: af ?? '',
+      answeredBy: user.id,
+    });
+  }
 
 
   async function handleSubmit(forceOverride = false) {
@@ -1550,7 +1653,7 @@ useEffect(() => {
     // Non-blocking sync of visible code edits (no AI call here)
     // In test mode this now syncs *all* code boxes.
     // In learning mode it syncs current group only.
-    const codeTextareas = container.querySelectorAll('textarea[id^="sk-code-"]');
+    const codeTextareas = container.querySelectorAll('textarea[data-response-key]');
     codeTextareas.forEach((textarea) => {
       const responseKey = textarea.getAttribute('data-response-key');
       const currentCode = (textarea.value || '').trim();
@@ -1841,7 +1944,7 @@ useEffect(() => {
       }
 
       // Save the main answer (text or table) to DB payload
-      answers[qid] = baseAnswer || tableMarkdown;
+      answers[qid] = aiInput;   // saves text OR table snapshot consistently
 
       // ---- AI suggestion gating ----
       let suggestion = textFeedbackShown[qid] || null;
@@ -1861,14 +1964,21 @@ useEffect(() => {
         if (aiSuggestion && aiSuggestion.trim()) {
           suggestion = aiSuggestion.trim();
 
-          setTextFeedbackShown((prev) => ({
-            ...prev,
-            [qid]: suggestion,
-          }));
+          setTextFeedbackShown((prev) => ({ ...prev, [qid]: suggestion }));
 
+          // Always include F1/AF in the group payload so DB is consistent
+          answers[`${qid}F1`] = suggestion;
+          answers[`${qid}AF`] = 'active';
+
+          // Optional legacy persistence path (fine to keep)
           if (!isRequirementsOnly) {
             await saveResponse(instanceId, `${qid}F1`, suggestion);
           }
+
+          // ✅ Broadcast so observers update immediately
+          emitTextAIState(qid, { f1: suggestion, af: 'active' });
+
+          dirtyTextQidsRef.current.delete(qid);
         } else {
           suggestion = null;
 
@@ -1878,12 +1988,20 @@ useEffect(() => {
             return next;
           });
 
+          answers[`${qid}F1`] = '';
+          answers[`${qid}AF`] = 'resolved';
+
           if (!isRequirementsOnly) {
             await saveResponse(instanceId, `${qid}F1`, '');
           }
-        }
-      }
 
+          // ✅ Broadcast so observers clear immediately
+          emitTextAIState(qid, { f1: '', af: 'resolved' });
+
+          dirtyTextQidsRef.current.delete(qid);
+        }
+ 
+      } // END text/table AI gating
 
 
       // ---- Completion for this question ----
@@ -1892,7 +2010,8 @@ useEffect(() => {
       if (suggestion) {
         unanswered.push(`${qid} (AI feedback)`);
       }
-    }
+    } // END for each block
+
 
     // ---- completion logic ----
     const qBlocks = blocks.filter((b) => b.type === 'question');
@@ -1914,6 +2033,9 @@ useEffect(() => {
       const qid = `${b.groupId}${b.id}`;
       if (isCodeOnlyMap[qid]) return false;
 
+      const af = String(
+        answers[`${qid}AF`] ?? existingAnswers[`${qid}AF`]?.response ?? ''
+      ).trim().toLowerCase();
       const suggestion = textFeedbackShown[qid];
 
       const status = normalizeStatus(
@@ -1921,7 +2043,7 @@ useEffect(() => {
       );
 
       // Pending if there is an AI suggestion and the question isn't marked complete
-      return !!suggestion && status !== 'complete';
+      return (af === 'active' || !!suggestion) && status !== 'complete';
     });
 
     const pendingCodeGates = qBlocks.some((b) => {
@@ -1976,7 +2098,7 @@ useEffect(() => {
         msgParts.push(
           'There are AI suggestions (yellow boxes) for one or more questions. ' +
           'You can revise your answers and submit again, or click ' +
-          '"Continue without fixing AI feedback" to move on.'
+          '"Continue without addressing AI feedback" to move on.'
         );
       }
 
@@ -1991,7 +2113,7 @@ useEffect(() => {
         msgParts.push('There are still items to review in this group.');
       }
 
-      alert(msgParts.join(' '));
+      //alert(msgParts.join(' '));
       setIsSubmitting(false);
       return;
     }
@@ -2002,7 +2124,7 @@ useEffect(() => {
       (pendingBase || pendingTextFollowups || pendingCodeGates)
     ) {
       alert(
-        'You chose to continue without fixing AI feedback. ' +
+        'You chose to continue without addressing AI feedback. ' +
         'Your instructor may review this later.'
       );
     }
@@ -2056,7 +2178,7 @@ useEffect(() => {
     } finally {
       setIsSubmitting(false);
     }
-  }
+  } // END handleSubmit
 
   // Instructor override: save edited per-question scores & feedback
   async function handleSaveQuestionScores(qid, local) {
@@ -2555,15 +2677,23 @@ useEffect(() => {
                   localCode,
                   onLocalCodeChange: updateLocalCode,
                   onTextChange: (responseKey, value) => {
-                    // no special FA1 handling; we store anything as text
+                    const qid = baseQidFromResponseKey(responseKey);
+
+                    // Mark this question as "being revised" so loadActivity won't rehydrate stale F1
+                    if (qid) dirtyTextQidsRef.current.add(qid);
+
+                    // Immediately hide the old AI suggestion when they start addressing it
+                    if (qid) clearTextSuggestionForQid(qid);
+
                     setExistingAnswers((prev) => ({
                       ...prev,
                       [responseKey]: {
-                        ...prev[responseKey],
+                        ...(prev[responseKey] || {}),
                         response: value,
                         type: 'text',
                       },
                     }));
+
                     if (isActive && socket) {
                       socket.emit('response:update', {
                         instanceId,
@@ -2572,8 +2702,10 @@ useEffect(() => {
                         answeredBy: user.id,
                       });
                     }
+
                     setLastEditTs(Date.now());
                   },
+
                 });
 
                 // If not test mode or not a question block, just return it
@@ -2641,7 +2773,7 @@ useEffect(() => {
                         handleSubmit(true);
                       }}
                     >
-                      Continue without fixing AI feedback
+                      Continue without addressing AI feedback
                     </Button>
                   )}
                 </div>
