@@ -145,6 +145,10 @@ export default function ActivityPythonBlock({
   };
 
   const runPython = () => {
+    if (broadcastTimerRef.current) {
+      clearTimeout(broadcastTimerRef.current);
+      broadcastTimerRef.current = null;
+    }
     if (editable && code !== savedCode) {
       sendUpstream(code, { broadcastOnly: false });
       setSavedCode(code);
@@ -155,7 +159,7 @@ export default function ActivityPythonBlock({
     }
 
     const finalCode = buildMergedCode();        // 👈 merged harness + student code
-    const currentFiles = { ...fileContents };
+    //const currentFiles = { ...fileContents };
 
     runSkulptCode({
       code: finalCode,          // ← use merged code
@@ -165,17 +169,7 @@ export default function ActivityPythonBlock({
       execLimit: timeLimit,
       turtleTargetId,
       turtleWidth,
-      turtleHeight,
-      onFileWrite: (filename, content) => {
-        if (socket && instanceId) {
-          socket.emit('file:update', {
-            instanceId,
-            fileKey: `file:${filename}`,
-            filename,
-            value: content,
-          });
-        }
-      },
+      turtleHeight
     });
   };
 

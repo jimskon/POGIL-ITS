@@ -123,6 +123,8 @@ export default function FileBlock({
   // NEW: refs to manage caret position
   const textareaRef = useRef(null);
   const pendingSelectionRef = useRef(null);
+  // Marks that the next fileContents change came from THIS textarea
+  const localEditRef = useRef(false);
 
   // Keep local in sync when parent state or initial content changes
   useEffect(() => {
@@ -130,6 +132,12 @@ export default function FileBlock({
       fileContents && Object.prototype.hasOwnProperty.call(fileContents, filename)
         ? fileContents[filename]
         : initialContent;
+
+    if (localEditRef.current) {
+      localEditRef.current = false;
+      return;
+    }
+
     setLocalValue(next);
   }, [fileContents, filename, initialContent]);
 
@@ -161,21 +169,27 @@ export default function FileBlock({
   }, [localValue]);
 
   const handleChange = (e) => {
-    const updated = e.target.value;
-    setLocalValue(updated);
+    if (!editable) return;
 
-    if (editable && setFileContents) {
+    const newValue = e.target.value;
+
+    // mark that the next parent sync is caused by THIS local edit
+    localEditRef.current = true;
+
+    setLocalValue(newValue);
+
+    if (setFileContents) {
       setFileContents(prev => ({
         ...prev,
-        [filename]: updated,
+        [filename]: newValue,
       }));
     }
 
-    // 👇 NEW: notify parent so it can broadcast / persist
-    //if (onFileChange) {
-    //  onFileChange(fileKey ?? `file:${filename}`, updated, { filename });
-    //}
+    if (onFileChange) {
+      onFileChange(filename, newValue);
+    }
   };
+
 
   // TAB inserts tab; ENTER auto-indents
   const handleKeyDown = (e) => {
@@ -532,7 +546,7 @@ export function parseSheetToBlocks(lines, options = {}) {
         // ALSO append to canonical codeBlocks with a provisional entry (content set on \endcpp)
         const nextIndex =
           (currentQuestion.codeBlocks?.length || 0) + 1;
-          if (!currentQuestion.codeBlocks) currentQuestion.codeBlocks = [];
+        if (!currentQuestion.codeBlocks) currentQuestion.codeBlocks = [];
         currentQuestion.codeBlocks.push({
           lang: 'cpp',
           index: nextIndex,
@@ -849,9 +863,13 @@ export function parseSheetToBlocks(lines, options = {}) {
     }
     if (trimmed.startsWith('\\followupprompt{')) {
       const m = trimmed.match(/\\followupprompt\{([\s\S]+?)\}/);
-      if (m && currentQuestion) currentQuestion.followups.push(format(m[1]));
+      if (m && currentQuestion) {
+        const raw = (m[1] || '').trim();
+        if (raw) currentQuestion.followups.push(format(raw));
+      }
       continue;
     }
+
 
     const textbfMatch = trimmed.match(/^\\textbf\{(.+?)\}$/);
     if (textbfMatch) {
@@ -925,7 +943,7 @@ export function parseSheetToBlocks(lines, options = {}) {
       const filename = parts[0] || '';
       const readonly = (parts[1]?.toLowerCase() === 'readonly');
 
-      console.log("📂 Starting file block for:", filename, "readonly:", readonly);
+      //console.log("📂 Starting file block for:", filename, "readonly:", readonly);
 
       currentFile = {
         type: 'file',
@@ -1167,7 +1185,7 @@ export function renderBlocks(blocks, options = {}) {
             fileContents={canonicalContents}
             setFileContents={setFileContents}
             editable={canEdit}
-            //onFileChange={onFileChange}       
+          //onFileChange={onFileChange}       
           />
         </div>
       );
@@ -1532,7 +1550,7 @@ export function renderBlocks(blocks, options = {}) {
                               }
                             }}
                             readOnly={!editable}
-                            data-question-id={cellKey}
+                            data-question-key={cellKey}
                           />
                         </td>
                       );
@@ -1811,7 +1829,7 @@ export function renderBlocks(blocks, options = {}) {
                                   }
                                 }}
                                 readOnly={!editable}
-                                data-question-id={cellKey}
+                                data-question-key={cellKey}
                               />
                             </td>
                           );
@@ -1855,7 +1873,7 @@ export function renderBlocks(blocks, options = {}) {
                       prefill?.[`${responseKey}S`] === 'complete' ||
                       prefill?.[`${responseKey}S`]?.response === 'complete'
                     }
-                    data-question-id={responseKey}
+                    data-question-key={responseKey}
                     className="mt-2"
                     style={{ resize: 'vertical' }}
                     onChange={(e) => {

@@ -22,7 +22,6 @@ const DEBUG_FILES = false;
 const PAGE_TAG = 'RUN';
 
 
-
 // Map short role keys to full names
 const roleLabels = {
   qc: 'Quality Control',
@@ -30,18 +29,11 @@ const roleLabels = {
 
 // Normalize question / group status strings
 const normalizeStatus = (raw) =>
-  raw === 'completed' ? 'complete' : (raw || 'inprogress');
+  raw === 'complete' ? 'complete' : (raw || 'inprogress');
+
 
 function isNoAI(val) {
   return String(val ?? '').trim().toLowerCase() === 'none';
-}
-
-// NEW: helper — grab current code textarea values for a question id prefix (qid like "2c")
-function getCodeTextareaValues(container, qid) {
-  const tAs = container.querySelectorAll(
-    `textarea[data-response-key^="${qid}code"]`
-  );
-  return Array.from(tAs).map((ta) => (ta.value || '').trim());
 }
 
 // Infer lang for a code cell like "2acode1" by looking up the matching question block.
@@ -65,6 +57,8 @@ function getLangForResponseKey(responseKey, groups) {
   if (Array.isArray(found.cppBlocks) && found.cppBlocks.length > 0) return 'cpp';
   if (Array.isArray(found.pythonBlocks) && found.pythonBlocks.length > 0)
     return 'python';
+  if (Array.isArray(found.turtleBlocks) && found.turtleBlocks.length > 0) return 'python';
+
 
   // generic blocks with an explicit lang field
   if (Array.isArray(found.codeBlocks) && found.codeBlocks.length > 0) {
@@ -72,6 +66,14 @@ function getLangForResponseKey(responseKey, groups) {
     if (lang) return lang;
   }
   return 'python';
+}
+
+function dbg(label, obj) {
+  try {
+    console.log(`[RUNDBG] ${label}`, JSON.parse(JSON.stringify(obj)));
+  } catch {
+    console.log(`[RUNDBG] ${label}`, obj);
+  }
 }
 
 function getQuestionText(block, qid) {
@@ -84,11 +86,7 @@ function getQuestionText(block, qid) {
   ].filter(Boolean);
   const raw =
     candidates.find((s) => String(s).trim().length > 0) || `Question ${qid}`;
-  return String(raw)
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
-    .replace(/<\/?[A-Za-z][A-Za-z0-9-]*(\s[^<>]*?)?>/g, '')
-    .trim();
+  return stripHtml(raw).trim()
 }
 
 function detectLanguageFromCode(code = '') {
@@ -105,15 +103,18 @@ function detectLanguageFromCode(code = '') {
 }
 
 function isCodeOnlyByBlock(block) {
-  const hasText = !!block?.hasTextResponse;
-  const hasTable = !!block?.hasTableResponse;
   const anyCode =
     (block?.pythonBlocks?.length || 0) +
     (block?.cppBlocks?.length || 0) +
-    (block?.codeBlocks?.length || 0) >
-    0;
+    (block?.turtleBlocks?.length || 0) +
+    (block?.codeBlocks?.length || 0) > 0;
+
+  const hasText = !!block?.hasTextResponse;
+  const hasTable = !!block?.hasTableResponse;
+
   return anyCode && !hasText && !hasTable;
 }
+
 
 // NEW: pretty formatting for countdown
 function formatRemainingSeconds(sec) {
@@ -125,6 +126,13 @@ function formatRemainingSeconds(sec) {
   return `${m}m ${s}s`;
 }
 
+function stripHtml(s = '') {
+  return String(s)
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<\/?[A-Za-z][A-Za-z0-9-]*(\s[^<>]*?)?>/g, '');
+}
+
 export default function RunActivityPage({
   setRoleLabel,
   setStatusText,
@@ -133,34 +141,37 @@ export default function RunActivityPage({
   activeStudentId,
   setActiveStudentId,
 }) {
+  const codeByKeyRef = useRef(Object.create(null));
+
   const dirtyKeysRef = useRef(new Set());
   // Tracks which base questions have been edited since last AI evaluation.
   // Prevents loadActivity() from rehydrating stale suggestions while student is revising.
   const dirtyTextQidsRef = useRef(new Set());
 
   function baseQidFromResponseKey(key) {
-    const k = String(key || '');
+    const k = String(key || '').toLowerCase();
 
-    // ignore group state + meta keys
-    if (/^\d+state$/i.test(k)) return null;
-    if (/(?:^|[^A-Za-z0-9])AF$/i.test(k)) return null;
-    if (/(?:^|[^A-Za-z0-9])F\d+$/i.test(k)) return null;
-    if (/(?:^|[^A-Za-z0-9])FA\d+$/i.test(k)) return null;
-    if (/(?:^|[^A-Za-z0-9])S$/i.test(k)) return null; // qidS
+    // group state key: "1state", "12state"
+    if (/^\d+state$/.test(k)) return null;
 
-    // candidate qid is leading "<digits><letters>" like "2a", "12ab"
-    const m = k.match(/^(\d+[a-z]+)/i);
-    if (!m) return null;
-    const qid = m[1].toLowerCase();
+    // AI / follow-up / state keys for a question:
+    // 2aAF, 2aF1, 2aFA1, 2aS
+    if (/^\d+[a-z]+af$/.test(k)) return null;
+    if (/^\d+[a-z]+f\d+$/.test(k)) return null;
+    if (/^\d+[a-z]+fa\d+$/.test(k)) return null;
+    if (/^\d+[a-z]+s$/.test(k)) return null;
 
-    // Only treat as a base-answer update if this key is for that question
-    if (k === qid) return qid;
-    if (k.startsWith(`${qid}table`)) return qid;
-    if (k.startsWith(`${qid}output`)) return qid;
-    if (k.startsWith(`${qid}code`)) return qid;
+    // base qid: "2a", "12ab"
+    const base = k.match(/^(\d+[a-z]+)$/);
+    if (base) return base[1];
+
+    // table/output/code keys
+    const m = k.match(/^(\d+[a-z]+)(table|output|code)\d*/);
+    if (m) return m[1];
 
     return null;
   }
+
 
 
   function clearTextSuggestionForQid(qid) {
@@ -200,6 +211,16 @@ export default function RunActivityPage({
   const [activeStudentName, setActiveStudentName] = useState('');
   const [preamble, setPreamble] = useState([]);
   const [existingAnswers, setExistingAnswers] = useState({});
+  const getLatestCode = (key) => {
+    // IMPORTANT: return null/undefined when missing, not ''
+    if (Object.prototype.hasOwnProperty.call(codeByKeyRef.current, key)) {
+      return codeByKeyRef.current[key];
+    }
+    if (existingAnswers?.[key]?.response != null) {
+      return existingAnswers[key].response;
+    }
+    return null;
+  };
   const [skulptLoaded, setSkulptLoaded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [textFeedbackShown, setTextFeedbackShown] = useState({});
@@ -358,31 +379,6 @@ export default function RunActivityPage({
     console.log('[RUN] testWindow:', testWindow);
   }, [testWindow]);
 
-  useEffect(() => {
-    if (!socket || !instanceId) return;
-
-    const handleFileUpdate = ({ instanceId: msgId, filename, value }) => {
-      if (String(msgId) !== String(instanceId)) return;
-
-      setFileContents((prev) => {
-        const updated = { ...prev, [filename]: value };
-        fileContentsRef.current = updated;
-
-        if (DEBUG_FILES) {
-          console.debug(
-            `[${PAGE_TAG}] socket file:update → ${filename}: ${(prev[filename] ?? '').length}→${(value ?? '').length}`
-          );
-        }
-
-        return updated;
-      });
-    };
-
-    socket.on('file:update', handleFileUpdate);
-    return () => {
-      socket.off('file:update', handleFileUpdate);
-    };
-  }, [socket, instanceId]);
 
   /* useEffect(() => {
      if (!isTestMode || !testWindow) {
@@ -471,62 +467,20 @@ export default function RunActivityPage({
   }, [isTestMode, groups, existingAnswers]);
 
   const handleUpdateFileContents = (updaterFn) => {
+    setLastEditTs(Date.now()); // ✅ prevents periodic loadActivity() from clobbering local file edits
     setFileContents((prev) => {
-      const before = Object.fromEntries(
-        Object.entries(prev).map(([k, v]) => [k, (v ?? '').length])
-      );
       const updated = updaterFn(prev);
-      const after = Object.fromEntries(
-        Object.entries(updated).map(([k, v]) => [k, (v ?? '').length])
-      );
-
-      const changed = Object.keys(after).filter((k) => before[k] !== after[k]);
-
-      if (DEBUG_FILES) {
-        console.debug(
-          `[${PAGE_TAG}] handleUpdateFileContents → changed:`,
-          changed.map((k) => `${k}: ${before[k] ?? 0}→${after[k]}`)
-        );
-      }
-
       fileContentsRef.current = updated;
-
-      // 🔄 Broadcast programmatic changes (Python writes)
-      if (isActive && socket && instanceId && changed.length > 0) {
-        changed.forEach((filename) => {
-          socket.emit('file:update', {
-            instanceId,
-            fileKey: `file:${filename}`,
-            filename,
-            value: updated[filename] ?? '',
-          });
-        });
-      }
-
-      // 💾 NEW: persist programmatic writes too
-      if (isActive && instanceId && user?.id && changed.length > 0) {
-        const answers = {};
-        changed.forEach((filename) => {
-          answers[`file:${filename}`] = updated[filename] ?? '';
-        });
-
-        fetch(`${API_BASE_URL}/api/responses/bulk-save`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            instanceId,
-            userId: user.id,
-            answers,
-          }),
-        }).catch(() => { });
-      }
-
       return updated;
     });
   };
 
+
+
   // For manual edits in <FileBlock> textareas
   const handleFileChange = (fileKey, newText, meta = {}) => {
+    setLastEditTs(Date.now()); // ✅ prevents periodic loadActivity() from clobbering local file edits
+
     const raw = meta.filename || fileKey || '';
     const filename = raw.startsWith('file:') ? raw.slice('file:'.length) : raw;
 
@@ -535,14 +489,6 @@ export default function RunActivityPage({
       fileContentsRef.current = updated;
       return updated;
     });
-
-    if (isActive && socket && instanceId) {
-      socket.emit('file:update', { instanceId, fileKey, filename, value: newText });
-    }
-
-    if (isActive && instanceId && user?.id) {
-      saveResponse(instanceId, `file:${filename}`, newText).catch(() => { });
-    }
   };
 
 
@@ -944,20 +890,6 @@ export default function RunActivityPage({
     });
   }
 
-  // ---------- TEXT UTILS ----------
-  function stripHtml(s = '') {
-    return String(s)
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
-      .replace(/<\/?[A-Za-z][A-Za-z0-9-]*(\s[^<>]*?)?>/g, '');
-  }
-
-  function cleanLines(s = '') {
-    return stripHtml(s)
-      .replace(/^\s+/gm, '')
-      .replace(/[ \t]+$/gm, '');
-  }
-
   async function loadActivity() {
     if (loadingRef.current) return;
     loadingRef.current = true;
@@ -1036,31 +968,6 @@ export default function RunActivityPage({
         return next;
       });
 
-
-      // 💾 NEW: hydrate fileContents from saved file:<filename> responses
-      const savedFiles = {};
-      for (const [key, entry] of Object.entries(answersData)) {
-        if (!key.startsWith('file:')) continue;
-        const filename = key.slice('file:'.length);
-        if (!filename) continue;
-        savedFiles[filename] = entry?.response ?? '';
-      }
-
-      if (Object.keys(savedFiles).length > 0) {
-        setFileContents((prev) => {
-          const updated = { ...prev, ...savedFiles };
-          fileContentsRef.current = updated;
-
-          if (DEBUG_FILES) {
-            console.debug(
-              `[${PAGE_TAG}] hydrate files from DB:`,
-              Object.entries(savedFiles).map(([k, v]) => `${k}(${(v ?? '').length})`)
-            );
-          }
-
-          return updated;
-        });
-      }
 
 
       // 2) Restore code feedback (per-code-cell feedback from backend)
@@ -1183,11 +1090,8 @@ export default function RunActivityPage({
             files[block.filename] = block.content || '';
           }
         }
-        setFileContents((prev) => {
-          const updated = { ...prev };
-          for (const [name, content] of Object.entries(files)) {
-            if (!(name in updated)) updated[name] = content ?? '';
-          }
+        setFileContents(() => {
+          const updated = { ...files };
           fileContentsRef.current = updated;
           return updated;
         });
@@ -1272,6 +1176,7 @@ export default function RunActivityPage({
     if (isTestMode) return null;
 
     const qid = `${questionBlock.groupId}${questionBlock.id}`;
+    const qText = getQuestionText(questionBlock, qid);
     if (
       isLockedFU(qid) ||
       isNoAI(questionBlock?.followups?.[0]) ||
@@ -1280,11 +1185,17 @@ export default function RunActivityPage({
       return null;
     }
 
-    const codeContext =
-      (questionBlock.pythonBlocks?.map((py) => py.content).join('\n\n')) || '';
+    const codeContext = [
+      ...(questionBlock.pythonBlocks || []).map((b) => b.content),
+      ...(questionBlock.turtleBlocks || []).map((b) => b.content),
+      ...(questionBlock.cppBlocks || []).map((b) => b.content),
+      ...(questionBlock.codeBlocks || []).map((b) => b.content),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
 
     const body = {
-      questionText: questionBlock.prompt,
+      questionText: qText,
       studentAnswer,
       sampleResponse: questionBlock.samples?.[0] || '',
       feedbackPrompt: questionBlock.feedback?.[0] || '',
@@ -1294,12 +1205,10 @@ export default function RunActivityPage({
         activitycontext: activity?.activitycontext || 'Unnamed Activity',
         studentLevel: activity?.studentlevel || 'intro',
       },
-      guidance: [
-        questionBlock.feedback?.[0] || '',
-        activity?.aicodeguidance || '',
-      ]
-        .filter(Boolean)
-        .join('\n'),
+
+      // ✅ activity-level policy only
+      guidance: activity?.aicodeguidance || '',
+
       codeContext,
     };
 
@@ -1337,7 +1246,7 @@ export default function RunActivityPage({
           if (cell.type === 'input') {
             const key = `${block.groupId}${block.id}table${t}cell${row}_${col}`;
             const val =
-              container.querySelector(`[data-question-id="${key}"]`)
+              container.querySelector(`[data-question-key="${key}"]`)
                 ?.value?.trim() || '';
             return val;
           }
@@ -1368,31 +1277,34 @@ export default function RunActivityPage({
     const totals = [
       block?.pythonBlocks?.length || 0,
       block?.cppBlocks?.length || 0,
+      block?.turtleBlocks?.length || 0,
       block?.codeBlocks?.length || 0,
     ];
-    let total = totals[0] + totals[1] + totals[2];
+    let total = totals[0] + totals[1] + totals[2] + totals[3];
 
     const result = [];
 
     if (total > 0) {
       for (let i = 0; i < total; i++) {
         const key = `${qid}code${i + 1}`;
-        const fromState = existingAnswers[key]?.response;
+        const fromMap = getLatestCode(key);
 
-        const authored =
-          block.pythonBlocks?.[i]?.content ??
-          block.cppBlocks?.[i]?.content ??
-          block.codeBlocks?.[i]?.content ??
+        const authoredBlocks = [
+          ...(block.pythonBlocks || []).map(b => ({ lang: 'python', content: b.content })),
+          ...(block.turtleBlocks || []).map(b => ({ lang: 'python', content: b.content })),
+          ...(block.cppBlocks || []).map(b => ({ lang: 'cpp', content: b.content })),
+          ...(block.codeBlocks || []).map(b => ({ lang: b.lang || 'python', content: b.content })),
+        ];
+
+        const authored = authoredBlocks[i]?.content || '';
+        const lang = authoredBlocks[i]?.lang || 'python';
+
+        const chosen =
+          (fromMap != null && String(fromMap).length ? fromMap : null) ??
+          authored ??
           '';
 
-        let fromDOM = '';
-        const ta = container?.querySelector(
-          `textarea[data-response-key="${key}"]`
-        );
-        if (ta && typeof ta.value === 'string') fromDOM = ta.value;
-
-        const chosen = fromState ?? fromDOM ?? authored ?? '';
-        result.push({ key, code: chosen, template: authored });
+        result.push({ key, lang, code: chosen, template: authored });
       }
       return result;
     }
@@ -1441,21 +1353,20 @@ export default function RunActivityPage({
   // Treat as code-only if there's code and no text/table inputs present.
   function isCodeOnlyQuestion(block, qid, container, existingAnswers) {
     // real text input?
-    const textInputEl = container?.querySelector(
-      `[data-question-id="${qid}"]`
-    );
+    const textInputEl = container?.querySelector(`textarea[data-response-key="${qid}"]`);
+
     const effectiveHasText = !!textInputEl;
 
     // any table input cells?
-    const tableInputEl = container?.querySelector(
-      `[data-question-id^="${qid}table"]`
-    );
+    const tableInputEl = container?.querySelector(`[data-response-key^="${qid}table"]`);
+
     const effectiveHasTable = !!tableInputEl;
 
     // parser-declared code?
     const anyParserCode =
       (block?.pythonBlocks?.length || 0) +
       (block?.cppBlocks?.length || 0) +
+      (block?.turtleBlocks?.length || 0) +
       (block?.codeBlocks?.length || 0) >
       0;
 
@@ -1479,8 +1390,8 @@ export default function RunActivityPage({
   // Prefer parser hints; otherwise fallback to simple detection
   function pickLangForBlock(block, studentCode) {
     if (Array.isArray(block?.cppBlocks) && block.cppBlocks.length) return 'cpp';
-    if (Array.isArray(block?.pythonBlocks) && block.pythonBlocks.length)
-      return 'python';
+    if (Array.isArray(block?.pythonBlocks) && block.pythonBlocks.length) return 'python';
+    if (Array.isArray(block?.turtleBlocks) && block.turtleBlocks.length) return 'python'; // ✅ fix
     const generic =
       Array.isArray(block?.codeBlocks) && block.codeBlocks[0]?.lang
         ? String(block.codeBlocks[0].lang).toLowerCase()
@@ -1499,7 +1410,8 @@ export default function RunActivityPage({
       const questionText = getQuestionText(block, qid);
 
       // 1) Base written/text response (if any)
-      const textEl = container.querySelector(`[data-question-id="${qid}"]`);
+      const textEl = container.querySelector(`textarea[data-response-key="${qid}"]`);
+
       const baseAnswer = textEl?.value?.trim() || '';
 
       // 2) Table inputs (if any)
@@ -1516,7 +1428,7 @@ export default function RunActivityPage({
               if (cell.type === 'input') {
                 const key = `${qid}table${t}cell${row}_${col}`;
                 const val =
-                  container.querySelector(`[data-question-id="${key}"]`)
+                  container.querySelector(`[data-question-key="${key}"]`)
                     ?.value?.trim() || '';
                 if (val !== '') {
                   answers[key] = val;
@@ -1582,7 +1494,7 @@ export default function RunActivityPage({
 
       // 5) Decide what becomes the "responseText" for grading
       //    Priority: written -> table -> output
-      const finalResponse = baseAnswer || tableMarkdown || outputText || '';
+      const finalResponse = baseAnswer || tableMarkdown || outputText || (codeCells.length ? '[code submitted]' : '');
 
       if (finalResponse) {
         // Store main response for this question under its qid
@@ -1646,21 +1558,23 @@ export default function RunActivityPage({
         return;
       }
 
+      dbg('handleSubmit start', {
+        isTestMode,
+        currentQuestionGroupIndex,
+        groupCount: groups.length,
+        editableContainerFound: !!container,
+        editableContainerAttr: container?.getAttribute?.('data-current-group'),
+      });
+
       const currentGroup = groups[currentQuestionGroupIndex];
       blocks = [currentGroup.intro, ...currentGroup.content];
+      dbg('handleSubmit blocks', {
+        blocksLen: blocks?.length,
+        qids: (blocks || [])
+          .filter(b => b?.type === 'question')
+          .map(b => `${b.groupId}${b.id}`),
+      });
     }
-
-    // Non-blocking sync of visible code edits (no AI call here)
-    // In test mode this now syncs *all* code boxes.
-    // In learning mode it syncs current group only.
-    const codeTextareas = container.querySelectorAll('textarea[data-response-key]');
-    codeTextareas.forEach((textarea) => {
-      const responseKey = textarea.getAttribute('data-response-key');
-      const currentCode = (textarea.value || '').trim();
-      if (responseKey) {
-        handleCodeChange(responseKey, currentCode, { __broadcastOnly: true });
-      }
-    });
 
 
     // ---------- TEST MODE PATH ----------
@@ -1717,12 +1631,81 @@ export default function RunActivityPage({
       if (block.type !== 'question') continue;
 
       const qid = `${block.groupId}${block.id}`;
+      const qText = getQuestionText(block, qid);
       const codeOnly = isCodeOnlyQuestion(
         block,
         qid,
         container,
         existingAnswers
       );
+
+      // ---- DEBUG: caller-side verdict + quick evidence ----
+      const dbgTextTA = container?.querySelector(
+        `textarea[data-response-key="${qid}"]`
+      );
+
+      const dbgCodeTAs = container?.querySelectorAll(
+        `textarea[data-response-key^="${qid}code"]`
+      );
+
+      console.log('[RUNDBG] codeOnly verdict', {
+        qid,
+        codeOnly,
+        blockFlags: {
+          hasTextResponse: !!block?.hasTextResponse,
+          hasTableResponse: !!block?.hasTableResponse,
+          pythonBlocks: block?.pythonBlocks?.length || 0,
+          turtleBlocks: block?.turtleBlocks?.length || 0,
+          cppBlocks: block?.cppBlocks?.length || 0,
+          codeBlocks: block?.codeBlocks?.length || 0,
+        },
+        domEvidence: {
+          hasTextTA: !!dbgTextTA,
+          textLen: dbgTextTA?.value?.trim()?.length || 0,
+          codeTAcount: dbgCodeTAs?.length || 0,
+          codeLens: dbgCodeTAs ? Array.from(dbgCodeTAs).map((t) => (t.value || '').length) : [],
+        },
+      });
+
+
+
+      const textEl = container.querySelector(
+        `textarea[data-response-key="${qid}"]`
+      );
+      const codeTAs = container.querySelectorAll(
+        `textarea[data-response-key^="${qid}code"]`
+      );
+      const tableEls = container.querySelectorAll(
+        `[data-response-key^="${qid}table"]`
+      );
+
+      const ansKeys = Object.keys(existingAnswers || {}).filter(k =>
+        k.startsWith(qid)
+      );
+      const refKeys = Object.keys(codeByKeyRef.current || {}).filter(k =>
+        k.startsWith(`${qid}code`)
+      );
+
+      dbg(`Q ${qid} presence`, {
+        hasTextEl: !!textEl,
+        textLen: textEl?.value?.trim()?.length || 0,
+        codeTAcount: codeTAs.length,
+        tableCount: tableEls.length,
+        ansKeys,
+        refKeys,
+        domCodePreview: Array.from(codeTAs).map(ta => ({
+          key: ta.getAttribute('data-response-key'),
+          len: (ta.value || '').length,
+          head: (ta.value || '').slice(0, 40),
+        })),
+        blockFlags: {
+          hasTextResponse: !!block?.hasTextResponse,
+          hasTableResponse: !!block?.hasTableResponse,
+          pythonBlocks: block?.pythonBlocks?.length || 0,
+          turtleBlocks: block?.turtleBlocks?.length || 0,
+        },
+      });
+
 
       // ---------- CODE-ONLY PATH ----------
       if (codeOnly) {
@@ -1776,51 +1759,142 @@ export default function RunActivityPage({
           continue;
         }
 
-        const qText = getQuestionText(block, qid);
-
-        const perQuestionGuide = [
-          cleanLines(block.feedback?.[0] || ''),
-          cleanLines(block.samples?.[0] || ''),
-        ]
-          .filter(Boolean)
-          .join('\n');
-
-        const activityGuide = [
-          activity?.aicodeguidance || '',
-          activity?.activitycontext || '',
-          `Student level: ${activity?.studentlevel || 'intro'}`,
-        ]
-          .filter(Boolean)
-          .join('\n');
-
-        const guidanceBlob = `${perQuestionGuide}\n---\n${activityGuide}`;
-
         const lang =
           detectLanguageFromCode(studentCode) ||
           pickLangForBlock(block, studentCode);
 
         try {
-          const aiRes = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              questionText: qText,
-              studentCode,
-              codeVersion: qid,
-              guidance: guidanceBlob,
-              lang,
-              isCodeOnly: true,
-            }),
+          console.log('[EVAL1] BEFORE FETCH', {
+            qid,
+            lang,
+            hasLeft45: studentCode.includes('left(45)'),
+            first120: studentCode.slice(0, 120),
+            codeLen: studentCode.length,
+          });
+          const evalUrl = `${API_BASE_URL}/api/ai/evaluate-code`;
+
+          const payload = {
+            questionText: qText,
+            studentCode,
+            codeVersion: qid,
+            lang,
+            isCodeOnly: true,
+
+            // question-level metadata (separate fields)
+            feedbackPrompt: block.feedback?.[0] || '',
+            sampleResponse: block.samples?.[0] || '',
+            followupPrompt: block.followups?.[0] || '',
+
+            // activity-level policy only
+            guidance: activity?.aicodeguidance || '',
+          };
+          const t0 = performance.now();
+          console.log('[EVAL1] FETCH start', {
+            qid,
+            evalUrl,
+            apiBase: API_BASE_URL,
+            payloadKeys: Object.keys(payload),
+            codeLen: studentCode?.length,
           });
 
-          if (!aiRes.ok) {
-            const errText = await aiRes.text();
-            throw new Error(
-              `evaluate-code ${aiRes.status}: ${errText.slice(0, 200)}`
-            );
+          const controller = new AbortController();
+          const timeoutMs = 20000;
+          const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+          let aiRes, rawText, data;
+
+          try {
+            aiRes = await fetch(evalUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+              signal: controller.signal,
+
+              // IMPORTANT if your server uses cookies/sessions:
+              credentials: 'include',
+            });
+
+            console.log('[EVAL1] FETCH response', {
+              qid,
+              status: aiRes.status,
+              ok: aiRes.ok,
+              ct: aiRes.headers.get('content-type'),
+              ms: Math.round(performance.now() - t0),
+            });
+
+            rawText = await aiRes.text();
+            console.log('[EVAL1] FETCH raw (first 300)', {
+              qid,
+              first300: (rawText || '').slice(0, 300),
+            });
+
+            if (!aiRes.ok) {
+              throw new Error(`evaluate-code ${aiRes.status}: ${(rawText || '').slice(0, 200)}`);
+            }
+
+
+            // ========================= DEBUG ==========================
+            let aiData = null;
+            try {
+              aiData = JSON.parse(rawText);
+            } catch (e) {
+              console.error('[EVAL1] AI JSON PARSE FAILED', {
+                qid,
+                error: e.message,
+                rawText,
+              });
+            }
+
+            console.log('[EVAL1] AI RESULT FULL', {
+              qid,
+              aiData,
+            });
+
+            console.log('[EVAL1] AI RESULT FIELDS', {
+              qid,
+              accepted: aiData?.accepted,
+              needsRevision: aiData?.needsRevision,
+              hasFeedback: !!aiData?.feedback,
+              feedbackPreview: aiData?.feedback?.slice?.(0, 120) ?? null,
+              followup: aiData?.followup ?? null,
+            });
+            // ========================= DEBUG ==========================
+
+            // Parse JSON *from text* so you can see what was returned if parsing fails
+            try {
+              data = rawText ? JSON.parse(rawText) : null;
+            } catch (e) {
+              console.error('[EVAL1] JSON parse failed', { qid, err: String(e) });
+              throw e;
+            }
+
+            console.log('[EVAL1] FETCH json keys', {
+              qid,
+              keys: data && typeof data === 'object' ? Object.keys(data) : data,
+            });
+          } catch (err) {
+            console.error('[EVAL1] FETCH ERROR', {
+              qid,
+              name: err?.name,
+              msg: err?.message,
+              aborted: err?.name === 'AbortError',
+              ms: Math.round(performance.now() - t0),
+            });
+
+            // Do NOT deadlock the activity. Pick a policy:
+            // (1) Treat AI as unavailable but continue:
+            data = { feedback: '(AI unavailable; continuing)', followup: '' };
+
+            // OR (2) Treat as incomplete and block progression:
+            // unanswered.push(`${qid} (AI eval failed)`);
+            // continue;
+          } finally {
+            clearTimeout(timeoutId);
+            console.log('[EVAL1] FETCH done', { qid, ms: Math.round(performance.now() - t0) });
           }
 
-          const data = await aiRes.json();
+          const needsRevision = !!data?.needsRevision; // ✅ real gate
+
           let feedback = String(data?.feedback ?? '').trim();
           let followup = String(data?.followup ?? '').trim();
 
@@ -1830,28 +1904,22 @@ export default function RunActivityPage({
           }
 
           const targetKey =
-            codeCells.find(
-              (c) => normalizeCode(c.code).length > 0
-            )?.key ||
+            codeCells.find((c) => normalizeCode(c.code).length > 0)?.key ||
             codeCells[0]?.key ||
             `${qid}code1`;
 
-          const nextAttempts = prevAttempts + 1;
+          // ✅ Only increment attempts when we actually need revision
+          const nextAttempts = needsRevision ? (prevAttempts + 1) : prevAttempts;
           answers[attemptsKey] = String(nextAttempts);
 
+          // Show feedback if present (praise or hint), but do NOT use it as a gate
           if (feedback) {
             setCodeFeedbackShown((prev) => ({ ...prev, [targetKey]: feedback }));
-
             setFollowupsShown((prev) => {
               const x = { ...prev };
               delete x[qid];
               return x;
             });
-
-            answers[`${qid}S`] =
-              nextAttempts >= 3 ? 'completed' : 'inprogress';
-            if (nextAttempts < 3)
-              unanswered.push(`${qid} (improve code)`);
 
             if (socket && instanceId) {
               socket.emit('feedback:update', {
@@ -1861,12 +1929,20 @@ export default function RunActivityPage({
                 followup: null,
               });
             }
-          } else {
-            answers[`${qid}S`] = 'completed';
+          }
 
-            codeCells.forEach(({ key }) => {
-              setCodeFeedbackShown((prev) => ({ ...prev, [key]: null }));
-            });
+          // ✅ Gate purely on needsRevision
+          if (needsRevision) {
+            answers[`${qid}S`] = 'inprogress';
+            unanswered.push(`${qid} (needs revision)`);
+          } else {
+            answers[`${qid}S`] = 'complete';
+
+            // optional: clear any old guidance for all cells (only if you want)
+            // codeCells.forEach(({ key }) => {
+            //   setCodeFeedbackShown((prev) => ({ ...prev, [key]: null }));
+            // });
+
             setFollowupsShown((prev) => {
               const x = { ...prev };
               delete x[qid];
@@ -1877,11 +1953,12 @@ export default function RunActivityPage({
               socket.emit('feedback:update', {
                 instanceId,
                 responseKey: targetKey,
-                feedback: null,
+                feedback: feedback || null, // keep praise visible if you want
                 followup: null,
               });
             }
           }
+
         } catch (err) {
           console.error('❌ AI code evaluation failed:', err);
           const msg = 'Couldn’t check your program. Try again.';
@@ -1895,7 +1972,8 @@ export default function RunActivityPage({
 
       // ---------- TEXT/TABLE PATH ----------
 
-      const el = container.querySelector(`[data-question-id="${qid}"]`);
+      const el = container.querySelector(`textarea[data-response-key="${qid}"]`);
+
       const baseAnswer = el?.value?.trim() || '';
       const tableMarkdown = buildMarkdownTableFromBlock(block, container);
 
@@ -1910,7 +1988,8 @@ export default function RunActivityPage({
               if (cell.type === 'input') {
                 const key = `${qid}table${t}cell${row}_${col}`;
                 const val =
-                  container.querySelector(`[data-question-id="${key}"]`)
+                  container.querySelector(`[data-response-key="${key}"]`)
+
                     ?.value?.trim() || '';
                 if (val !== '') {
                   answers[key] = val;
@@ -2000,12 +2079,12 @@ export default function RunActivityPage({
 
           dirtyTextQidsRef.current.delete(qid);
         }
- 
+
       } // END text/table AI gating
 
 
       // ---- Completion for this question ----
-      answers[`${qid}S`] = suggestion ? 'inprogress' : 'completed';
+      answers[`${qid}S`] = suggestion ? 'inprogress' : 'complete';
 
       if (suggestion) {
         unanswered.push(`${qid} (AI feedback)`);
@@ -2053,14 +2132,7 @@ export default function RunActivityPage({
       const status = normalizeStatus(
         answers[`${qid}S`] ?? existingAnswers[`${qid}S`]?.response
       );
-      if (status === 'complete') return false;
-
-      const attempts = Number(
-        answers[`${qid}attempts`] ??
-        existingAnswers[`${qid}attempts`]?.response ??
-        0
-      );
-      return attempts < 3;
+      return status !== 'complete';
     });
 
     // In "requirements-only" mode, AI feedback is advisory, not a gate
@@ -2081,7 +2153,7 @@ export default function RunActivityPage({
     const computedState =
       overrideThisGroup ||
         (!pendingBase && !effectiveTextPending && !effectiveCodePending)
-        ? 'completed'
+        ? 'complete'
         : 'inprogress';
 
     const stateKey = `${currentQuestionGroupIndex + 1}state`;
@@ -2119,7 +2191,7 @@ export default function RunActivityPage({
     }
 
     if (
-      computedState === 'completed' &&
+      computedState === 'complete' &&
       overrideThisGroup &&
       (pendingBase || pendingTextFollowups || pendingCodeGates)
     ) {
@@ -2241,6 +2313,27 @@ export default function RunActivityPage({
   }
 
   async function handleCodeChange(responseKey, updatedCode, meta = {}) {
+    const broadcastOnly = !!meta?.__broadcastOnly;
+
+    // ✅ A) single source of truth for code (NO DOM needed later)
+    codeByKeyRef.current[responseKey] = updatedCode;
+
+    // --- broadcast-only: just show observers; no dirty, no DB, no AI ---
+    if (broadcastOnly) {
+      if (!isActive) return; // only the active student broadcasts to others
+
+      socket?.emit('response:update', {
+        instanceId,
+        responseKey,
+        value: updatedCode,
+        answeredBy: user.id,
+      });
+
+      console.log('[EVAL] broadcastOnly call (expected on submit-sync)', { responseKey });
+      return;
+    }
+
+    // --- real typing/save path ---
     setLastEditTs(Date.now());
     dirtyKeysRef.current.add(responseKey);
 
@@ -2255,6 +2348,7 @@ export default function RunActivityPage({
       },
     }));
 
+    // broadcast the current value to observers (so they see the real edit too)
     socket?.emit('response:update', {
       instanceId,
       responseKey,
@@ -2262,30 +2356,23 @@ export default function RunActivityPage({
       answeredBy: user.id,
     });
 
-    // ✅ IMPORTANT:
-    // If the student types again, immediately clear any old code guidance so it
-    // doesn't "stick" while we wait for re-evaluation.
-    if (!meta?.__broadcastOnly) {
-      setCodeFeedbackShown((prev) => ({ ...prev, [responseKey]: null }));
-
-      const baseQid = String(responseKey).replace(/code\d+$/, '');
-      setFollowupsShown((prev) => {
-        const next = { ...prev };
-        delete next[baseQid];
-        return next;
-      });
-
-      socket?.emit('feedback:update', {
-        instanceId,
-        responseKey,
-        feedback: null,
-        followup: null,
-      });
-    }
-
-    if (meta?.__broadcastOnly) return;
+    // clear old code guidance immediately on new edits
+    setCodeFeedbackShown((prev) => ({ ...prev, [responseKey]: null }));
 
     const baseQid = String(responseKey).replace(/code\d+$/, '');
+    setFollowupsShown((prev) => {
+      const next = { ...prev };
+      delete next[baseQid];
+      return next;
+    });
+
+    socket?.emit('feedback:update', {
+      instanceId,
+      responseKey,
+      feedback: null,
+      followup: null,
+    });
+
     if (qidsNoFURef.current?.has(baseQid)) {
       socket?.emit('feedback:update', {
         instanceId,
@@ -2311,7 +2398,7 @@ export default function RunActivityPage({
     }
 
     try {
-      // Save code
+      // ✅ Save code
       await fetch(`${API_BASE_URL}/api/responses/code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2322,115 +2409,14 @@ export default function RunActivityPage({
           response: updatedCode,
         }),
       });
+
       dirtyKeysRef.current.delete(responseKey);
 
-      // NEW: no live guidance during tests
-      if (isTestMode) {
-        socket?.emit('feedback:update', {
-          instanceId,
-          responseKey,
-          feedback: null,
-          followup: null,
-        });
-        return;
-      }
+      // ✅ IMPORTANT CHANGE FOR YOUR GOALS:
+      // remove keystroke AI evaluation from here.
+      // (Periodic AI on heartbeat + AI on submit will handle it.)
+      return;
 
-      if (!updatedCode || !updatedCode.trim()) {
-        socket?.emit('feedback:update', {
-          instanceId,
-          responseKey,
-          feedback: null,
-          followup: null,
-        });
-        return;
-      }
-
-      const lang = getLangForResponseKey(responseKey, groups);
-
-      let perQuestionGuideLines = [cleanLines(meta?.feedbackPrompt || '')];
-      if (lang === 'python') {
-        perQuestionGuideLines.push(
-          'Environment constraint: f-strings are unavailable; do not suggest or use them.',
-          "Explicit override: Ignore spacing in prompts and around commas; do not request changes like 'remove an extra space' if the program meets the requirements."
-        );
-      }
-      const perQuestionGuide = perQuestionGuideLines
-        .filter(Boolean)
-        .join('\n');
-
-      const activityGuide = [
-        activity?.aicodeguidance || '',
-        activity?.activitycontext || '',
-        `Student level: ${activity?.studentlevel || 'intro'}`,
-      ]
-        .filter(Boolean)
-        .join('\n');
-
-      const guidanceBlob = `${perQuestionGuide}\n---\n${activityGuide}`;
-
-      const isCodeOnlyQ = !meta?.hasTextResponse && !meta?.hasTableResponse;
-
-      const qt =
-        meta?.questionText && meta.questionText.trim()
-          ? meta.questionText.trim()
-          : 'Write and run code.';
-
-      // ✅ Version stamp for THIS evaluation
-      const myVersion =
-        (codeVersionsRef.current[responseKey] =
-          (codeVersionsRef.current[responseKey] || 0) + 1);
-
-      const evalResp = await fetch(`${API_BASE_URL}/api/ai/evaluate-code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          questionText: qt,
-          studentCode: updatedCode,
-          codeVersion: myVersion, // ✅ send version
-          guidance: guidanceBlob,
-          isCodeOnly: isCodeOnlyQ,
-          lang,
-        }),
-      });
-
-      if (!evalResp.ok) {
-        return;
-      }
-
-      const data = await evalResp.json();
-
-      // ✅ Ignore stale responses (older AI result arriving after a newer edit)
-      if (codeVersionsRef.current[responseKey] !== myVersion) {
-        return;
-      }
-
-      let feedback = String(data?.feedback ?? '').trim();
-      let followup = String(data?.followup ?? '').trim();
-
-      if (!feedback && followup) {
-        feedback = followup;
-        followup = '';
-      }
-
-      if (feedback) {
-        setCodeFeedbackShown((prev) => ({ ...prev, [responseKey]: feedback }));
-      } else {
-        setCodeFeedbackShown((prev) => ({ ...prev, [responseKey]: null }));
-      }
-
-      const baseQid2 = String(responseKey).replace(/code\d+$/, '');
-      setFollowupsShown((prev) => {
-        const x = { ...prev };
-        delete x[baseQid2];
-        return x;
-      });
-
-      socket?.emit('feedback:update', {
-        instanceId,
-        responseKey,
-        feedback: feedback || null,
-        followup: null,
-      });
     } catch (err) {
       console.error('handleCodeChange failed:', err);
     }
@@ -2572,7 +2558,8 @@ export default function RunActivityPage({
             isTestMode &&
             isStudent &&
             !isSubmitted &&
-            !timeExpired;
+            !timeExpired &&
+            !testLockState.lockedBefore;
 
 
 
@@ -2581,7 +2568,7 @@ export default function RunActivityPage({
             : (isActive && isCurrent && !isComplete);
 
 
-          console.log('[RUN] group', index, {
+          /*console.log('[RUN] group', index, {
             stateKey,
             rawState,
             isComplete,
@@ -2590,7 +2577,7 @@ export default function RunActivityPage({
             isSubmitted,
             isActive,
             editable,
-          });
+          });*/
           // For students before start, hide groups completely
           //if (isTestMode && isStudent && testLockState.lockedBefore && !isInstructor) {
           //  return null;
@@ -2677,6 +2664,7 @@ export default function RunActivityPage({
                   localCode,
                   onLocalCodeChange: updateLocalCode,
                   onTextChange: (responseKey, value) => {
+                    dirtyKeysRef.current.add(responseKey);
                     const qid = baseQidFromResponseKey(responseKey);
 
                     // Mark this question as "being revised" so loadActivity won't rehydrate stale F1

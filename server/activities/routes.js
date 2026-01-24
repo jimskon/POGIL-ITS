@@ -52,7 +52,7 @@ router.get('/preview', async (req, res) => {
 // GET /activities/preview-doc?docUrl=...
 router.get('/preview-doc', async (req, res) => {
   const rawUrl = req.query.docUrl;
-  console.log("Previewing doc:", rawUrl);
+  //console.log("Previewing doc:", rawUrl);
 
   if (!rawUrl || rawUrl === 'undefined') {
     console.warn("📛 Missing or invalid docUrl:", rawUrl);
@@ -66,7 +66,7 @@ router.get('/preview-doc', async (req, res) => {
     if (!docId) {
       throw new Error("Could not extract documentId from URL");
     }
-    console.log("✅ Extracted docId:", docId);
+    //console.log("✅ Extracted docId:", docId);
   } catch (err) {
     console.error("📛 Invalid docUrl format:", rawUrl, err.message);
     return res.status(400).json({ error: 'Invalid docUrl format' });
