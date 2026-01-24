@@ -9,6 +9,6 @@ export default defineConfig({
     port: 3000
   },
   build: {
-    sourcemap: true,   // ✅ ADD THIS
+    //sourcemap: true,  // Enable if you need source maps for debugging
   },
 });
