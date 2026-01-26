@@ -50,15 +50,26 @@ export default function NavBar({ bgColor = "dark", fixed = false, statusText = "
 
         <Container>
           <Navbar.Brand
-            href="https://cs.jimskon.com/colearn-ai-collaborative-learning-with-ai-support/"
+            href="https://colearn-ai.com"
             target="_blank"
             rel="noopener noreferrer"
             className="d-flex align-items-center gap-2"
           >
-            <img src={`${import.meta.env.BASE_URL}images/SKON-logo.png`} alt="skön LLC Logo" style={{ height: 30 }} />
+            {/* SKON logo (unchanged) */}
+            <img
+              src={`${import.meta.env.BASE_URL}images/SKON-logo.png`}
+              alt="skön LLC Logo"
+              style={{ height: 30 }}
+            />
 
-            coLearn AI
+            {/* coLearn-AI navbar logo */}
+            <img
+              src={`${import.meta.env.BASE_URL}images/coLearnLogoWhite40.png`}
+              alt="coLearn-AI"
+              style={{ height: 30 }}
+            />
           </Navbar.Brand>
+
 
           <Navbar.Toggle aria-controls="coLearn-AI--navbar" />
           <Navbar.Collapse id="coLearn-AI--navbar">
