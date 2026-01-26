@@ -14,6 +14,37 @@ import {
 import { API_BASE_URL } from '../config';
 import { FaUserCheck, FaLaptop } from 'react-icons/fa';
 
+function normalizeStatus(raw) {
+  const s = String(raw ?? '').trim().toLowerCase();
+  return s === 'complete' ? 'complete' : 'inprogress';
+}
+
+function computeProgressFromAnswers(answers, totalGroups) {
+  // answers is the object returned by /api/activity-instances/:id/responses
+  // It’s keyed by responseKey, and each value looks like { response: "..." }
+  let completeCount = 0;
+
+  // Count consecutive complete states starting at 1
+  for (let i = 1; i <= (totalGroups || 9999); i++) {
+    const key = `${i}state`;
+    const raw = answers?.[key]?.response;
+    const status = normalizeStatus(raw);
+
+    if (status !== 'complete') break;
+    completeCount++;
+  }
+
+  // If we know totalGroups, we can declare completion
+  if (totalGroups && completeCount >= totalGroups) {
+    return { isComplete: true, label: 'Complete', currentIndex: totalGroups };
+  }
+
+  // Next group index is completeCount+1 (1-based)
+  const next = completeCount + 1;
+  return { isComplete: false, label: String(next), currentIndex: next };
+}
+
+
 export default function ViewGroupsPage() {
   const { courseId, activityId } = useParams();
   const location = useLocation();
@@ -44,7 +75,33 @@ export default function ViewGroupsPage() {
 
       setCourseName(data.courseName || incomingCourseName || '');
       setActivityTitle(data.activityTitle || '');
-      setGroups(data.groups);
+      // Enrich each group with progress derived from saved responses (1state, 2state, ...)
+      const enriched = await Promise.all(
+        data.groups.map(async (g) => {
+          try {
+            const ansRes = await fetch(
+              `${API_BASE_URL}/api/activity-instances/${g.instance_id}/responses`,
+              { credentials: 'include' }
+            );
+            const answers = await ansRes.json();
+
+            // total_groups might be on the group object or returned by your endpoint; handle both
+            const total = Number(g.total_groups || data.totalGroups || data.total_groups || 0) || null;
+
+            const p = computeProgressFromAnswers(answers, total);
+            return {
+              ...g,
+              __progressLabel: p.label,      // "1", "2", ...
+              __isComplete: p.isComplete,    // boolean
+            };
+          } catch (e) {
+            // If anything fails, fall back to whatever backend gave us
+            return { ...g, __progressLabel: String(g.progress ?? '?'), __isComplete: false };
+          }
+        })
+      );
+
+      setGroups(enriched);
     } catch (err) {
       console.error('❌ Error loading groups:', err);
       setError('Could not load groups.');
@@ -258,9 +315,9 @@ export default function ViewGroupsPage() {
                     <div>
                       Group {group.group_number} —{' '}
                       <strong className="ms-2">
-                        {group.progress === 'Complete'
+                        {group.__isComplete
                           ? '✅ Activity Complete'
-                          : `Question Group: ${group.progress}`}
+                          : `Question Group: ${group.__progressLabel}`}
                       </strong>
                     </div>
                     <div className="d-flex gap-2 mt-2 mt-sm-0 flex-wrap">

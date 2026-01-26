@@ -702,6 +702,8 @@ async function getInstancesForActivityInCourse(req, res) {
               group_number,
               active_student_id,
               total_groups,
+              completed_groups,
+              progress_status,
               test_start_at,
               test_duration_minutes,
               test_reopen_until,
@@ -743,26 +745,16 @@ async function getInstancesForActivityInCourse(req, res) {
         }
       }
 
-      const [responses] = await db.query(
-        `SELECT question_id, response FROM responses WHERE activity_instance_id = ?`,
-        [inst.instance_id]
-      );
-
-      let progress = '1';
       const totalGroups = inst.total_groups || 1;
 
-      let completedGroups = 0;
-      for (let i = 1; i <= totalGroups; i++) {
-        const state = responses.find(r => r.question_id === `${i}state`);
-        if (state?.response === 'completed') {
-          completedGroups++;
-        } else {
-          break;
-        }
+      let progress;
+      if (inst.progress_status === 'completed') {
+        progress = 'Complete';
+      } else {
+        const cg = Number.isFinite(Number(inst.completed_groups)) ? Number(inst.completed_groups) : 0;
+        // Clamp so UI never shows "N+1" past the end
+        progress = `${Math.min(cg + 1, totalGroups)}`;
       }
-
-      progress = completedGroups === totalGroups ? 'Complete' : `${completedGroups + 1}`;
-
       const roleLabels = { qc: 'Quality Control' };
       groups.push({
         instance_id: inst.instance_id,
