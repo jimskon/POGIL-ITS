@@ -4,12 +4,16 @@ import ActivityQuestionBlock from '../components/activity/ActivityQuestionBlock'
 import ActivityHeader from '../components/activity/ActivityHeader';
 import ActivityEnvironment from '../components/activity/ActivityEnvironment';
 import ActivityPythonBlock from '../components/activity/ActivityPythonBlock';
+import { makeResponseAttrs } from './responseDom';
+
 import { Form } from 'react-bootstrap';
 
 import { useState, useEffect, useRef } from 'react';;
 
 import ActivityCppBlock from '../components/activity/ActivityCppBlock';
 import { Alert } from 'react-bootstrap';
+
+
 
 
 // --- helpers ---
@@ -1542,16 +1546,15 @@ export function renderBlocks(blocks, options = {}) {
                         <td key={cellKey}>
                           <Form.Control
                             type="text"
+                            {...makeResponseAttrs({ key: cellKey, kind: "table", qid: responseKey })}
                             value={prefill?.[cellKey]?.response || ''}
                             onChange={(e) => {
                               const val = e.target.value;
-                              if (options.onTextChange) {
-                                options.onTextChange(cellKey, val);
-                              }
+                              options.onTextChange?.(cellKey, val);
                             }}
                             readOnly={!editable}
-                            data-question-key={cellKey}
                           />
+
                         </td>
                       );
                     } else {
@@ -1829,7 +1832,7 @@ export function renderBlocks(blocks, options = {}) {
                                   }
                                 }}
                                 readOnly={!editable}
-                                data-question-key={cellKey}
+                                data-response-key={cellKey}
                               />
                             </td>
                           );
@@ -1866,6 +1869,7 @@ export function renderBlocks(blocks, options = {}) {
                   <Form.Control
                     as="textarea"
                     rows={Math.max((block.responseLines || 1), 2)}
+                    {...makeResponseAttrs({ key: responseKey, kind: "text", qid: responseKey })}
                     value={prefill?.[responseKey]?.response || ''}
                     readOnly={
                       !editable ||
@@ -1873,16 +1877,14 @@ export function renderBlocks(blocks, options = {}) {
                       prefill?.[`${responseKey}S`] === 'complete' ||
                       prefill?.[`${responseKey}S`]?.response === 'complete'
                     }
-                    data-question-key={responseKey}
                     className="mt-2"
                     style={{ resize: 'vertical' }}
                     onChange={(e) => {
                       const val = e.target.value;
-                      if (options.onTextChange) {
-                        options.onTextChange(responseKey, val, meta);
-                      }
+                      options.onTextChange?.(responseKey, val, meta);
                     }}
                   />
+
 
                   {/* 🔶 AI Guidance: visible to active student, observers, and instructor */}
                   {guidance && (
@@ -1942,6 +1944,7 @@ export function renderBlocks(blocks, options = {}) {
                       <Form.Control
                         as="textarea"
                         rows={2}
+                        {...makeResponseAttrs({ key: followupKey, kind: "followup-answer", qid: responseKey })}
                         value={followupAnswers?.[followupKey] || ''}
                         placeholder="Respond to the follow-up question here..."
                         onChange={(e) => {
@@ -1960,6 +1963,7 @@ export function renderBlocks(blocks, options = {}) {
                         className="mt-1"
                         style={{ resize: 'vertical' }}
                       />
+
                     ) : (
                       <div className="bg-light p-2 rounded mt-1">
                         {prefill?.[followupKey]?.response || followupAnswers?.[followupKey] || ''}

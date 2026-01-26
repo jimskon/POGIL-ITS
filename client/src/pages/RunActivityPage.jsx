@@ -16,6 +16,14 @@ import RunActivityTestStatusBanner from '../components/RunActivityTestStatusBann
 import RunActivityFloatingTimer from '../components/RunActivityFloatingTimer';
 import QuestionScorePanel from '../components/QuestionScorePanel';
 
+function lowerResp(obj, key) {
+  return String(obj?.[key]?.response ?? '').trim().toLowerCase();
+}
+
+function RUNTRACE(tag, obj) {
+  console.log(`[RUNTRACE] ${tag}`, obj);
+}
+
 
 // --- DEBUG ---
 const DEBUG_FILES = false;
@@ -39,7 +47,7 @@ function isNoAI(val) {
 // Infer lang for a code cell like "2acode1" by looking up the matching question block.
 function getLangForResponseKey(responseKey, groups) {
   // base QID like "2c" from "2ccode1"
-  const baseQid = String(responseKey).replace(/code\d+$/, '');
+  //  const baseQid = String(responseKey).replace(/code\d+$/, '');
 
   // find the question block that owns this responseKey
   let found = null;
@@ -147,7 +155,36 @@ export default function RunActivityPage({
   // Tracks which base questions have been edited since last AI evaluation.
   // Prevents loadActivity() from rehydrating stale suggestions while student is revising.
   const dirtyTextQidsRef = useRef(new Set());
+  function emitTextAIState(qid, { f1, fm, af }) {
+    if (!socket || !instanceId || !user?.id) return;
 
+    if (f1 !== undefined) {
+      socket.emit('response:update', {
+        instanceId,
+        responseKey: `${qid}F1`,
+        value: f1 ?? '',
+        answeredBy: user.id,
+      });
+    }
+
+    if (fm !== undefined) {
+      socket.emit('response:update', {
+        instanceId,
+        responseKey: `${qid}FM`,
+        value: fm ?? '',
+        answeredBy: user.id,
+      });
+    }
+
+    if (af !== undefined) {
+      socket.emit('response:update', {
+        instanceId,
+        responseKey: `${qid}AF`,
+        value: af ?? '',
+        answeredBy: user.id,
+      });
+    }
+  }
   function baseQidFromResponseKey(key) {
     const k = String(key || '').toLowerCase();
 
@@ -174,15 +211,23 @@ export default function RunActivityPage({
 
 
 
+  /*  function clearTextSuggestionForQid(qid) {
+      setTextFeedbackShown((prev) => {
+        const next = { ...prev };
+        delete next[qid];
+        return next;
+      });
+  
+      // optional but safe if anything still uses followupsShown for text
+      setFollowupsShown((prev) => {
+        const next = { ...prev };
+        delete next[qid];
+        return next;
+      });
+    }*/
+
   function clearTextSuggestionForQid(qid) {
     setTextFeedbackShown((prev) => {
-      const next = { ...prev };
-      delete next[qid];
-      return next;
-    });
-
-    // optional but safe if anything still uses followupsShown for text
-    setFollowupsShown((prev) => {
       const next = { ...prev };
       delete next[qid];
       return next;
@@ -196,6 +241,7 @@ export default function RunActivityPage({
   const { user, loading } = useUser();
   const [followupsShown, setFollowupsShown] = useState({});
   const [followupAnswers, setFollowupAnswers] = useState({});
+
   const [codeFeedbackShown, setCodeFeedbackShown] = useState({});
   const [socket, setSocket] = useState(null);
   const [fileContents, setFileContents] = useState({});
@@ -655,19 +701,11 @@ export default function RunActivityPage({
       // If the server/active student pushes the AI flag (e.g., "2aAF")
       const mAF = String(responseKey || '').match(/^(.*)AF$/);
       if (mAF) {
-        const qid = mAF[1];
-        const af = String(value ?? '').trim().toLowerCase();
-
-        // When resolved (or anything not "active"), the yellow prompt should disappear for observers
-        if (af !== 'active') {
-          setTextFeedbackShown((prev) => {
-            const next = { ...prev };
-            delete next[qid];
-            return next;
-          });
-        }
+        // AF is just status now. Do NOT clear feedback on "resolved".
+        // Feedback persistence is driven by F1 being non-empty.
         return;
       }
+
     };
 
     socket.on('response:update', handleUpdate);
@@ -684,14 +722,14 @@ export default function RunActivityPage({
       const block = findQuestionBlockByQid(qid);
 
       // If it's code-only: NEVER show follow-ups; guidance only.
-      if (block && isCodeOnlyByBlock(block)) {
+      /*if (block && isCodeOnlyByBlock(block)) {
         setFollowupsShown((prev) => {
           const next = { ...prev };
           delete next[qid];
           return next;
         });
         return;
-      }
+      }*/
 
       // Otherwise (text/table), allow/clear follow-ups as sent
       setFollowupsShown((prev) => {
@@ -984,24 +1022,21 @@ export default function RunActivityPage({
         return merged;
       });
 
-      // 3) Restore text AI guidance, but ONLY if AF says it's active.
+      // 3) Restore per-question feedback (F1) for BOTH accepted and not-accepted
       if (!isRequirementsOnly) {
         const restoredTextFeedback = {};
 
         for (const [key, entry] of Object.entries(answersData || {})) {
           if (!key.endsWith('F1')) continue;        // "2aF1"
           const qid = key.slice(0, -2);             // "2a"
-          // ✅ Don't resurrect stale suggestions while student is actively revising locally
+
+          // Don’t resurrect while they’re actively revising locally
           if (dirtyTextQidsRef.current.has(qid)) continue;
+
           const text = (entry?.response || '').trim();
           if (!text) continue;
 
-          const afRaw = answersData[`${qid}AF`]?.response;
-          const af = String(afRaw ?? 'active').trim().toLowerCase(); // default active
-
-          if (af === 'active') {
-            restoredTextFeedback[qid] = text;
-          }
+          restoredTextFeedback[qid] = text;
         }
 
         setTextFeedbackShown((prev) => ({ ...prev, ...restoredTextFeedback }));
@@ -1172,11 +1207,13 @@ export default function RunActivityPage({
     studentAnswer,
     { forceFollowup = false } = {}
   ) {
-    // NEW: no AI feedback during tests
+    // ✅ TEST MODE: no AI feedback at all (unchanged behavior)
     if (isTestMode) return null;
 
     const qid = `${questionBlock.groupId}${questionBlock.id}`;
     const qText = getQuestionText(questionBlock, qid);
+
+    // Respect per-question "none"
     if (
       isLockedFU(qid) ||
       isNoAI(questionBlock?.followups?.[0]) ||
@@ -1205,32 +1242,64 @@ export default function RunActivityPage({
         activitycontext: activity?.activitycontext || 'Unnamed Activity',
         studentLevel: activity?.studentlevel || 'intro',
       },
-
-      // ✅ activity-level policy only
       guidance: activity?.aicodeguidance || '',
-
       codeContext,
     };
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/ai/evaluate-response`, {
+      const t0 = performance.now();
+      const url = `${API_BASE_URL}/api/ai/evaluate-response`;
+
+      const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
 
-      // Treat either feedback or followupQuestion as a single feedback blob
+      const raw = await res.text();
+      let data = null;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch (e) {
+        console.error('[EVAL RECV response] JSON parse failed', {
+          qid,
+          status: res.status,
+          rawHead: raw.slice(0, 200),
+        });
+        throw e;
+      }
+
+      // ✅ Normalize to the ONLY contract we want everywhere:
+      // { accepted: true|false, feedback: null|string }
+      const accepted = data?.accepted !== false; // default true
       const feedback =
-        (data.feedback && String(data.feedback).trim()) ||
-        (data.followupQuestion && String(data.followupQuestion).trim()) ||
-        '';
+        typeof data?.feedback === 'string' && data.feedback.trim()
+          ? data.feedback.trim()
+          : null;
 
-      return feedback || null;
-    } catch {
-      return null;
+      console.log('[EVAL RECV response normalized]', {
+        qid,
+        status: res.status,
+        ok: res.ok,
+        ms: Math.round(performance.now() - t0),
+        accepted,
+        feedbackLen: (feedback || '').length,
+      });
+
+      return { accepted, feedback };
+    } catch (err) {
+      console.error('[EVAL ERROR response]', {
+        qid,
+        name: err?.name,
+        msg: err?.message,
+      });
+
+      // IMPORTANT: do not deadlock on AI failure.
+      // Treat as accepted with a neutral feedback note (optional).
+      return { accepted: true, feedback: '(AI unavailable; continuing)' };
     }
   }
+
 
   function buildMarkdownTableFromBlock(block, container) {
     if (!block.tableBlocks?.length) return '';
@@ -1246,7 +1315,7 @@ export default function RunActivityPage({
           if (cell.type === 'input') {
             const key = `${block.groupId}${block.id}table${t}cell${row}_${col}`;
             const val =
-              container.querySelector(`[data-question-key="${key}"]`)
+              container.querySelector(`[data-response-key="${key}"]`)
                 ?.value?.trim() || '';
             return val;
           }
@@ -1284,17 +1353,17 @@ export default function RunActivityPage({
 
     const result = [];
 
+    const authoredBlocks = [
+      ...(block?.pythonBlocks ?? []).map(b => ({ lang: 'python', content: b.content })),
+      ...(block?.turtleBlocks ?? []).map(b => ({ lang: 'python', content: b.content })),
+      ...(block?.cppBlocks ?? []).map(b => ({ lang: 'cpp', content: b.content })),
+      ...(block?.codeBlocks ?? []).map(b => ({ lang: (b.lang || 'python'), content: b.content })),
+    ];
+
     if (total > 0) {
       for (let i = 0; i < total; i++) {
         const key = `${qid}code${i + 1}`;
         const fromMap = getLatestCode(key);
-
-        const authoredBlocks = [
-          ...(block.pythonBlocks || []).map(b => ({ lang: 'python', content: b.content })),
-          ...(block.turtleBlocks || []).map(b => ({ lang: 'python', content: b.content })),
-          ...(block.cppBlocks || []).map(b => ({ lang: 'cpp', content: b.content })),
-          ...(block.codeBlocks || []).map(b => ({ lang: b.lang || 'python', content: b.content })),
-        ];
 
         const authored = authoredBlocks[i]?.content || '';
         const lang = authoredBlocks[i]?.lang || 'python';
@@ -1428,7 +1497,7 @@ export default function RunActivityPage({
               if (cell.type === 'input') {
                 const key = `${qid}table${t}cell${row}_${col}`;
                 const val =
-                  container.querySelector(`[data-question-key="${key}"]`)
+                  container.querySelector(`[data-response-key="${key}"]`)
                     ?.value?.trim() || '';
                 if (val !== '') {
                   answers[key] = val;
@@ -1516,23 +1585,18 @@ export default function RunActivityPage({
     return { answers, questions };
   }
 
-  function emitTextAIState(qid, { f1, af }) {
-    if (!socket || !instanceId) return;
 
-    // Broadcast as normal response updates so observers’ existing handler picks it up
-    socket.emit('response:update', {
-      instanceId,
-      responseKey: `${qid}F1`,
-      value: f1 ?? '',
-      answeredBy: user.id,
-    });
+  function isGroupCodeOnlyQuestion(block) {
+    const hasTextOrTable = !!block?.hasTextResponse || !!block?.hasTableResponse;
+    if (hasTextOrTable) return false;
 
-    socket.emit('response:update', {
-      instanceId,
-      responseKey: `${qid}AF`,
-      value: af ?? '',
-      answeredBy: user.id,
-    });
+    const hasAnyCode =
+      (block?.pythonBlocks?.length || 0) > 0 ||
+      (block?.turtleBlocks?.length || 0) > 0 ||
+      (block?.cppBlocks?.length || 0) > 0 ||
+      (block?.codeBlocks?.length || 0) > 0;
+
+    return hasAnyCode;
   }
 
 
@@ -1542,6 +1606,35 @@ export default function RunActivityPage({
 
     let container = null;
     let blocks = null;
+    function clearCodeFeedbackForQid(qid, codeCells) {
+      setCodeFeedbackShown((prev) => {
+        const next = { ...prev };
+        // Clear all known code cell keys for this question
+        (codeCells || []).forEach(({ key }) => {
+          delete next[key];          // or: next[key] = null;
+        });
+
+        // Safety net: clear any lingering keys that match the prefix
+        Object.keys(next).forEach((k) => {
+          if (k.startsWith(`${qid}code`)) delete next[k];
+        });
+
+        return next;
+      });
+
+      // Also clear observer-side echo if you want
+      if (socket && instanceId) {
+        (codeCells || []).forEach(({ key }) => {
+          socket.emit('feedback:update', {
+            instanceId,
+            responseKey: key,
+            feedback: null,
+            followup: null,
+          });
+        });
+      }
+    }
+
 
     // ✅ TEST MODE: collect from the whole page + all question blocks
     if (isTestMode) {
@@ -1632,12 +1725,20 @@ export default function RunActivityPage({
 
       const qid = `${block.groupId}${block.id}`;
       const qText = getQuestionText(block, qid);
-      const codeOnly = isCodeOnlyQuestion(
-        block,
-        qid,
-        container,
-        existingAnswers
-      );
+      // IMPORTANT:
+      // - In TEST mode, do NOT apply the "simple policy" here.
+      //   Tests must collect EVERYTHING (text + tables + code + outputs) for grading.
+      // - In GROUP mode, apply the simple policy:
+      //     code-only => evaluate code
+      //     any text/table => default to text (do not evaluate code)
+      const codeOnly = isTestMode
+        ? isCodeOnlyQuestion(block, qid, container, existingAnswers) // preserve existing test behavior
+        : ((block?.hasTextResponse || block?.hasTableResponse)
+          ? false
+          : ((block?.pythonBlocks?.length || 0) > 0 ||
+            (block?.cppBlocks?.length || 0) > 0 ||
+            (block?.codeBlocks?.length || 0) > 0));
+
 
       // ---- DEBUG: caller-side verdict + quick evidence ----
       const dbgTextTA = container?.querySelector(
@@ -1705,7 +1806,17 @@ export default function RunActivityPage({
           turtleBlocks: block?.turtleBlocks?.length || 0,
         },
       });
+      const textAnswer = (textEl?.value ?? '').trim();
+      const shouldEvalText = !isTestMode && !codeOnly && !!textEl;  // code+text AND text-only both land here
 
+      console.log('[RUNDBG] eval gate', {
+        qid,
+        isTestMode,
+        codeOnly,
+        hasTextEl: !!textEl,
+        textLen: textAnswer.length,
+        shouldEvalText,
+      });
 
       // ---------- CODE-ONLY PATH ----------
       if (codeOnly) {
@@ -1814,13 +1925,13 @@ export default function RunActivityPage({
               credentials: 'include',
             });
 
-            console.log('[EVAL1] FETCH response', {
+            /*console.log('[EVAL1] FETCH response', {
               qid,
               status: aiRes.status,
               ok: aiRes.ok,
               ct: aiRes.headers.get('content-type'),
               ms: Math.round(performance.now() - t0),
-            });
+            });*/
 
             rawText = await aiRes.text();
             console.log('[EVAL1] FETCH raw (first 300)', {
@@ -1833,45 +1944,51 @@ export default function RunActivityPage({
             }
 
 
-            // ========================= DEBUG ==========================
-            let aiData = null;
-            try {
-              aiData = JSON.parse(rawText);
-            } catch (e) {
-              console.error('[EVAL1] AI JSON PARSE FAILED', {
-                qid,
-                error: e.message,
-                rawText,
-              });
-            }
-
-            console.log('[EVAL1] AI RESULT FULL', {
-              qid,
-              aiData,
-            });
-
-            console.log('[EVAL1] AI RESULT FIELDS', {
-              qid,
-              accepted: aiData?.accepted,
-              needsRevision: aiData?.needsRevision,
-              hasFeedback: !!aiData?.feedback,
-              feedbackPreview: aiData?.feedback?.slice?.(0, 120) ?? null,
-              followup: aiData?.followup ?? null,
-            });
-            // ========================= DEBUG ==========================
-
             // Parse JSON *from text* so you can see what was returned if parsing fails
             try {
               data = rawText ? JSON.parse(rawText) : null;
             } catch (e) {
-              console.error('[EVAL1] JSON parse failed', { qid, err: String(e) });
+              console.error('[EVAL1] JSON parse failed', {
+                qid,
+                err: String(e),
+                rawFirst300: (rawText || '').slice(0, 300),
+              });
               throw e;
             }
 
-            console.log('[EVAL1] FETCH json keys', {
+            // 🔧 Normalize evaluate-code response shape so client uses consistent fields
+            if (data && typeof data === 'object') {
+              const feedback =
+                (typeof data.feedback === 'string' && data.feedback.trim()) ? data.feedback.trim()
+                  : (typeof data.comment === 'string' && data.comment.trim()) ? data.comment.trim()
+                    : '';
+
+              const followup =
+                (typeof data.followup === 'string' && data.followup.trim()) ? data.followup.trim()
+                  : (typeof data.followupQuestion === 'string' && data.followupQuestion.trim()) ? data.followupQuestion.trim()
+                    : '';
+
+              const accepted = data?.accepted !== false;
+
+              data = {
+                ...data,
+                accepted,
+                feedback,
+                followup,
+              };
+
+            }
+
+            console.log('[EVAL1] PARSED+NORMALIZED', {
               qid,
-              keys: data && typeof data === 'object' ? Object.keys(data) : data,
+              accepted: data?.accepted,
+              feedbackLen: data?.feedback?.length || 0,
+              feedbackPreview: (data?.feedback || '').slice(0, 120),
+              hasComment: !!data?.comment,
+              hasFollowupQuestion: !!data?.followupQuestion,
             });
+
+
           } catch (err) {
             console.error('[EVAL1] FETCH ERROR', {
               qid,
@@ -1893,7 +2010,7 @@ export default function RunActivityPage({
             console.log('[EVAL1] FETCH done', { qid, ms: Math.round(performance.now() - t0) });
           }
 
-          const needsRevision = !!data?.needsRevision; // ✅ real gate
+          const accepted = data?.accepted !== false;
 
           let feedback = String(data?.feedback ?? '').trim();
           let followup = String(data?.followup ?? '').trim();
@@ -1909,7 +2026,7 @@ export default function RunActivityPage({
             `${qid}code1`;
 
           // ✅ Only increment attempts when we actually need revision
-          const nextAttempts = needsRevision ? (prevAttempts + 1) : prevAttempts;
+          const nextAttempts = !accepted ? (prevAttempts + 1) : prevAttempts;
           answers[attemptsKey] = String(nextAttempts);
 
           // Show feedback if present (praise or hint), but do NOT use it as a gate
@@ -1930,13 +2047,20 @@ export default function RunActivityPage({
               });
             }
           }
-
-          // ✅ Gate purely on needsRevision
-          if (needsRevision) {
+          // ✅ compute !accepted even if server returns only accepted/comment
+          if (!accepted) {
             answers[`${qid}S`] = 'inprogress';
             unanswered.push(`${qid} (needs revision)`);
           } else {
             answers[`${qid}S`] = 'complete';
+            // ✅ clear prior code feedback for this cell so the message disappears
+            setCodeFeedbackShown((prev) => {
+              const next = { ...prev };
+              delete next[targetKey];         // or: next[targetKey] = null;
+              return next;
+            });
+
+
 
             // optional: clear any old guidance for all cells (only if you want)
             // codeCells.forEach(({ key }) => {
@@ -1971,11 +2095,27 @@ export default function RunActivityPage({
       }
 
       // ---------- TEXT/TABLE PATH ----------
+      // NEW: Always collect and save any code blocks for this question,
+      // even when we're defaulting to text/table evaluation.
+      // This preserves features for group activities, and is harmless for text-only questions.
+      const mixedCodeCells = collectQuestionCodeBlocks(
+        block,
+        qid,
+        container,
+        existingAnswers
+      );
+
+      // Save them into the outgoing payload (don’t AI-evaluate here)
+      mixedCodeCells.forEach(({ key, code }) => {
+        answers[key] = code;
+      });
 
       const el = container.querySelector(`textarea[data-response-key="${qid}"]`);
 
-      const baseAnswer = el?.value?.trim() || '';
-      const tableMarkdown = buildMarkdownTableFromBlock(block, container);
+      const baseAnswer =
+        String(existingAnswers?.[qid]?.response ?? '').trim() ||
+        String(container.querySelector(`[data-response-key="${qid}"]`)?.value ?? '').trim();
+
 
       // ---- Gather table inputs & save them ----
       let tableHasInput = false;
@@ -2000,6 +2140,11 @@ export default function RunActivityPage({
           }
         }
       }
+      // ✅ Compute table markdown snapshot *only if used*
+      const tableMarkdown =
+        (block.hasTableResponse && tableHasInput)
+          ? buildMarkdownTableFromBlock(block, container)
+          : '';
 
       // Determine what gets evaluated as the "answer"
       let aiInput = baseAnswer;
@@ -2025,8 +2170,9 @@ export default function RunActivityPage({
       // Save the main answer (text or table) to DB payload
       answers[qid] = aiInput;   // saves text OR table snapshot consistently
 
-      // ---- AI suggestion gating ----
-      let suggestion = textFeedbackShown[qid] || null;
+      // ---- AI evaluation (sticky-accepted / temporary-needsRevision) ----
+      let accepted = true;
+      let feedback = null;
 
       const looksCodeOnlyNow = isCodeOnlyQuestion(
         block,
@@ -2035,60 +2181,78 @@ export default function RunActivityPage({
         existingAnswers
       );
 
-      if (!looksCodeOnlyNow && !isLockedFU(qid) && !isTestMode) {
-        const aiSuggestion = await evaluateResponseWithAI(block, aiInput, {
-          forceFollowup: false,
-        });
+      const prevAF = lowerResp(existingAnswers, `${qid}AF`); // "active" or "resolved"
+      const prevFM = lowerResp(existingAnswers, `${qid}FM`); // "accepted" or "needsrevision"
 
-        if (aiSuggestion && aiSuggestion.trim()) {
-          suggestion = aiSuggestion.trim();
+      // ✅ Clear old AI comment ONLY on submit (before re-evaluating)
+      setTextFeedbackShown((prev) => {
+        const next = { ...prev };
+        delete next[qid];
+        return next;
+      });
 
-          setTextFeedbackShown((prev) => ({ ...prev, [qid]: suggestion }));
+      // Also clear persisted F1/FM by default for this submission.
+      // If AI returns new feedback, we'll overwrite below.
+      answers[`${qid}F1`] = '';
+      answers[`${qid}FM`] = 'accepted';   // default; may flip to needsRevision
+      answers[`${qid}AF`] = 'resolved';   // default; may flip to active
 
-          // Always include F1/AF in the group payload so DB is consistent
-          answers[`${qid}F1`] = suggestion;
-          answers[`${qid}AF`] = 'active';
+      // Tell observers to clear the yellow box too
+      emitTextAIState(qid, { f1: '', fm: 'accepted', af: 'resolved' });
 
-          // Optional legacy persistence path (fine to keep)
-          if (!isRequirementsOnly) {
-            await saveResponse(instanceId, `${qid}F1`, suggestion);
-          }
+      if (!looksCodeOnlyNow && !isTestMode) {
+        const ai = await evaluateResponseWithAI(block, aiInput);
 
-          // ✅ Broadcast so observers update immediately
-          emitTextAIState(qid, { f1: suggestion, af: 'active' });
+        accepted = ai ? ai.accepted : true;
+        feedback = ai ? (ai.feedback || null) : null;
 
-          dirtyTextQidsRef.current.delete(qid);
+        const newHasFeedback = typeof feedback === 'string' && feedback.trim().length > 0;
+        const becomingAccepted = (prevAF === 'active') && accepted;
+
+        if (newHasFeedback) {
+          const f = feedback.trim();
+
+          // 1) ALWAYS display feedback (accepted or not)
+          setTextFeedbackShown((prev) => ({ ...prev, [qid]: f }));
+
+          // Persist it
+          answers[`${qid}F1`] = f;
+          answers[`${qid}FM`] = accepted ? 'accepted' : 'needsRevision';
         } else {
-          suggestion = null;
+          // 2) No new feedback returned this submit:
+          //    If we transition from not-accepted -> accepted, clear old temporary feedback.
+          if (becomingAccepted && prevFM === 'needsrevision') {
+            setTextFeedbackShown((prev) => {
+              const next = { ...prev };
+              delete next[qid];
+              return next;
+            });
 
-          setTextFeedbackShown((prev) => {
-            const next = { ...prev };
-            delete next[qid];
-            return next;
-          });
-
-          answers[`${qid}F1`] = '';
-          answers[`${qid}AF`] = 'resolved';
-
-          if (!isRequirementsOnly) {
-            await saveResponse(instanceId, `${qid}F1`, '');
+            // Clear persisted temporary feedback in DB
+            answers[`${qid}F1`] = '';
+            answers[`${qid}FM`] = 'accepted';
           }
-
-          // ✅ Broadcast so observers clear immediately
-          emitTextAIState(qid, { f1: '', af: 'resolved' });
-
-          dirtyTextQidsRef.current.delete(qid);
+          // Otherwise: leave existing accepted feedback alone (it persists)
         }
 
-      } // END text/table AI gating
+        // Always update AF
+        answers[`${qid}AF`] = accepted ? 'resolved' : 'active';
 
-
-      // ---- Completion for this question ----
-      answers[`${qid}S`] = suggestion ? 'inprogress' : 'complete';
-
-      if (suggestion) {
-        unanswered.push(`${qid} (AI feedback)`);
+        // Sync observers ONLY if we changed F1/FM or AF
+        emitTextAIState(qid, {
+          af: answers[`${qid}AF`],
+          ...(Object.prototype.hasOwnProperty.call(answers, `${qid}F1`)
+            ? { f1: answers[`${qid}F1`], fm: answers[`${qid}FM`] }
+            : {}),
+        });
       }
+
+      // Completion gate for this question depends ONLY on accepted
+      answers[`${qid}S`] = accepted ? 'complete' : 'inprogress';
+      if (!accepted) unanswered.push(`${qid} (AI)`);
+
+
+
     } // END for each block
 
 
@@ -2098,10 +2262,10 @@ export default function RunActivityPage({
     const isCodeOnlyMap = Object.fromEntries(
       qBlocks.map((b) => {
         const qidB = `${b.groupId}${b.id}`;
-        return [
-          qidB,
-          isCodeOnlyQuestion(b, qidB, container, existingAnswers),
-        ];
+        const isCodeOnly = isTestMode
+          ? isCodeOnlyQuestion(b, qidB, container, existingAnswers)  // ✅ tests unchanged
+          : isGroupCodeOnlyQuestion(b);                               // ✅ group simplification
+        return [qidB, isCodeOnly];
       })
     );
 
@@ -2115,7 +2279,14 @@ export default function RunActivityPage({
       const af = String(
         answers[`${qid}AF`] ?? existingAnswers[`${qid}AF`]?.response ?? ''
       ).trim().toLowerCase();
-      const suggestion = textFeedbackShown[qid];
+      const suggestionStored = String(
+        answers[`${qid}F1`] ?? existingAnswers[`${qid}F1`]?.response ?? ''
+      ).trim();
+
+      const suggestionUI = String(textFeedbackShown[qid] ?? '').trim();
+
+      const suggestion = suggestionStored || suggestionUI;
+
 
       const status = normalizeStatus(
         answers[`${qid}S`] ?? existingAnswers[`${qid}S`]?.response
@@ -2204,6 +2375,7 @@ export default function RunActivityPage({
 
 
     try {
+
       const response = await fetch(
         `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`,
         {
@@ -2359,12 +2531,14 @@ export default function RunActivityPage({
     // clear old code guidance immediately on new edits
     setCodeFeedbackShown((prev) => ({ ...prev, [responseKey]: null }));
 
-    const baseQid = String(responseKey).replace(/code\d+$/, '');
+    const baseQid = baseQidFromResponseKey(responseKey);
+
+    /*const baseQid = String(responseKey).replace(/code\d+$/, '');
     setFollowupsShown((prev) => {
       const next = { ...prev };
       delete next[baseQid];
       return next;
-    });
+    });*/
 
     socket?.emit('feedback:update', {
       instanceId,
@@ -2596,7 +2770,7 @@ export default function RunActivityPage({
             .some((b) => {
               const qid = `${b.groupId}${b.id}`;
               const hasTextSuggestion = !!textFeedbackShown[qid];
-              const hasFU = !!followupsShown[qid];
+              //const hasFU = !!followupsShown[qid];
 
               // any code feedback for cells like "1acode1", "1acode2", ...
               const hasCodeFb = Object.entries(codeFeedbackShown || {}).some(
@@ -2604,7 +2778,8 @@ export default function RunActivityPage({
                   key.startsWith(`${qid}code`) && fb && String(fb).trim() !== ''
               );
 
-              return hasTextSuggestion || hasFU || hasCodeFb;
+              //return hasTextSuggestion || hasFU || hasCodeFb;
+              return hasTextSuggestion || hasCodeFb;
             });
 
           return (
@@ -2646,7 +2821,7 @@ export default function RunActivityPage({
                   mode: 'run',
                   prefill: existingAnswers,
                   currentGroupIndex: index,
-                  followupsShown,
+                  //followupsShown,
                   textFeedbackShown,
                   socket,
                   instanceId,
@@ -2671,7 +2846,7 @@ export default function RunActivityPage({
                     if (qid) dirtyTextQidsRef.current.add(qid);
 
                     // Immediately hide the old AI suggestion when they start addressing it
-                    if (qid) clearTextSuggestionForQid(qid);
+                    //if (qid) clearTextSuggestionForQid(qid);
 
                     setExistingAnswers((prev) => ({
                       ...prev,

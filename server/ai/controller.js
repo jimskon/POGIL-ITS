@@ -14,6 +14,39 @@ function stripHtml(s = "") {
     .replace(/<\/?[A-Za-z!][^>]*>/g, "");
 }
 
+function normalizeAIResult(obj) {
+  const o = (obj && typeof obj === 'object') ? obj : {};
+
+  const feedbackStr =
+    (typeof o.feedback === 'string' && o.feedback.trim()) ? o.feedback.trim()
+      : (typeof o.comment === 'string' && o.comment.trim()) ? o.comment.trim()
+        : (typeof o.followupQuestion === 'string' && o.followupQuestion.trim()) ? o.followupQuestion.trim()
+          : (typeof o.followup === 'string' && o.followup.trim()) ? o.followup.trim()
+            : '';
+
+  const feedback = feedbackStr ? feedbackStr : null;
+
+  let accepted;
+  if (typeof o.accepted === 'boolean') {
+    accepted = o.accepted;
+  } else if (typeof o.needsRevision === 'boolean') {
+    accepted = !o.needsRevision;
+  } else {
+    // Conservative: if AI said anything but gave no flag, do NOT auto-pass
+    accepted = feedback ? false : true;
+  }
+
+  return { accepted, feedback };
+}
+
+function sendAI(res, payload, status = 200) {
+  // Always enforce the contract at the boundary
+  const accepted = payload?.accepted === true;
+  const feedback =
+    payload?.feedback == null ? null : String(payload.feedback).trim() || null;
+  return res.status(status).json({ accepted, feedback });
+}
+
 // ---------- Positive feedback toggles ----------
 // Activity-level default: Positive feedback ON.
 // Per-question override: put "No-Positive-feedback" anywhere in \followupprompt{...}
@@ -221,11 +254,7 @@ async function evaluateStudentResponse(req, res) {
 
   // Hard “no feedback at all” switch (rare, but keep it)
   if (isNone(feedbackPrompt) || !questionText || studentAnswer == null) {
-    return res.status(200).json({
-      accepted: true,
-      comment: null,
-      followupQuestion: null,
-    });
+    return sendAI(res, { accepted: true, feedback: null });
   }
 
 
@@ -266,12 +295,8 @@ async function evaluateStudentResponse(req, res) {
 
       if (relevant) {
         // On-track: optionally use author follow-up (unless policy forbids)
-        const allowFollowup = policy.followupGate !== "none" && !followupIsNone;
-        return res.status(200).json({
-          accepted: true,
-          comment: null,
-          followupQuestion: allowFollowup ? followupRaw : null,
-        });
+        return sendAI(res, { accepted: true, feedback: null });
+
 
       }
     }
@@ -283,21 +308,18 @@ async function evaluateStudentResponse(req, res) {
   // Build prompt
   const sys = [
     "You are a concise, supportive learning facilitator for an ungraded collaborative activity.",
-    "Your job is to decide whether the response is sufficient to proceed.",
-    "Return status='complete' if the response is coherent and on-topic enough.",
-    "Return status='revise' if the response is incoherent, off-prompt, clearly wrong overall, or too thin/vague.",
-    "If status='complete', comment should be null unless positive feedback is allowed.",
-    "If status='revise', comment MUST be a short helpful hint/encouragement (1–2 sentences).",
-    "followupQuestion should be null unless a single short follow-up question is truly needed (usually only for revise).",
+    "Decide whether the submission is sufficient to proceed.",
+    "Return ONLY JSON matching the schema exactly.",
+    "If the submission is on-topic and sufficient, set accepted=true.",
+    "If the submission is off-topic, incoherent, or too thin/vague, set accepted=false.",
+    "If accepted=false, feedback MUST be a short actionable hint (1–2 sentences).",
+    "If accepted=true, feedback must be null unless positive feedback is enabled.",
     "Do NOT mention grading, points, rubrics, or scoring.",
-    "Return ONLY JSON.",
   ].join("\n");
 
   const schema = `Return JSON only:
-{"status":"complete"|"revise",
- "comment": null|string,
- "followupQuestion": null|string}`;
-
+{"accepted":true|false,
+ "feedback": null|string}`;
 
   const user = [
     `Question:\n${stripHtml(questionText)}`,
@@ -313,10 +335,8 @@ async function evaluateStudentResponse(req, res) {
     "",
     schema,
     forceFollowup || obviouslyBad
-      ? "If uncertain, prefer status='revise'."
-      : "If reasonable, prefer status='complete'.",
-    "Keep comment to 1–2 short sentences max; followupQuestion should be a single short question (or null).",
-
+      ? "If uncertain, prefer {\"accepted\":false}"
+      : "If reasonable, prefer {\"accepted\":true}",
 
   ]
     .filter(Boolean)
@@ -335,68 +355,42 @@ async function evaluateStudentResponse(req, res) {
 
     const raw = (chat.choices?.[0]?.message?.content ?? "").trim();
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
+
     let obj;
     try {
       obj = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(raw);
     } catch {
-      return res.status(200).json({
-        accepted: true,
-        comment: null,
-        followupQuestion: null,
-      });
+      return res.status(200).json({ accepted: true, feedback: null });
     }
 
-    const status = String(obj.status || "").toLowerCase();
-    let comment = obj.comment ? String(obj.comment).trim() : null;
-    let followupQuestion = obj.followupQuestion ? String(obj.followupQuestion).trim() : null;
+    const norm = normalizeAIResult(obj); // <-- accepts feedback/feedback/followupQuestion etc
 
-    // Strip true nitpicks only
-    if (isSoftNitpick(comment) && !isFatal(comment)) {
-      comment = (status === "revise")
-        ? null   // will be replaced by fallback below
-        : null;
+    let { accepted } = norm;
+    let feedback = norm.feedback; // string|null
+
+    // preserve your soft-nitpick filter
+    if (isSoftNitpick(feedback) && !isFatal(feedback)) feedback = null;
+
+    // If NOT accepted, require feedback
+    if (!accepted && !feedback) {
+      feedback = "Add one more concrete detail that directly answers the prompt.";
     }
 
+    // If accepted and positive feedback disabled, feedback must be null
+    if (accepted && !positiveEnabled) feedback = null;
 
-    // Enforce followup gate
-    if (policy.followupGate === "none") followupQuestion = null;
-
-    if (status === "complete") {
-      // No-positive-feedback disables any praise/comment on completion
-      if (!positiveEnabled) comment = null;
-
-      // On complete: use author followupprompt only if followups are enabled and prompt isn't "none"
-      const allowAuthorFU = policy.followupGate !== "none" && !followupIsNone;
-
-      return res.status(200).json({
-        accepted: true,
-        comment: comment || null,
-        followupQuestion: allowAuthorFU ? followupRaw : null,
-      });
+    // If accepted and positive enabled but model gave nothing, optionally use author followupprompt as praise/nudge
+    if (accepted && positiveEnabled && !feedback && followupRaw && !followupIsNone) {
+      feedback = followupRaw;
     }
 
-    // Default to revise
-    if (!comment) comment = "Add one more concrete detail that directly answers the prompt.";
-
-    const allowAuthorFU = policy.followupGate !== "none" && !followupIsNone;
-
-    return res.status(200).json({
-      accepted: false,
-      comment,
-      followupQuestion: allowAuthorFU ? followupRaw : followupQuestion,
-    });
-
+    return sendAI(res, { accepted, feedback });
 
   } catch (err) {
     console.error("❌ OpenAI evaluateStudentResponse failed:", err);
-    return res.status(200).json({
-      accepted: true,
-      comment: null,
-      followupQuestion: null,
-    });
-
+    return res.status(200).json({ accepted: true, feedback: null });
   }
-}
+} // <-- closes evaluateStudentResponse
 
 // ---------- PYTHON CODE (LEARNING MODE) ----------
 async function evaluatePythonCode(req, res) {
@@ -427,7 +421,7 @@ async function evaluatePythonCode(req, res) {
     lang: "python",
   });
 
-  return res.status(200).json(result);
+  return sendAI(res, result);
 }
 
 
@@ -454,8 +448,8 @@ async function evaluateCode({
   followupPrompt = "",
   lang,
 }) {
-  // Default: never block progress
-  const base = { accepted: true, feedback: null, followup: null, needsRevision: false };
+  // Default: fail-open (don’t block if AI fails)
+  const base = { accepted: true, feedback: null };
 
   if (!questionText || !studentCode) return base;
 
@@ -491,7 +485,7 @@ async function evaluateCode({
 
   const fence =
     effLang === "cpp" || effLang === "c++" ? "cpp" :
-    effLang === "python" ? "python" : "";
+      effLang === "python" ? "python" : "";
 
   const prompt = `
 You are a ${langLabel} tutor facilitating an UNGRADED collaborative learning activity.
@@ -511,12 +505,11 @@ ${studentCode}
 \`\`\`
 
 Return STRICT JSON with exactly these keys:
-{"accepted":true|false,"feedback":string|null,"followup":string|null}
+{"accepted":true|false,"feedback":string|null}
 
 Rules:
 - accepted=true if it meets the task; feedback may be null OR brief encouragement (no nitpicks).
-- accepted=false if incomplete/off-prompt; feedback = ONE actionable hint; followup optional.
-- followup should be null unless ${isCodeOnly ? "a short question is useful" : "needed"}.
+- accepted=false if incomplete/off-prompt; feedback = ONE actionable hint.
 - No style/naming/formatting nits. No extra features beyond the prompt.
 ${rules ? "\n" + rules : ""}
 `.trim();
@@ -538,36 +531,28 @@ ${rules ? "\n" + rules : ""}
   const obj = safeJsonObject(raw);
   if (!obj) return base;
 
-  // Model's gating decision (we *don’t* use it to block progress)
-  const modelAccepted = !!obj.accepted;
+  // modelAccepted is the model’s real gate
+  const norm = normalizeAIResult(obj);
+  let { accepted } = norm;
+  let feedback = norm.feedback;
 
-  let feedback = obj.feedback ? String(obj.feedback).trim() : null;
-  let followup = obj.followup ? String(obj.followup).trim() : null;
-
+  // strip soft nitpicks, etc (keep your existing filters)
   if (isSoftNitpick(feedback) && !isFatal(feedback)) feedback = null;
-  if (policy.followupGate === "none") followup = null;
 
-  if (suppressFeedback) feedback = null;
-  if (modelAccepted && !positiveEnabled) feedback = null;
-
-  const allowAuthorFU = policy.followupGate !== "none" && !followupIsNone;
-  if (allowAuthorFU) followup = followupRaw || followup || null;
-
-  // If the model thinks it’s not accepted, we still continue but we preserve guidance
-  const needsRevision = !modelAccepted;
-
-  // Ensure we provide something helpful if needsRevision is true
-  if (needsRevision && !feedback) {
+  // If NOT accepted, we require a feedback (a real actionable hint)
+  if (!accepted && !feedback) {
     feedback = "Make one small change that directly moves the code toward the stated task.";
   }
 
-  return {
-    accepted: true,          // ✅ ALWAYS continue
-    feedback,
-    followup,
-    needsRevision,           // ✅ non-blocking signal
-  };
+  // If accepted and positive feedback disabled, feedback must be null
+  if (accepted && !positiveEnabled) feedback = null;
+
+  // If suppressFeedback, always null (but still allowed to reject!)
+  if (suppressFeedback) feedback = null;
+
+  return { accepted, feedback };
 }
+
 
 
 async function evaluateCppCode(req, res) {
@@ -598,7 +583,7 @@ async function evaluateCppCode(req, res) {
     lang: "cpp",
   });
 
-  return res.status(200).json(result);
+  return sendAI(res, result);
 }
 
 
