@@ -153,6 +153,7 @@ async function getCourseActivities(req, res) {
       SELECT 
         a.id AS activity_id,
         a.name AS activity_name,
+        a.title AS activity_title,
         a.order_index AS activity_index,
         COALESCE(a.is_test, 0) AS is_test,
 
@@ -195,16 +196,16 @@ async function getCourseActivities(req, res) {
         ON ai.activity_id = a.id
        AND ai.course_id = c.id
       WHERE c.id = ?
-      GROUP BY a.id, a.name, a.order_index, a.is_test
+      GROUP BY a.id, a.name, a.title, a.order_index, a.is_test
       ORDER BY a.order_index ASC
       `,
-      // ✅ FIXED: 4 params for 4 placeholders
       [userId, userId, userId, courseId]
     );
 
     const activities = rows.map((row) => ({
       activity_id: row.activity_id,
-      title: row.activity_name,
+      activity_name: row.activity_name,         // optional, but useful
+      title: row.activity_title || row.activity_name,  // ✅ preferred + safe fallback
       order_index: row.activity_index,
       isTest: !!row.is_test,
       instance_id: row.instance_id || null,
@@ -220,6 +221,7 @@ async function getCourseActivities(req, res) {
       has_groups: row.group_count > 0,
       hidden: !!row.hidden,
     }));
+
 
     res.json(activities);
   } catch (err) {
