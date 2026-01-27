@@ -17,6 +17,12 @@ router.post("/enroll-by-code", controller.enrollByCode);
 // Get all students enrolled in a course (used for role selection)
 router.get("/:courseId/enrollments", controller.getCourseEnrollments);
 
+// 🔹 NEW: Clone groups config from another activity in the SAME course
+router.get(
+  "/:courseId/activities/:sourceActivityId/groups-config",
+  controller.getGroupsConfigForActivity
+);
+
 // Get activities for a course
 router.get("/:courseId/activities", controller.getCourseActivities);
 

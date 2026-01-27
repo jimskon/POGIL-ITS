@@ -25,9 +25,42 @@ export default function GroupSetupPage() {
   const [lockedBeforeStart, setLockedBeforeStart] = useState(true);
   const [lockedAfterEnd, setLockedAfterEnd] = useState(true);
 
+  const [activities, setActivities] = useState([]);
+  const [cloneFromActivityId, setCloneFromActivityId] = useState('');
+
+
+  useEffect(() => {
+    fetch(`${API_BASE_URL}/api/courses/${courseId}/activities`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => setActivities(Array.isArray(d) ? d : []))
+      .catch(err => console.error('❌ Failed to load course activities:', err));
+  }, [courseId]);
+
+  const handleCloneGroups = async () => {
+    if (!cloneFromActivityId) return;
+
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/api/courses/${courseId}/activities/${cloneFromActivityId}/groups-config`,
+        { credentials: 'include' }
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        alert(data.error || 'Failed to load groups');
+        return;
+      }
+      setGroups(data.groups || []);
+    } catch (err) {
+      console.error('❌ clone groups failed:', err);
+      alert('Failed to clone groups');
+    }
+  };
+
+
   // Load students
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/courses/${courseId}/students`)
+    fetch(`${API_BASE_URL}/api/courses/${courseId}/students`, { credentials: 'include' })
+
       .then(res => res.json())
       .then(data => {
         const loaded = Array.isArray(data) ? data : data.students;
@@ -322,6 +355,33 @@ export default function GroupSetupPage() {
             </Col>
           </>
         )}
+      </Row>
+      <Row className="mt-3">
+        <Col md={6}>
+          <Form.Label>Clone groups from another activity (same course)</Form.Label>
+          <Form.Select
+            value={cloneFromActivityId}
+            onChange={(e) => setCloneFromActivityId(e.target.value)}
+          >
+            <option value="">-- Select an activity --</option>
+            {activities
+              .filter(a => a.has_groups && a.activity_id !== Number(activityId))
+              .map(a => (
+                <option key={a.activity_id} value={a.activity_id}>
+                  {a.title || a.activity_name || `Activity ${a.activity_id}`}
+                </option>
+              ))}
+          </Form.Select>
+        </Col>
+        <Col md="auto" className="d-flex align-items-end">
+          <Button
+            variant="secondary"
+            disabled={!cloneFromActivityId}
+            onClick={handleCloneGroups}
+          >
+            Clone Groups
+          </Button>
+        </Col>
       </Row>
 
       <Button className="mt-3" onClick={generateGroups}>
