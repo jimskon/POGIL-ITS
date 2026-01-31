@@ -14,10 +14,65 @@ import {
 import { API_BASE_URL } from '../config';
 import { FaUserCheck, FaLaptop } from 'react-icons/fa';
 
-function normalizeStatus(raw) {
-  const s = String(raw ?? '').trim().toLowerCase();
-  return s === 'complete' ? 'complete' : 'inprogress';
+function normalizeStatus(v) {
+  const s = String(v ?? '').trim().toLowerCase();
+
+  // accept BOTH spellings
+  if (s === 'complete' || s === 'completed') return 'complete';
+
+  if (s === 'inprogress' || s === 'in_progress') return 'inprogress';
+
+  return s;
 }
+
+function progressLabelFromInstanceRow(g) {
+  const status = String(g.progress_status || '').toLowerCase();
+
+  if (status === 'completed') return 'Complete';
+
+  const tg = Number(g.total_groups) || 0;
+  const cg = Number(g.completed_groups) || 0;
+
+  // If total_groups is missing, don't guess; show "In progress"
+  if (tg <= 0) return 'In progress';
+
+  // show next group number (1-based), clamp at tg
+  const next = Math.min(cg + 1, tg);
+  return `Question Group ${next} of ${tg}`;
+}
+
+
+function computeProgressLabelCompat(answers, totalGroups) {
+  if (!answers || typeof answers !== 'object') return { isComplete: false, label: '?' };
+
+  // --- Scheme A: legacy 1state, 2state, ...
+  let completeCount = 0;
+  for (let i = 1; i <= (totalGroups || 9999); i++) {
+    const raw = answers?.[`${i}state`]?.response;
+    const status = normalizeStatus(raw);
+    if (status !== 'complete') break;
+    completeCount++;
+  }
+  if (completeCount > 0 || answers?.['1state']) {
+    if (totalGroups && completeCount >= totalGroups) return { isComplete: true, label: 'Complete' };
+    return { isComplete: false, label: String(completeCount + 1) };
+  }
+
+  // --- Scheme B: any keys ending with "state" (covers groupIdstate variants)
+  const stateKeys = Object.keys(answers).filter((k) => k.toLowerCase().endsWith('state'));
+  const completedStates = stateKeys.filter((k) => normalizeStatus(answers?.[k]?.response) === 'complete');
+
+  // If we have any "state" keys at all, we can give a reasonable next index:
+  if (stateKeys.length) {
+    const n = completedStates.length;
+    if (totalGroups && n >= totalGroups) return { isComplete: true, label: 'Complete' };
+    return { isComplete: false, label: String(n + 1) };
+  }
+
+  // --- Nothing usable
+  return { isComplete: false, label: '?' };
+}
+
 
 function computeProgressFromAnswers(answers, totalGroups) {
   // answers is the object returned by /api/activity-instances/:id/responses
@@ -67,7 +122,8 @@ export default function ViewGroupsPage() {
   const fetchGroups = async () => {
     try {
       const res = await fetch(
-        `${API_BASE_URL}/api/activity-instances/by-activity/${courseId}/${activityId}`
+        `${API_BASE_URL}/api/activity-instances/by-activity/${courseId}/${activityId}`,
+        { credentials: 'include' }
       );
       const data = await res.json();
 
@@ -75,33 +131,45 @@ export default function ViewGroupsPage() {
 
       setCourseName(data.courseName || incomingCourseName || '');
       setActivityTitle(data.activityTitle || '');
-      // Enrich each group with progress derived from saved responses (1state, 2state, ...)
+
       const enriched = await Promise.all(
         data.groups.map(async (g) => {
+          // prefer backend progress if present
+          const backendLabel =
+            g.progress_label ?? g.progressLabel ?? (g.progress != null ? String(g.progress) : null);
+
+          // completion from backend (do NOT recompute)
+          const isCompleteBackend =
+            !!g.is_complete || !!g.completed_at || !!g.submitted_at || !!g.review_ready;
+
+          if (backendLabel) {
+            return { ...g, __progressLabel: backendLabel, __isComplete: isCompleteBackend };
+          }
+
+          // fallback: compute label from answers (compat)
           try {
             const ansRes = await fetch(
               `${API_BASE_URL}/api/activity-instances/${g.instance_id}/responses`,
               { credentials: 'include' }
             );
             const answers = await ansRes.json();
-
-            // total_groups might be on the group object or returned by your endpoint; handle both
             const total = Number(g.total_groups || data.totalGroups || data.total_groups || 0) || null;
 
-            const p = computeProgressFromAnswers(answers, total);
+            const p = computeProgressLabelCompat(answers, total);
             return {
               ...g,
-              __progressLabel: p.label,      // "1", "2", ...
-              __isComplete: p.isComplete,    // boolean
+              __progressLabel: p.label,
+              __isComplete: isCompleteBackend || p.isComplete, // backend wins, but allow legacy to mark complete
             };
-          } catch (e) {
-            // If anything fails, fall back to whatever backend gave us
-            return { ...g, __progressLabel: String(g.progress ?? '?'), __isComplete: false };
+          } catch {
+            return { ...g, __progressLabel: '?', __isComplete: isCompleteBackend };
           }
         })
       );
 
       setGroups(enriched);
+
+
     } catch (err) {
       console.error('❌ Error loading groups:', err);
       setError('Could not load groups.');
@@ -308,6 +376,12 @@ export default function ViewGroupsPage() {
       ) : (
         <Row>
           {groups.map((group) => {
+            const isComplete =
+              !!group.is_complete ||
+              !!group.completed_at ||
+              !!group.submitted_at ||
+              !!group.review_ready;
+
             return (
               <Col lg={4} md={6} sm={12} key={group.instance_id}>
                 <Card className="mb-3">
@@ -315,11 +389,10 @@ export default function ViewGroupsPage() {
                     <div>
                       Group {group.group_number} —{' '}
                       <strong className="ms-2">
-                        {group.__isComplete
-                          ? '✅ Activity Complete'
-                          : `Question Group: ${group.__progressLabel}`}
+                        {progressLabelFromInstanceRow(group)}
                       </strong>
                     </div>
+
                     <div className="d-flex gap-2 mt-2 mt-sm-0 flex-wrap">
                       <Button
                         variant="outline-danger"
@@ -327,9 +400,7 @@ export default function ViewGroupsPage() {
                         disabled={clearing.has(group.instance_id)}
                         onClick={() => clearGroupAnswers(group.instance_id)}
                       >
-                        {clearing.has(group.instance_id)
-                          ? 'Clearing…'
-                          : 'Clear Answers'}
+                        {clearing.has(group.instance_id) ? 'Clearing…' : 'Clear Answers'}
                       </Button>
 
                       <Button
@@ -341,7 +412,7 @@ export default function ViewGroupsPage() {
                           })
                         }
                       >
-                        View Activity
+                        {isComplete ? 'Review Activity' : 'View Activity'}
                       </Button>
                     </div>
                   </Card.Header>
@@ -353,20 +424,12 @@ export default function ViewGroupsPage() {
                           {m.name}{' '}
                           <span className="text-muted">&lt;{m.email}&gt;</span>
                           {group.active_student_id === m.student_id && (
-                            <FaUserCheck
-                              title="Active student"
-                              className="text-success ms-1"
-                            />
+                            <FaUserCheck title="Active student" className="text-success ms-1" />
                           )}
                           {m.connected && (
-                            <FaLaptop
-                              title="Connected"
-                              className="text-info ms-1"
-                            />
+                            <FaLaptop title="Connected" className="text-info ms-1" />
                           )}
-                          {m.role && (
-                            <span className="ms-2 text-muted">({m.role})</span>
-                          )}
+                          {m.role && <span className="ms-2 text-muted">({m.role})</span>}
                         </li>
                       ))}
                     </ul>
@@ -375,6 +438,7 @@ export default function ViewGroupsPage() {
               </Col>
             );
           })}
+
         </Row>
       )}
     </Container>

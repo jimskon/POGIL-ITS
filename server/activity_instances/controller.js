@@ -414,9 +414,9 @@ async function setupMultipleGroupInstances(req, res) {
   try {
     await conn.beginTransaction();
 
-    // Look up whether this activity is a test
+    // Look up whether this activity is a test + sheet_url (we need sheet_url to compute total_groups)
     const [[activityRow]] = await conn.query(
-      `SELECT is_test FROM pogil_activities WHERE id = ?`,
+      `SELECT is_test, sheet_url FROM pogil_activities WHERE id = ?`,
       [activityId]
     );
 
@@ -426,24 +426,52 @@ async function setupMultipleGroupInstances(req, res) {
       isTest = true;
     }
 
-    // 🔹 Normalize incoming testStartAt (ISO) -> MySQL DATETIME string
+    // Normalize incoming testStartAt (ISO) -> MySQL DATETIME string
     let testStartForDb = null;
     let effectiveDuration = 0;
 
     if (isTest && testStartAt && Number(testDurationMinutes) > 0) {
-      const d = new Date(testStartAt);            // parses "2025-12-04T01:37:00.000Z" etc.
+      const d = new Date(testStartAt);
       if (!Number.isNaN(d.getTime())) {
-        // store as UTC in "YYYY-MM-DD HH:MM:SS"
         testStartForDb = d.toISOString().slice(0, 19).replace('T', ' ');
         effectiveDuration = Number(testDurationMinutes);
       }
     }
 
-    // Keep pogil_activities.is_test in sync (no sheet parsing on the server).
+    // Keep pogil_activities.is_test in sync
     await conn.query(
       `UPDATE pogil_activities SET is_test = ? WHERE id = ?`,
       [isTest ? 1 : 0, activityId]
     );
+
+    // ✅ NEW: compute total_groups from the activity doc NOW, once
+    let computedTotalGroups = 1;
+    try {
+      const sheetUrl = activityRow?.sheet_url || '';
+      const docId = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/)?.[1];
+
+      if (docId) {
+        const auth = authorize();
+        const docs = google.docs({ version: 'v1', auth });
+        const doc = await docs.documents.get({ documentId: docId });
+
+        const lines = (doc.data.body?.content || [])
+          .map(block => {
+            if (!block.paragraph?.elements) return null;
+            return block.paragraph.elements
+              .map(e => e.textRun?.content || '')
+              .join('')
+              .trim();
+          })
+          .filter(Boolean);
+
+        const groupCount = lines.filter(line => line.startsWith('\\questiongroup')).length;
+        computedTotalGroups = groupCount > 0 ? groupCount : 1;
+      }
+    } catch (e) {
+      console.warn('⚠️ setupMultipleGroupInstances: failed to compute total_groups; defaulting to 1', e);
+      computedTotalGroups = 1;
+    }
 
     // Remove existing instances + members for this course+activity
     const [oldInstances] = await conn.query(
@@ -470,14 +498,15 @@ async function setupMultipleGroupInstances(req, res) {
 
       const [instanceResult] = await conn.query(
         `INSERT INTO activity_instances
-           (course_id, activity_id, status, group_number, test_start_at, test_duration_minutes)
-         VALUES (?, ?, 'in_progress', ?, ?, ?)`,
+           (course_id, activity_id, status, group_number, total_groups, completed_groups, progress_status, test_start_at, test_duration_minutes)
+         VALUES (?, ?, 'in_progress', ?, ?, 0, 'not_started', ?, ?)`,
         [
           courseId,
           activityId,
           group_number,
-          testStartForDb,      // ✅ MySQL-friendly string or null
-          effectiveDuration    // ✅ 0 if not a test
+          computedTotalGroups,   // ✅ critical fix
+          testStartForDb,
+          effectiveDuration
         ]
       );
       const instanceId = instanceResult.insertId;
@@ -488,7 +517,7 @@ async function setupMultipleGroupInstances(req, res) {
 
           const cleanRole =
             member.role &&
-              ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
+            ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
               ? member.role
               : null;
 
@@ -502,7 +531,7 @@ async function setupMultipleGroupInstances(req, res) {
     }
 
     await conn.commit();
-    return res.json({ success: true });
+    return res.json({ success: true, total_groups: computedTotalGroups });
   } catch (err) {
     await conn.rollback();
     console.error('❌ Error setting up groups:', err);
@@ -513,90 +542,95 @@ async function setupMultipleGroupInstances(req, res) {
 }
 
 
-
 async function submitGroupResponses(req, res) {
-  const { instanceId } = req.params;
-  const { studentId, answers } = req.body;
+  const instanceId = Number(req.params.instanceId);
+  const studentId = Number(req.body?.studentId);
+  const answers = req.body?.answers || {};
+  const groupNum = Number(req.body?.groupNum);
 
-  if (!instanceId || !studentId || !answers) {
-    return res.status(400).json({ error: 'Missing data' });
+  if (!instanceId || !studentId || !answers || typeof answers !== 'object') {
+    return res.status(400).json({ error: 'Missing instanceId, studentId, or answers' });
+  }
+  if (!Number.isFinite(groupNum) || groupNum <= 0) {
+    return res.status(400).json({ error: 'Missing/invalid groupNum' });
   }
 
+  const conn = await db.getConnection();
   try {
-    const responseMap = new Map();
-    const grouped = {};
+    await conn.beginTransaction();
 
-    // Group answers by base question id (e.g., 2a from 2aFA1)
-    for (const [qid, value] of Object.entries(answers)) {
-      const baseMatch = qid.match(/^([0-9]+[a-zA-Z])/); // 2a from 2aFA1
-      const base = baseMatch ? baseMatch[1] : null;
-      if (!base) continue;
+    // ---- 1) Upsert all submitted answer fields as-is ----
+    // (These include: 2a, 2aF1, 2aFA1, etc.)
+    for (const [qidRaw, valueRaw] of Object.entries(answers)) {
+      const qid = String(qidRaw || '').trim();
+      if (!qid) continue;
 
-      if (!grouped[base]) grouped[base] = {};
-      grouped[base][qid] = value;
-    }
+      const value = valueRaw == null ? '' : String(valueRaw);
 
-    // Build response map + per-question state (2aS) + group state (2state, 3state, ...)
-    for (const [base, group] of Object.entries(grouped)) {
-      let hasMain = false;
-      let allFollowupsAnswered = true;
-
-      for (const [qid, value] of Object.entries(group)) {
-        responseMap.set(qid, value);
-
-        if (qid === base && value.trim().length > 0) {
-          hasMain = true;
-        }
-
-        const fMatch = qid.match(/^([0-9]+[a-zA-Z])F(\d+)$/);
-        if (fMatch) {
-          const followupNum = fMatch[2];
-          const faKey = `${base}FA${followupNum}`;
-          if (!group[faKey] || group[faKey].trim().length === 0) {
-            allFollowupsAnswered = false;
-          }
-        }
-      }
-
-      const isComplete = hasMain && allFollowupsAnswered;
-
-      // Per-question completion marker (e.g., 2aS)
-      responseMap.set(`${base}S`, isComplete ? 'completed' : 'inprogress');
-
-      // Per-group completion marker (e.g., 2state)
-      const groupNum = base.match(/^(\d+)/)?.[1];
-      if (groupNum) {
-        const groupStateKey = `${groupNum}state`;
-        if (!responseMap.has(groupStateKey)) {
-          responseMap.set(groupStateKey, isComplete ? 'completed' : 'inprogress');
-        } else if (responseMap.get(groupStateKey) !== 'completed' && isComplete) {
-          responseMap.set(groupStateKey, 'completed');
-        }
-      }
-    }
-
-    // Upsert all responses
-    for (const [qid, response] of responseMap.entries()) {
-      await db.query(
+      await conn.query(
         `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
          VALUES (?, ?, 'text', ?, ?)
          ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
-        [instanceId, qid, response, studentId]
+        [instanceId, qid, value, studentId]
       );
     }
 
-    // 🔹 NEW: recompute cached group progress for this instance
-    // This is per-instance only, so cheap even if we hit responses.
-    const [[meta]] = await db.query(
+    // ---- 2) Write per-question completion markers (2aS = completed/inprogress) ----
+    // We compute this only for the base questions present in this submit payload.
+    // Base = 2a from 2aFA1, 2aF1, etc.
+    const baseIds = new Set();
+    for (const key of Object.keys(answers)) {
+      const m = String(key).match(/^([0-9]+[a-zA-Z])/);
+      if (m) baseIds.add(m[1]);
+    }
+
+    for (const base of baseIds) {
+      const main = String(answers[base] ?? '').trim();
+      let hasMain = main.length > 0;
+
+      // If followup prompts exist (baseF1, baseF2...), ensure their answers exist (baseFA1, ...)
+      let allFollowupsAnswered = true;
+
+      // Look for prompts baseF#
+      for (const k of Object.keys(answers)) {
+        const fm = String(k).match(new RegExp(`^${base}F(\\d+)$`));
+        if (!fm) continue;
+
+        const n = fm[1];
+        const ansKey = `${base}FA${n}`;
+        const ansVal = String(answers[ansKey] ?? '').trim();
+        if (!ansVal) allFollowupsAnswered = false;
+      }
+
+      const qComplete = hasMain && allFollowupsAnswered;
+      const qState = qComplete ? 'completed' : 'inprogress';
+
+      await conn.query(
+        `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
+         VALUES (?, ?, 'text', ?, ?)
+         ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
+        [instanceId, `${base}S`, qState, studentId]
+      );
+    }
+
+    // ---- 3) Mark the submitted GROUP as completed (this is the critical fix) ----
+    await conn.query(
+      `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
+       VALUES (?, ?, 'text', 'completed', ?)
+       ON DUPLICATE KEY UPDATE response = 'completed', updated_at = CURRENT_TIMESTAMP`,
+      [instanceId, `${groupNum}state`, studentId]
+    );
+
+    // ---- 4) Recompute cached progress from i=1..total_groups using istate ----
+    const [[meta]] = await conn.query(
       `SELECT total_groups FROM activity_instances WHERE id = ?`,
       [instanceId]
     );
-
-    const totalGroups = meta?.total_groups || 0;
+    const totalGroups = Number(meta?.total_groups) || 0;
 
     let completedGroups = 0;
     if (totalGroups > 0) {
-      const [stateRows] = await db.query(
+      const [stateRows] = await conn.query(
         `SELECT question_id, response
          FROM responses
          WHERE activity_instance_id = ?
@@ -605,55 +639,56 @@ async function submitGroupResponses(req, res) {
       );
 
       const stateMap = new Map(
-        stateRows.map(r => [r.question_id, r.response])
+        stateRows.map(r => [String(r.question_id), String(r.response || '').toLowerCase()])
       );
 
       for (let i = 1; i <= totalGroups; i++) {
-        const key = `${i}state`;
-        if (stateMap.get(key) === 'completed') {
-          completedGroups++;
-        } else {
-          // Assume groups are sequential; stop at first incomplete
-          break;
-        }
+        if (stateMap.get(`${i}state`) === 'completed') completedGroups++;
+        else break; // sequential contract
       }
     }
 
-    let progressStatus = 'in_progress';
-    if (totalGroups > 0 && completedGroups >= totalGroups) {
-      progressStatus = 'completed';
-    }
+    const progressStatus =
+      totalGroups > 0 && completedGroups >= totalGroups ? 'completed' : 'in_progress';
 
-    await db.query(
+    await conn.query(
       `UPDATE activity_instances
        SET completed_groups = ?, progress_status = ?
        WHERE id = ?`,
       [completedGroups, progressStatus, instanceId]
     );
 
-    // 🔄 Rotate active student among connected members (unchanged)
-    const [connected] = await db.query(
-      `SELECT student_id FROM group_members WHERE activity_instance_id = ? AND connected = true`,
+    // ---- 5) Rotate active student among connected members ----
+    const [connected] = await conn.query(
+      `SELECT student_id
+       FROM group_members
+       WHERE activity_instance_id = ? AND connected = TRUE`,
       [instanceId]
     );
 
     if (connected.length > 0) {
-      const eligible = connected.filter(m => m.student_id !== studentId);
-      const pickFrom = eligible.length > 0 ? eligible : connected;
+      const eligible = connected.filter(m => Number(m.student_id) !== studentId);
+      const pickFrom = eligible.length ? eligible : connected;
       const next = pickFrom[Math.floor(Math.random() * pickFrom.length)].student_id;
 
-      await db.query(
+      await conn.query(
         `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
         [next, instanceId]
       );
     }
 
-    res.json({ success: true });
+    await conn.commit();
+    return res.json({ success: true, completed_groups: completedGroups, progress_status: progressStatus });
   } catch (err) {
-    console.error("❌ submitGroupResponses:", err);
-    res.status(500).json({ error: 'Failed to save responses' });
+    await conn.rollback();
+    console.error('❌ submitGroupResponses:', err);
+    return res.status(500).json({ error: 'Failed to save responses' });
+  } finally {
+    conn.release();
   }
 }
+
+
 
 
 async function getInstanceGroups(req, res) {
@@ -764,7 +799,6 @@ async function getInstancesForActivityInCourse(req, res) {
         test_start_at: inst.test_start_at,
         test_duration_minutes: inst.test_duration_minutes,
         test_reopen_until: inst.test_reopen_until,
-        submitted_at: inst.submitted_at,
         submitted_at: inst.submitted_at,
         graded_at: inst.graded_at,
         review_complete: inst.review_complete,

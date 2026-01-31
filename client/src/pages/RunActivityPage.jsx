@@ -36,9 +36,12 @@ const roleLabels = {
 };
 
 // Normalize question / group status strings
-const normalizeStatus = (raw) =>
-  raw === 'complete' ? 'complete' : (raw || 'inprogress');
-
+const normalizeStatus = (raw) => {
+  const s = String(raw ?? '').trim().toLowerCase();
+  if (s === 'complete' || s === 'completed') return 'complete';
+  if (s === 'inprogress' || s === 'in_progress') return 'inprogress';
+  return s || 'inprogress';
+};
 
 function isNoAI(val) {
   return String(val ?? '').trim().toLowerCase() === 'none';
@@ -46,10 +49,8 @@ function isNoAI(val) {
 
 // Infer lang for a code cell like "2acode1" by looking up the matching question block.
 function getLangForResponseKey(responseKey, groups) {
-  // base QID like "2c" from "2ccode1"
-  //  const baseQid = String(responseKey).replace(/code\d+$/, '');
+  const baseQid = String(responseKey || '').replace(/code\d+$/i, '');
 
-  // find the question block that owns this responseKey
   let found = null;
   outer: for (const g of groups) {
     for (const b of [g.intro, ...(g.content || [])]) {
@@ -253,6 +254,8 @@ export default function RunActivityPage({
   const [localCode, setLocalCode] = useState({});
 
   const [activity, setActivity] = useState(null);
+
+
   const [groups, setGroups] = useState([]);
   const [activeStudentName, setActiveStudentName] = useState('');
   const [preamble, setPreamble] = useState([]);
@@ -267,6 +270,17 @@ export default function RunActivityPage({
     }
     return null;
   };
+
+  // ✅ Single source of truth for "where are we?"
+  const currentGroupIndex = useMemo(() => {
+    const n = Number(activity?.completed_groups ?? 0);
+    const safe = Number.isFinite(n) && n >= 0 ? n : 0;
+    const len = Number.isFinite(groups?.length) ? groups.length : 0;
+    // clamp to [0, len]
+    return Math.min(safe, len);
+  }, [activity?.completed_groups, groups?.length]);
+
+
   const [skulptLoaded, setSkulptLoaded] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [textFeedbackShown, setTextFeedbackShown] = useState({});
@@ -319,7 +333,7 @@ export default function RunActivityPage({
       ? activeStudentRoles.map((role) => roleLabels[role] || role).join(', ')
       : 'unknown';
 
-  const currentQuestionGroupIndex = useMemo(() => {
+  /*const currentQuestionGroupIndex = useMemo(() => {
     if (!existingAnswers || Object.keys(existingAnswers).length === 0) return 0;
     let count = 0;
 
@@ -332,7 +346,7 @@ export default function RunActivityPage({
     }
 
     return count;
-  }, [existingAnswers, groups]);
+  }, [existingAnswers, groups]);*/
 
 
   const isTestMode = useMemo(() => {
@@ -1653,11 +1667,12 @@ export default function RunActivityPage({
 
       dbg('handleSubmit start', {
         isTestMode,
-        currentQuestionGroupIndex,
+        currentGroupIndex,
         groupCount: groups.length,
         editableContainerFound: !!container,
-        editableContainerAttr: container?.getAttribute?.('data-current-group'),
+        editableContainerAttr: container?.getAttribute('data-current-group'),
       });
+
 
       const currentGroup = groups[currentQuestionGroupIndex];
       blocks = [currentGroup.intro, ...currentGroup.content];
@@ -1845,14 +1860,28 @@ export default function RunActivityPage({
         }
 
         if (!changed) {
-          const msg =
-            'Modify the starter program to solve the task, then run again.';
-          setFollowupsShown((prev) => ({ ...prev, [qid]: msg }));
+          const msg = 'Modify the starter program to solve the task, then submit again.';
+          const targetKey = codeCells[0]?.key || `${qid}code1`;
+
+          setCodeFeedbackShown((prev) => ({ ...prev, [targetKey]: msg }));
+
+          // optional: broadcast to observers
+          if (socket && instanceId) {
+            socket.emit('feedback:update', {
+              instanceId,
+              responseKey: targetKey,
+              feedback: msg,
+              followup: null,
+            });
+          }
+
           answers[`${qid}S`] = 'inprogress';
           unanswered.push(`${qid} (code not changed)`);
+
           codeCells.forEach(({ key, code }) => (answers[key] = code));
           continue;
         }
+
 
         codeCells.forEach(({ key, code }) => (answers[key] = code));
 
@@ -2053,6 +2082,7 @@ export default function RunActivityPage({
             unanswered.push(`${qid} (needs revision)`);
           } else {
             answers[`${qid}S`] = 'complete';
+
             // ✅ clear prior code feedback for this cell so the message disappears
             setCodeFeedbackShown((prev) => {
               const next = { ...prev };
@@ -2315,7 +2345,8 @@ export default function RunActivityPage({
       : pendingCodeGates;
 
     const overrideThisGroup =
-      forceOverride || !!overrideGroups[currentQuestionGroupIndex];
+      forceOverride || !!overrideGroups[currentGroupIndex];
+
 
     const hasAIFromThisRun = unanswered.some((u) =>
       /\(AI feedback\)/.test(u)
@@ -2327,8 +2358,10 @@ export default function RunActivityPage({
         ? 'complete'
         : 'inprogress';
 
-    const stateKey = `${currentQuestionGroupIndex + 1}state`;
+    const stateKey = `${groupNum}state`;
     answers[stateKey] = computedState;
+
+
 
     if (computedState === 'inprogress') {
       const msgParts = [];
@@ -2376,19 +2409,24 @@ export default function RunActivityPage({
 
     try {
 
+      // ✅ Group number is derived only from instance progress
+      const completedCount = Number(activity?.completed_groups ?? 0);
+      const groupNum = completedCount + 1; // 1-based for backend
+
+
       const response = await fetch(
         `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            groupIndex: currentQuestionGroupIndex,
             studentId: user.id,
-            groupState: computedState,
-            answers,
+            groupNum,          // ✅ NEW: 1-based group number
+            answers,           // ✅ send answers exactly as before
           }),
         }
       );
+
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -2722,10 +2760,9 @@ export default function RunActivityPage({
         })}
 
         {groups.map((group, index) => {
-          const stateKey = `${index + 1}state`;
-          const rawState = existingAnswers[stateKey]?.response;
-          const isComplete = normalizeStatus(rawState) === 'complete';
-          const isCurrent = index === currentQuestionGroupIndex;
+          const completedCount = Number(activity?.completed_groups ?? 0);
+          const isComplete = index < completedCount;
+          const isCurrent = index === completedCount;
 
           // In test mode: editable only when window is open and not submitted/locked
           const testEditable =
@@ -2973,12 +3010,12 @@ export default function RunActivityPage({
           </div>
         )}
 
-        {groups.length > 0 &&
-          currentQuestionGroupIndex === groups.length && (
-            <Alert variant="success">
-              All questions complete! Review your responses above.
-            </Alert>
-          )}
+        {groups.length > 0 && currentGroupIndex === groups.length && (
+          <Alert variant="success">
+            All questions complete! Review your responses above.
+          </Alert>
+        )}
+
 
         {isTestMode && overallTestTotals.max > 0 && (isInstructor || isSubmitted) && (
           <Alert variant="info" className="mt-3">
