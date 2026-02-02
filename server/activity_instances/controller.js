@@ -517,7 +517,7 @@ async function setupMultipleGroupInstances(req, res) {
 
           const cleanRole =
             member.role &&
-            ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
+              ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
               ? member.role
               : null;
 
@@ -780,22 +780,20 @@ async function getInstancesForActivityInCourse(req, res) {
         }
       }
 
-      const totalGroups = inst.total_groups || 1;
-
-      let progress;
-      if (inst.progress_status === 'completed') {
-        progress = 'Complete';
-      } else {
-        const cg = Number.isFinite(Number(inst.completed_groups)) ? Number(inst.completed_groups) : 0;
-        // Clamp so UI never shows "N+1" past the end
-        progress = `${Math.min(cg + 1, totalGroups)}`;
-      }
       const roleLabels = { qc: 'Quality Control' };
       groups.push({
         instance_id: inst.instance_id,
         group_number: inst.group_number,
         active_student_id: activeId,
-        progress,
+
+        // ✅ THE DB TRUTH FIELDS YOUR UI WANTS
+        total_groups: inst.total_groups,
+        completed_groups: inst.completed_groups,
+        progress_status: inst.progress_status,
+
+        // Optional convenience label for UI (derived *from* DB truth)
+        // progress: progress,  // you can keep or delete this
+
         test_start_at: inst.test_start_at,
         test_duration_minutes: inst.test_duration_minutes,
         test_reopen_until: inst.test_reopen_until,
