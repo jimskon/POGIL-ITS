@@ -207,3 +207,144 @@ Place these inside:
 }
 ```
 
+## Question-Level AI Semantics (Learning Mode)
+
+coLearn-AI distinguishes **learning-oriented feedback** from **grading**.
+
+The following question-level tags are used **only for ungraded, collaborative learning activities**.
+
+Grading behavior is controlled *exclusively* by the `\score{}` tag and related test / quiz logic.
+
+---
+
+## Overview
+
+Each question may optionally define:
+
+- `\sampleresponses{...}` — what acceptable answers look like
+- `\feedbackprompt{...}` — how and when to respond during learning
+- `\followupprompt{...}` — how to extend thinking after an initial response
+
+These tags **do not assign correctness or scores**.  
+They guide *interpretation, encouragement, and interaction*.
+
+---
+
+## `\sampleresponses{...}` — Acceptance Envelope
+
+Defines examples and constraints for what counts as an acceptable response.
+
+### Purpose
+
+- Describe *likely or representative answers*
+- Define acceptable ranges, equivalences, or conceptual targets
+- Help the AI judge whether a response is “on track”
+
+### May include
+
+- Concrete example answers
+- Conceptual descriptions of what a good answer involves
+- Ranges or tolerances (e.g. “Any rotation roughly between 40–50 degrees”)
+- Multiple acceptable approaches
+
+### Rules
+
+- Never quoted verbatim to students
+- Used only as internal guidance for evaluating *plausibility and relevance*
+- Does **not** imply a single correct answer
+
+### Example
+```
+\sampleresponses{
+Any solution that rotates the square before drawing.
+Angles roughly between 40–50 degrees are acceptable.
+Equivalent approaches that produce a rotated square are fine.
+}
+```
+
+---
+
+## `\feedbackprompt{...}` — Learning Feedback Policy
+
+Describes **how and when** feedback should be given during the activity.
+
+This is **meta-guidance**, not a hint script.
+
+### Purpose
+
+- Specify what to encourage or reinforce
+- Describe how to respond to vague, partial, or near-miss answers
+- Clarify whether approximation is acceptable
+- Indicate when *no feedback* is needed
+
+### May include
+
+- “Any coherent response is fine”
+- “Encourage elaboration if under 5–6 words”
+- “If stuck, suggest experimenting rather than giving the answer”
+- “Focus on conceptual understanding, not syntax”
+
+### Rules
+
+- Never quoted verbatim to students
+- Treated as *policy*, not content
+- Must not override what is actually present in the student’s response or code
+
+### Example
+```
+\feedbackprompt{
+Any coherent attempt is acceptable.
+If the answer is vague, encourage one more concrete observation.
+If groups are stuck, suggest experimenting with one number at a time.
+}
+```
+
+---
+
+## `\followupprompt{...}` — Optional Engagement Extension
+
+Defines an optional follow-up question to **extend thinking**, even after an acceptable response.
+
+### Purpose
+
+- Promote reflection, prediction, or transfer
+- Encourage discussion beyond the minimum required answer
+- Support exploration rather than correction
+
+### Used when
+
+- The initial response is acceptable
+- The activity benefits from deeper engagement
+- Additional interaction is pedagogically valuable
+
+### Rules
+
+- Optional — may be omitted entirely
+- Should be short and open-ended
+- Should not imply the original answer was wrong
+
+### Example
+```
+\followupprompt{
+Why does rotating before drawing change the shape’s orientation?
+}
+```
+
+---
+
+## Design Principles
+
+- These tags support **learning**, not grading
+- They guide *interpretation and interaction*, not correctness
+- Instructor scaffolding must never replace reading the student’s actual work
+- AI feedback must always be grounded in what the student submitted
+
+---
+
+## Relationship to Grading
+
+- **Grading is controlled only by `\score{}` and test / quiz logic**
+- Learning activities using these tags are **never graded**
+- No scoring language (“correct”, “wrong”, points) should appear in learning feedback
+
+
