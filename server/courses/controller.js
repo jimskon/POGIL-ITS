@@ -153,6 +153,7 @@ async function getCourseActivities(req, res) {
       SELECT 
         a.id AS activity_id,
         a.name AS activity_name,
+        a.title AS activity_title,
         a.order_index AS activity_index,
         COALESCE(a.is_test, 0) AS is_test,
 
@@ -195,16 +196,16 @@ async function getCourseActivities(req, res) {
         ON ai.activity_id = a.id
        AND ai.course_id = c.id
       WHERE c.id = ?
-      GROUP BY a.id, a.name, a.order_index, a.is_test
+      GROUP BY a.id, a.name, a.title, a.order_index, a.is_test
       ORDER BY a.order_index ASC
       `,
-      // ✅ FIXED: 4 params for 4 placeholders
       [userId, userId, userId, courseId]
     );
 
     const activities = rows.map((row) => ({
       activity_id: row.activity_id,
-      title: row.activity_name,
+      activity_name: row.activity_name,         // optional, but useful
+      title: row.activity_title || row.activity_name,  // ✅ preferred + safe fallback
       order_index: row.activity_index,
       isTest: !!row.is_test,
       instance_id: row.instance_id || null,
@@ -220,6 +221,7 @@ async function getCourseActivities(req, res) {
       has_groups: row.group_count > 0,
       hidden: !!row.hidden,
     }));
+
 
     res.json(activities);
   } catch (err) {
@@ -753,6 +755,57 @@ async function setCourseActivityHidden(req, res) {
   }
 }
 
+// /courses/controller.js
+async function getGroupsConfigForActivity(req, res) {
+  const { courseId, sourceActivityId } = req.params;
+
+  // permission: instructor/root/creator only (or whatever you want)
+  const role = req.user?.role;
+  if (!['instructor', 'root', 'creator'].includes(role)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    const [rows] = await db.query(
+      `
+      SELECT
+        ai.id AS instance_id,
+        gm.student_id,
+        gm.role
+      FROM activity_instances ai
+      JOIN group_members gm ON gm.activity_instance_id = ai.id
+      WHERE ai.course_id = ?
+        AND ai.activity_id = ?
+      ORDER BY ai.id ASC, gm.id ASC
+      `,
+      [courseId, sourceActivityId]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        error: "No saved groups found for that activity in this course."
+      });
+    }
+
+    // group by instance_id -> members[]
+    const byInstance = new Map();
+    for (const r of rows) {
+      if (!byInstance.has(r.instance_id)) byInstance.set(r.instance_id, []);
+      byInstance.get(r.instance_id).push({
+        student_id: r.student_id,
+        role: r.role || null,
+      });
+    }
+
+    const groups = Array.from(byInstance.values()).map((members) => ({ members }));
+
+    return res.json({ groups });
+  } catch (err) {
+    console.error('❌ getGroupsConfigForActivity:', err);
+    return res.status(500).json({ error: 'Failed to load group config' });
+  }
+}
+
 
 module.exports = {
   getAllCourses,
@@ -768,4 +821,5 @@ module.exports = {
   getCourseProgress,
   getCourseTestResults,
   setCourseActivityHidden,
+  getGroupsConfigForActivity,
 };

@@ -1,83 +1,167 @@
 // server/ai/controller.js
-const OpenAI = require('openai');
-require('dotenv').config();
+const OpenAI = require("openai");
+require("dotenv").config();
+
+const { gradeTestQuestionHttp, gradeTestQuestion } = require("./grading");
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini'; // keep model configurable
+const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
-// ---------- Policy helpers driven by activity guidance ----------
-function stripHtml(s = '') {
+// ---------- Shared helpers ----------
+function stripHtml(s = "") {
   return String(s)
-    .replace(/<br\s*\/?>/gi, '\n')       // keep <br> → newline
-    .replace(/<\/?[A-Za-z!][^>]*>/g, ''); // strip only real tags, not "< 1" or "> 10"
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/?[A-Za-z!][^>]*>/g, "");
 }
 
-const noFollowups = (s) => /^\s*(none|no\s*follow-?ups?|no\s*feedback)\s*$/i
-  .test(String(s || '').trim());
+function normalizeAIResult(obj) {
+  const o = (obj && typeof obj === 'object') ? obj : {};
 
-const isNone = s => /^\s*none\s*$/i.test(String(s || '').trim());
+  const feedbackStr =
+    (typeof o.feedback === 'string' && o.feedback.trim()) ? o.feedback.trim()
+      : (typeof o.comment === 'string' && o.comment.trim()) ? o.comment.trim()
+        : (typeof o.followupQuestion === 'string' && o.followupQuestion.trim()) ? o.followupQuestion.trim()
+          : (typeof o.followup === 'string' && o.followup.trim()) ? o.followup.trim()
+            : '';
+
+  const feedback = feedbackStr ? feedbackStr : null;
+
+  let accepted;
+  if (typeof o.accepted === 'boolean') {
+    accepted = o.accepted;
+  } else if (typeof o.needsRevision === 'boolean') {
+    accepted = !o.needsRevision;
+  } else {
+    // Conservative: if AI said anything but gave no flag, do NOT auto-pass
+    accepted = feedback ? false : true;
+  }
+
+  return { accepted, feedback };
+}
+
+function sendAI(res, payload, status = 200) {
+  // Always enforce the contract at the boundary
+  const accepted = payload?.accepted === true;
+  const feedback =
+    payload?.feedback == null ? null : String(payload.feedback).trim() || null;
+  return res.status(status).json({ accepted, feedback });
+}
+
+// ---------- Positive feedback toggles ----------
+// Activity-level default: Positive feedback ON.
+// Per-question override: put "No-Positive-feedback" anywhere in \followupprompt{...}
+// Case-insensitive everywhere.
+
+const POSITIVE_ON_TOKEN = "positive-feedback";
+const POSITIVE_OFF_TOKEN = "no-positive-feedback";
+
+function parsePositiveFeedbackFromText(text = "") {
+  const raw = stripHtml(text || "");
+  const lower = raw.toLowerCase();
+
+  const hasOff = lower.includes(POSITIVE_OFF_TOKEN);
+  const hasOn = lower.includes(POSITIVE_ON_TOKEN);
+
+  // Remove tokens wherever they appear (case-insensitive)
+  const cleaned = raw
+    .replace(new RegExp(POSITIVE_OFF_TOKEN, "ig"), "")
+    .replace(new RegExp(POSITIVE_ON_TOKEN, "ig"), "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return { hasOff, hasOn, cleaned };
+}
+
+function isPositiveFeedbackEnabled(activityGuidance = "", followupPrompt = "") {
+  const a = parsePositiveFeedbackFromText(activityGuidance);
+  const q = parsePositiveFeedbackFromText(followupPrompt);
+
+  // Question-level overrides always win
+  if (q.hasOff) return false;
+  if (q.hasOn) return true;
+
+  // Activity-level applies if question didn't override
+  if (a.hasOff) return false;
+  if (a.hasOn) return true;
+
+  // Default = ON
+  return true;
+}
+
+
+const isNone = (s) => /^\s*none\s*$/i.test(String(s || "").trim());
 
 const FATAL_PATTERNS = [
-  /Traceback/i, /SyntaxError/i, /NameError/i, /TypeError/i, /ZeroDivisionError/i,
-  /\bruntimeerror\b/i, /\binfinite loop\b/i, /\bwon'?t run\b/i, /\bdoes not run\b/i
+  /Traceback/i,
+  /SyntaxError/i,
+  /NameError/i,
+  /TypeError/i,
+  /ZeroDivisionError/i,
+  /\bruntimeerror\b/i,
+  /\binfinite loop\b/i,
+  /\bwon'?t run\b/i,
+  /\bdoes not run\b/i,
 ];
 
 function isFatal(text) {
-  const t = String(text || '').trim();
-  return !!t && FATAL_PATTERNS.some(r => r.test(t));
+  const t = String(text || "").trim();
+  return !!t && FATAL_PATTERNS.some((r) => r.test(t));
 }
 
+// IMPORTANT: keep “learning encouragement” phrases OUT of this filter.
+// Only strip actual nitpicks: style, naming, spacing, refactor, optimize, extras.
 const SOFT_PATTERNS = [
-  /\bremember\b/i, /\btip:?\b/i, /\bconsider\b/i, /\byou might\b/i, /\bnote that\b/i,
-  /\bstyle\b/i, /\bnaming\b/i, /\bformat(ting)?\b/i, /\bspacing\b/i,
-  /uppercase.*lowercase/i, /\brefactor\b/i, /\boptimi[sz]e\b/i, /\bextra feature\b/i
+  /\bstyle\b/i,
+  /\bnaming\b/i,
+  /\bformat(ting)?\b/i,
+  /\bspacing\b/i,
+  /uppercase.*lowercase/i,
+  /\brefactor\b/i,
+  /\boptimi[sz]e\b/i,
+  /\bextra feature\b/i,
 ];
 
-function detectLangFromCode(src = "") {
-  const s = String(src).trim();
-  if (!s) return null;
-
-  // Very lightweight heuristics
-  if (/\b#include\s*<[^>]+>/.test(s) || /\bint\s+main\s*\(/.test(s) || /std::(cout|cin|string)/.test(s)) {
-    return "cpp";
-  }
-  if (/\bdef\s+\w+\s*\(/.test(s) || /\bprint\s*\(/.test(s) || /^\s*#/.test(s)) {
-    return "python";
-  }
-  return null;
-}
-
-function isSoft(text) {
-  const t = String(text || '').trim();
-  return !t || SOFT_PATTERNS.some(r => r.test(t));
+function isSoftNitpick(text) {
+  const t = String(text || "").trim();
+  return !t || SOFT_PATTERNS.some((r) => r.test(t));
 }
 
 const GIBBERISH_PATTERNS = [
-  /^\s*$/,                                   // empty
-  /^(idk|i don'?t know|dunno|n\/a)\s*$/i,    // no-attempt
-  /^[^a-zA-Z0-9]{3,}$/,                      // punctuation garbage
-  /^[a-z]{1,2}\s*$/i                         // ultra-short tokens
+  /^\s*$/,
+  /^(idk|i don'?t know|dunno|n\/a)\s*$/i,
+  /^[^a-zA-Z0-9]{3,}$/,
+  /^[a-z]{1,2}\s*$/i,
 ];
 
-// Allow short but meaningful “True/False”, numbers, simple ops
 function looksGibberish(ans) {
-  const a = String(ans || '').trim();
-  if (GIBBERISH_PATTERNS.some(r => r.test(a))) return true;
+  const a = String(ans || "").trim();
+  if (GIBBERISH_PATTERNS.some((r) => r.test(a))) return true;
   if (/^(true|false)$/i.test(a)) return false;
   if (/^[\d\s.+\-*/%()=<>!]+$/.test(a)) return false;
   return a.length < 2;
 }
 
+function detectLangFromCode(src = "") {
+  const s = String(src).trim();
+  if (!s) return null;
+  if (
+    /\b#include\s*<[^>]+>/.test(s) ||
+    /\bint\s+main\s*\(/.test(s) ||
+    /std::(cout|cin|string)/.test(s)
+  )
+    return "cpp";
+  if (/\bdef\s+\w+\s*\(/.test(s) || /\bprint\s*\(/.test(s) || /^\s*#/.test(s))
+    return "python";
+  return null;
+}
 
-// Parse the free-text \aicodeguidance into flags
-function derivePolicyFromGuidance(guidanceText = '') {
+// ---------- Guidance → policy ----------
+function derivePolicyFromGuidance(guidanceText = "") {
   const g = stripHtml(guidanceText).toLowerCase().trim();
 
-  // Treat a bare "none" (or synonyms) as "no follow-ups"
   if (/^(none|no\s*follow-?ups?|no\s*follow\s*ups?)$/.test(g)) {
     return {
-      followupGate: 'none',
-      // These flags should NOT read from g here—just default them.
+      followupGate: "none",
       requirementsOnly: false,
       ignoreSpacing: false,
       forbidFStrings: false,
@@ -86,752 +170,391 @@ function derivePolicyFromGuidance(guidanceText = '') {
     };
   }
 
-  const explicitFU = (g.match(/follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i) || [])[1];
+  const explicitFU =
+    (g.match(/follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i) || [])[1] ||
+    null;
+
   const noFollowupFlag = /do not ask a follow up/.test(g);
   const requirementsOnly = /requirements-only/.test(g);
   const ignoreSpacing = /ignore spacing/.test(g);
   const forbidFStrings = /f-strings.*(unavailable|do not|don't)/.test(g);
-  const failOpen = /fail[- ]open/.test(g) || /doesn'?t have to be perfect/.test(g);
+  const failOpen =
+    /fail[- ]open/.test(g) || /doesn'?t have to be perfect/.test(g);
   const noExtras = /do not require extra features|do not require extras/.test(g);
 
-  // Prefer explicit gate; otherwise honor "do not ask a follow up"
   const followupGate = explicitFU
     ? explicitFU.toLowerCase()
-    : (noFollowupFlag ? 'none' : 'default');
+    : noFollowupFlag
+      ? "none"
+      : "default";
 
   return {
-    followupGate,           // 'none' | 'gibberish-only' | 'default'
+    followupGate,
     requirementsOnly,
     ignoreSpacing,
     forbidFStrings,
     failOpen,
-    noExtras
+    noExtras,
   };
 }
 
-const VALUE_TWEAK_PATTERNS = [
-  // Direct “change/adjust/set/use/pick/choose … <var> …”
-  /\b(?:change|adjust|modify|set|pick|choose|use)\b[^.?!]{0,80}\b(?:value|variable|number|input|cost|time|weight|max(?:Time|Cost)?)\b/i,
-
-  // “make/ensure … less than / greater than / < / > / == …”
-  /\b(?:make|ensure)\b[^.?!]{0,80}\b(?:less than|greater than|<=|>=|<|>|equal(?:s)?(?: to)?)\b/i,
-
-  // “should be/use/set … <number or relational> …”
-  /\bshould\s+(?:be|use|set)\b[^.?!]{0,80}\b(?:\d+(?:\.\d+)?|less than|greater than|<=|>=|<|>|equal(?:s)?(?: to)?)\b/i,
-
-  // “should be 33 instead of 31”
-  /\bshould\s+be\s+\d+(?:\.\d+)?\b[^.?!]{0,60}\binstead of\b[^.?!]{0,60}\d+(?:\.\d+)?\b/i,
-
-  // “so that / to make it true/false”
-  /\b(?:so that|to make)\s+it\s+(?:true|false)\b/i,
-];
-
-function mentionsValueTweak(s) {
-  const t = String(s || '').trim();
-  return !!t && VALUE_TWEAK_PATTERNS.some(r => r.test(t));
-}
-
-function codeLooksGibberish(src) {
-  const s = String(src || '').trim();
-  if (!s) return true;                         // empty
-  if (/^[#\s;{}()[\]]+$/.test(s)) return true; // only punctuation/whitespace
-  // If it has no comparisons and no boolean ops, it's probably not addressing the task.
-  if (!/[<>=!]=?|<=|>=/.test(s) && !/\b(and|or|not)\b/i.test(s)) return true;
-  return false;
-}
-
-// ---------------------- STUDENT RESPONSE (TEXT) ----------------------
-async function evaluateStudentResponse(req, res) {
-  const {
-    questionText,
-    studentAnswer,
-    sampleResponse = "",
-    feedbackPrompt = "",
-    followupPrompt = "",
-    forceFollowup = false,
-    context = {},
-    guidance = "",
-    codeContext = ""        // optional code shown with the question
-  } = req.body || {};
-
-  if (String(feedbackPrompt).trim().toLowerCase() === "none") {
-    return res.status(200).json({ feedback: null, followup: null, verdict: "minor" });
-  }
-  const qp = String(feedbackPrompt || '').trim().toLowerCase();
-  if (/^(none|no\s*follow-?ups?|no\s*follow\s*ups?)$/.test(qp) && !forceFollowup) {
-    return res.status(200).json({ followupQuestion: null, meta: { reason: 'policy_no_followups' } });
-  }
-  if (!questionText || studentAnswer == null) {
-    return res.status(200).json({ followupQuestion: null, meta: { reason: 'missing_fields' } });
-  }
-
-  try {
-    const activityGuide = stripHtml(guidance || '');
-    const questionGuide = stripHtml(feedbackPrompt || '');
-    const policy = getEffectivePolicy(activityGuide, questionGuide);
-
-    // -------------------- REQUIREMENTS-ONLY SHORTCUT --------------------
-    // If the policy says "requirements-only", we try to accept anything that is:
-    //   - non-empty
-    //   - not gibberish
-    //   - and clearly related to the question or sample response.
-    //
-    // Only truly off-topic or nonsense answers fall through to full AI eval.
-    const relaxedMode = policy.requirementsOnly === true;
-
-    if (relaxedMode && !forceFollowup) {
-      const answerRaw = String(studentAnswer || '').trim();
-
-      // Empty, obvious non-answer, or gibberish → let AI handle it
-      if (
-        !answerRaw ||
-        looksGibberish(answerRaw) ||
-        /^\s*(none|idk|i don't know)\s*$/i.test(answerRaw)
-      ) {
-        // fall through to AI below
-      } else {
-        // Cheap relevance check: look for overlap of meaningful words
-        const q = stripHtml(questionText || '').toLowerCase();
-        const s = stripHtml(answerRaw).toLowerCase();
-        const sample = stripHtml(sampleResponse || '').toLowerCase();
-
-        const extractWords = (text) =>
-          text.split(/\W+/).filter(w => w.length > 4); // ignore tiny/common words
-
-        const qWords = extractWords(q);
-        const sampleWords = extractWords(sample);
-
-        const containsAny = (words, haystack) =>
-          words.some(w => haystack.includes(w));
-
-        const relevant =
-          (qWords.length && containsAny(qWords, s)) ||
-          (sampleWords.length && containsAny(sampleWords, s));
-
-        if (relevant) {
-          // Close enough for requirements-only: accept with no follow-up.
-          return res.status(200).json({
-            followupQuestion: null,
-            feedback: null,
-            meta: { reason: 'requirements_only_ok' }
-          });
-        }
-        // If not clearly relevant, fall through to full AI eval.
-      }
-    }
-    // --------------------------------------------------------------------
-
-    // Respect explicit "no follow-ups"
-    if (policy.followupGate === 'none' && !forceFollowup) {
-      return res.status(200).json({ followupQuestion: null, meta: { reason: 'policy_no_followups' } });
-    }
-
-    const sys = [
-      'You are a concise, supportive grading assistant for an intro programming class.',
-      'Judge answers by whether they are coherent, on-topic, and meet the prompt’s intent.',
-      'Accept partial/approximate answers that show understanding.',
-      'Ask at most ONE follow-up only when the answer is incoherent, off-prompt, clearly wrong overall, overly simple for the task, or missing a required artifact (e.g., pasted output/tests).',
-      'No nitpicks about style/naming/spacing/performance. Ignore extra features.',
-      questionGuide ? `Per-question guidance (do not quote): ${questionGuide}` : '',
-      activityGuide ? `Activity guidance (do not quote): ${activityGuide}` : '',
-      'Return ONLY the JSON per the schema.',
-    ].filter(Boolean).join('\n');
-
-    const schema = `Return JSON only:
-{"decision":"accept"|"followup","reason":"incoherent"|"off_prompt"|"wrong"|"overly_simple"|"missing_artifact","followup":null|string,"confidence":number}`;
-
-    const user = [
-      `Question: ${stripHtml(questionText)}`,
-      codeContext ? `Shown code:\n${stripHtml(codeContext)}` : '',
-      sampleResponse ? `Reference (optional): ${stripHtml(sampleResponse)}` : '',
-      `Student's submission:\n${stripHtml(studentAnswer)}`,
-      '',
-      schema,
-      forceFollowup ? 'If uncertain, prefer "followup".' : 'If reasonable, prefer "accept".',
-      'Follow-up must be ≤2 short sentences and encouraging/actionable.',
-      'For “paste outputs/tests” prompts, require actual console output from multiple runs if the prompt asks.',
-    ].join('\n');
-
-    const chat = await openai.chat.completions.create({
-      model: MODEL,
-      messages: [
-        { role: 'system', content: sys },
-        { role: 'user', content: user },
-      ],
-      temperature: 0.2,
-      max_tokens: 180,
-    });
-
-    const raw = (chat.choices?.[0]?.message?.content ?? '').trim();
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    let obj;
-    try {
-      obj = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(raw);
-    } catch {
-      return res.status(200).json({ followupQuestion: null, meta: { reason: 'unparsable' } });
-    }
-
-    const decision = String(obj.decision || '').toLowerCase();
-    let question = obj.followup ? String(obj.followup).trim() : null;
-    const reason = obj.reason || '';
-
-    // Suppress “change the input value” nags if your guides say not to
-    const forbidValueNags =
-      /\bjudge\b.*\blogic\b.*\bnot\b.*\b(true|false|result)\b/i.test(`${questionGuide} ${activityGuide}`) ||
-      /\bdo not ask\b.*\bchange\b.*\bvalues?\b/i.test(`${questionGuide} ${activityGuide}`);
-    if (forbidValueNags && question && mentionsValueTweak(question)) {
-      question = null;
-    }
-
-    // Drop soft, nudge-y fluff
-    if (isSoft(question) && !isFatal(question)) question = null;
-
-    if (decision !== 'followup' || !question) {
-      return res.status(200).json({ followupQuestion: null, meta: { reason: 'accepted' } });
-    }
-
-    // Keep it short (≤25 words) and end at the first '?'
-    const qIdx = question.indexOf('?');
-    if (qIdx >= 0) question = question.slice(0, qIdx + 1);
-    const words = question.split(/\s+/);
-    if (words.length > 25) question = words.slice(0, 25).join(' ') + '?';
-
-    return res.status(200).json({ followupQuestion: question, meta: { reason } });
-  } catch (err) {
-    console.error('❌ OpenAI evaluate-response failed:', err);
-    return res.status(200).json({ followupQuestion: null, meta: { reason: 'ai_unavailable' } });
-  }
-}
-
-// ---------------------- PYTHON CODE (GROUP MODE / GENERAL) ----------------------
-async function evaluatePythonCode(req, res) {
-  const { questionText, studentCode, codeVersion, guidance = "", isCodeOnly = false, feedbackPrompt = "" } = req.body;
-
-  if (isNone(feedbackPrompt)) {
-    return res.status(200).json({ feedback: null, followup: null, verdict: 'minor' });
-  }
-  if (!questionText || !studentCode) {
-    return res.status(400).json({ error: 'Missing question text or student code' });
-  }
-  if (String(feedbackPrompt).trim().toLowerCase() === "none") {
-    return res.status(200).json({ feedback: null, followup: null, verdict: "minor" });
-  }
-
-  const combinedGuide = stripHtml(guidance || '');
-  // Split "per-question --- activity" (robust: any number of hyphens wrapped by newlines)
-  const parts = combinedGuide.split(/\n-{3,}\n/);
-  const questionGuide = parts[0] || "";
-  const activityGuide = parts[1] || "";
-
-  const policy = getEffectivePolicy(activityGuide, questionGuide);
-
-  const rules = [
-    policy.requirementsOnly && '- Judge ONLY whether it meets the stated task; no extras.',
-    policy.ignoreSpacing && '- Ignore whitespace/formatting; never mention spacing.',
-    policy.forbidFStrings && "- Do NOT suggest or use f-strings (environment may not support them).",
-    policy.noExtras && '- Do NOT ask for additional features beyond the prompt.',
-    policy.failOpen && '- If minor issues but functionally OK, treat as correct.',
-    '- Assume standard Python 3 with full f-string support. ' +
-    'If a print statement already has matching parentheses, NEVER say it is missing a parenthesis. ' +
-    'Do NOT recommend switching to f-strings as an “improvement” when they are not used.'
-  ].filter(Boolean).join('\n');
-
-
-  const prompt = `
-You are a Python tutor evaluating a student's code.
-
-Per-question guidance (authoritative; do not quote):
-${questionGuide || "(none)"}
-
-Activity guidance (fallback; do not quote):
-${activityGuide || "(none)"}
-
-Task:
-${questionText}
-
-Student's code (v${codeVersion}):
-\`\`\`python
-${studentCode}
-\`\`\`
-
-Return STRICT JSON:
-{"verdict":"correct"|"minor"|"wrong"|"off_prompt"|"error","feedback":string|null,"followup":string|null}
-
-Definitions:
-- "correct": Meets the task; acceptable output/logic.
-- "minor": Only trivial output/format differences that do NOT affect the task.
-- "wrong": Runs or is plausible but logic/output does NOT meet the task.
-- "off_prompt": Solves something else / ignores instructions.
-- "error": Syntax/runtime error or cannot reasonably run.
-
-Rules:
-- If "correct" or "minor": feedback=null, followup=null. (No nits.)
-- If "wrong": feedback = ONE concise fix hint (single sentence). followup=null.
-- If "off_prompt" or "error": feedback = ONE concise fix hint; followup = ONE short (5–15 words) nudge question.
-- No style/naming/formatting/spacing advice. No extra features beyond the prompt.
-- Do NOT suggest f-strings if guidance says they’re unavailable.
-${rules ? '\n' + rules : ''}
-`.trim();
-
-  try {
-    const chat = await openai.chat.completions.create({
-      model: MODEL,
-      messages: [{ role: 'user', content: prompt }],
-      temperature: 0.2,
-      max_tokens: 220,
-    });
-
-    const raw = (chat.choices?.[0]?.message?.content ?? '').trim();
-    const match = raw.match(/\{[\s\S]*\}/);
-    let obj = match ? JSON.parse(match[0]) : JSON.parse(raw);
-
-    let verdict = String(obj.verdict || '').toLowerCase();
-    let feedback = obj.feedback && String(obj.feedback).trim() || null;
-    let followup = obj.followup && String(obj.followup).trim() || null;
-
-    // Drop soft/nitpicky stuff
-    if (isSoft(feedback)) feedback = null;
-    if (isSoft(followup)) followup = null;
-
-    // Enforce "no followups" gate
-    if (policy.followupGate === 'none') followup = null;
-
-    // If guides say "judge logic, not result / don't ask to change values", kill value-tweak nags
-    const forbidValueNags =
-      /\bjudge\b.*\blogic\b.*\bnot\b.*\b(true|false|result)\b/i.test(`${questionGuide} ${activityGuide}`) ||
-      /\bdo not ask\b.*\bchange\b.*\bvalues?\b/i.test(`${questionGuide} ${activityGuide}`);
-
-    if (forbidValueNags) {
-      if (mentionsValueTweak(followup)) followup = null;
-      if (mentionsValueTweak(feedback)) feedback = null;
-    }
-
-    // Normalize by verdict
-    if (verdict === 'wrong') {
-      followup = null;
-    } else if (verdict === 'correct' || verdict === 'minor') {
-      feedback = null; followup = null;
-    } else if (verdict === 'off_prompt' || verdict === 'error') {
-      if (policy.followupGate === 'none') followup = null;
-    } else {
-      verdict = 'minor';
-      feedback = null; followup = null;
-    }
-
-    // If policy is "gibberish-only", allow follow-up only for gibberish or true errors
-    if (policy.followupGate === 'gibberish-only') {
-      const gib = codeLooksGibberish(studentCode);
-      if (!gib && verdict !== 'error' && verdict !== 'off_prompt') followup = null;
-    }
-
-    // (Optional) quick debug log
-    console.log('[POLICY]', {
-      followupGate: policy.followupGate,
-      verdict,
-      forbidValueNags,
-      hasFU: !!followup
-    });
-
-    return res.json({ feedback, followup, verdict });
-  } catch (err) {
-    console.error('Error evaluating Python code:', err);
-    return res.status(200).json({ feedback: null, followup: null, verdict: 'minor' });
-  }
-}
-
-// ---------------------- POLICY COMBINER ----------------------
 function getEffectivePolicy(activityGuide, questionGuide) {
   const a = derivePolicyFromGuidance(activityGuide);
   const q = derivePolicyFromGuidance(questionGuide);
 
-  const qBareNone = /^\s*(none|no\s*follow-?ups?|no\s*follow\s*ups?)\s*$/i
-    .test(stripHtml(questionGuide || ''));
+  // If question guide is literally "none", interpret as "no followups"
+  const qBareNone = /^\s*(none|no\s*follow-?ups?|no\s*follow\s*ups?)\s*$/i.test(
+    stripHtml(questionGuide || "")
+  );
 
-  const qFU = (String(questionGuide || '').match(/follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i) || [])[1];
-  const aFU = (String(activityGuide || '').match(/follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i) || [])[1];
+  const qFU =
+    (String(questionGuide || "").match(
+      /follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i
+    ) || [])[1] || null;
+
+  const aFU =
+    (String(activityGuide || "").match(
+      /follow[-\s]*ups?\s*:\s*(none|gibberish-only|default)/i
+    ) || [])[1] || null;
 
   const followupGate = qBareNone
-    ? 'none'
-    : (qFU || aFU || q.followupGate || a.followupGate || 'default').toLowerCase();
+    ? "none"
+    : (qFU || aFU || q.followupGate || a.followupGate || "default").toLowerCase();
 
-  // For other flags, let per-question override when it explicitly mentions them; otherwise inherit.
   const pick = (flag, regex) => {
-    const qMentions = new RegExp(regex, 'i').test(String(questionGuide || ''));
+    const qMentions = new RegExp(regex, "i").test(String(questionGuide || ""));
     return qMentions ? q[flag] : a[flag];
   };
 
   return {
     followupGate,
-    requirementsOnly: pick('requirementsOnly', 'requirements-only'),
-    ignoreSpacing: pick('ignoreSpacing', 'ignore spacing'),
-    forbidFStrings: pick('forbidFStrings', 'f-strings'),
-    failOpen: pick('failOpen', "fail[- ]open|doesn'?t have to be perfect"),
-    noExtras: pick('noExtras', 'do not require extra features|do not require extras'),
+    requirementsOnly: pick("requirementsOnly", "requirements-only"),
+    ignoreSpacing: pick("ignoreSpacing", "ignore spacing"),
+    forbidFStrings: pick("forbidFStrings", "f-strings"),
+    failOpen: pick("failOpen", "fail[- ]open|doesn'?t have to be perfect"),
+    noExtras: pick(
+      "noExtras",
+      "do not require extra features|do not require extras"
+    ),
   };
 }
 
-// ---------------------- GENERIC CODE EVAL (PY/CPP/etc.) ----------------------
-async function evaluateCode({
-  questionText,
-  studentCode,
-  codeVersion,
-  guidance = "",      // pass \aicodeguidance text here
-  isCodeOnly = false, // true if this is a pure code question (allows a short follow-up only if policy permits)
-  feedbackPrompt = "",
-  lang,
-}) {
-  if (!questionText || !studentCode) {
-    return { feedback: null, followup: null };
-  }
-  if (String(feedbackPrompt).trim().toLowerCase() === "none") {
-    return { feedback: null, followup: null };
-  }
+// ---------- STUDENT RESPONSE (TEXT, LEARNING MODE) ----------
+async function evaluateStudentResponse(req, res) {
+  const {
+    questionText,
+    studentAnswer,
+    sampleResponse = "", // \sampleresponses
+    feedbackPrompt = "", // \feedbackprompt  (meta policy; do not quote)
+    followupPrompt = "", // \followupprompt  (optional planned engagement)
+    forceFollowup = false,
+    guidance = "",       // \aicodeguidance  (activity-level)
+    codeContext = "",
+  } = req.body || {};
 
-  const combined = stripHtml(guidance || '');
-  const parts = combined.split(/\n-{3,}\n/);     // '---' splitter
-  const qGuide = parts[0] || "";
-  const aGuide = parts[1] || combined;
-  const policy = getEffectivePolicy(aGuide, qGuide);
-
-  // ✅ infer language BEFORE using effLang
-  const inferred = detectLangFromCode(studentCode);
-  const effLang = (lang || inferred || "").toLowerCase();
-
-  let langLabel = "the correct language for this code";
-  if (effLang === "cpp" || effLang === "c++") langLabel = "C++";
-  else if (effLang === "python") langLabel = "Python";
-
-  const rules = [
-    policy.requirementsOnly ? '- Judge ONLY whether it meets the stated task; no extras.' : '',
-    policy.ignoreSpacing ? '- Ignore whitespace/formatting; never mention spacing.' : '',
-    policy.forbidFStrings ? "- Do NOT suggest or use f-strings (environment may not support them)." : '',
-    policy.noExtras ? '- Do NOT ask for additional features beyond the prompt.' : '',
-    policy.failOpen ? '- If minor issues but functionally OK, treat as correct (feedback=null, followup=null).' : '',
-    effLang === 'python'
-      ? '- Assume standard Python 3 with f-strings; do NOT claim missing parentheses for syntactically valid print statements.'
-      : ''
-  ].filter(Boolean).join('\n');
-
-  const prompt = `
-You are a ${langLabel} tutor evaluating a student's code.
-
-Per-question guidance (AUTHORITATIVE for this item):
-${qGuide || "(none)"}
-
-Activity guidance (FALLBACK if the question is silent):
-${aGuide || "(none)"}
-
-Task:
-${questionText}
-
-Student's code (v${codeVersion}):
-\`\`\`${effLang === "cpp" || effLang === "c++" ? "cpp" : effLang === "python" ? "python" : ""}
-${studentCode}
-\`\`\`
-
-Return STRICT JSON with exactly these keys:
-{"feedback": string|null, "followup": string|null}
-
-Rules:
-- Base ALL syntax and feedback on ${langLabel}.
-- If the code is fully correct and appropriate: feedback=null, followup=null.
-- Otherwise:
-  - "feedback" = ONE concise, actionable suggestion (single sentence).
-  - "followup" = ${isCodeOnly ? 'ONE short tutor-style question (5–20 words) nudging toward the fix.' : 'null'}
-- No style/naming/formatting nits. No extra features beyond the prompt.
-- Do NOT give Python-specific advice for non-Python code.
-${rules ? '\n' + rules : ''}
-`.trim();
-
-  const chat = await openai.chat.completions.create({
-    model: MODEL,
-    messages: [{ role: 'user', content: prompt }],
-    temperature: 0.2,
-    max_tokens: 180,
-  });
-
-  const raw = (chat.choices?.[0]?.message?.content ?? '').trim();
-  const match = raw.match(/\{[\s\S]*\}/);
-  let obj = match ? JSON.parse(match[0]) : JSON.parse(raw);
-
-  let feedback =
-    obj.feedback == null || String(obj.feedback).trim() === ''
-      ? null
-      : String(obj.feedback).trim();
-  let followup =
-    obj.followup == null || String(obj.followup).trim() === ''
-      ? null
-      : String(obj.followup).trim();
-
-  // ---- Policy filter (same spirit as evaluatePythonCode) ----
-  const fatal = isFatal(feedback) || isFatal(followup);
-
-  // If guidance says no follow-ups, drop them even if fatal (keep feedback).
-  if (policy.followupGate === 'none') {
-    followup = null;
+  // Hard “no feedback at all” switch (rare, but keep it)
+  if (isNone(feedbackPrompt) || !questionText || studentAnswer == null) {
+    return sendAI(res, { accepted: true, feedback: null });
   }
 
-  // We still strip soft/nitpicky stuff unless it's clearly fatal.
-  if (isSoft(feedback) && !fatal) feedback = null;
-  if (isSoft(followup) && !fatal) followup = null;
 
-  return { feedback, followup };
-}
+  const activityGuide = stripHtml(guidance || "");
+  const questionGuide = stripHtml(feedbackPrompt || "");
+  const policy = getEffectivePolicy(activityGuide, questionGuide);
 
-// ---------------------- TEST-MODE: gradeTestQuestion ----------------------
-async function gradeTestQuestion({
-  questionText,
-  scores = {}, // rubric buckets from the sheet: { code, output, response }
-  responseText = "", // student's written answer
-  codeCells = [], // [{ code: "...", lang?: "cpp"|"python", label?: "..." }, ...]
-  outputText = "", // captured program output, if any
-  rubric = {}, // same as scores in most calls
-  detailedFeedback = true, // default ON for now
-}) {
-  const bucketPoints = (bucket) => {
-    if (bucket == null) return 0;
-    if (typeof bucket === "number") return bucket;
-    if (typeof bucket === "object" && typeof bucket.points === "number") {
-      return bucket.points;
+  const answerRaw = String(studentAnswer || "").trim();
+
+  // Positive-feedback directives live inside followupprompt; strip them and compute flags.
+  const positiveEnabled = isPositiveFeedbackEnabled(guidance, followupPrompt);
+  const fuParsed = parsePositiveFeedbackFromText(followupPrompt);
+  const followupRaw = fuParsed.cleaned;
+  const followupIsNone = /^(none|no\s*follow-?ups?)$/i.test(followupRaw);
+
+
+  // Quick accept path for requirements-only + non-gibberish
+  // (Still allows planned followups via followupprompt)
+  if (policy.requirementsOnly && !forceFollowup) {
+    if (!answerRaw || looksGibberish(answerRaw)) {
+      // fall through to AI
+    } else {
+      // cheap relevance check
+      const q = stripHtml(questionText || "").toLowerCase();
+      const s = stripHtml(answerRaw).toLowerCase();
+      const sample = stripHtml(sampleResponse || "").toLowerCase();
+
+      const extractWords = (text) =>
+        text.split(/\W+/).filter((w) => w.length > 4);
+
+      const qWords = extractWords(q);
+      const sampleWords = extractWords(sample);
+      const containsAny = (words, haystack) => words.some((w) => haystack.includes(w));
+
+      const relevant =
+        (qWords.length && containsAny(qWords, s)) ||
+        (sampleWords.length && containsAny(sampleWords, s));
+
+      if (relevant) {
+        // On-track: optionally use author follow-up (unless policy forbids)
+        return sendAI(res, { accepted: true, feedback: null });
+
+
+      }
     }
-    return 0;
-  };
-
-  // ---- Point caps per band ----
-  const codeBucket = scores.code || rubric.code || {};
-  const runBucket = scores.output || rubric.output || {};
-  const respBucket = scores.response || rubric.response || {};
-
-  const maxCodePts = bucketPoints(codeBucket);
-  const maxRunPts = bucketPoints(runBucket);
-  const maxRespPts = bucketPoints(respBucket);
-
-  const maxTotal = maxCodePts + maxRunPts + maxRespPts;
-
-  if (maxTotal <= 0) {
-    console.log("🧮 gradeTestQuestion: no points configured; skipping AI grade.");
-    return {
-      codeScore: 0,
-      codeFeedback: "",
-      runScore: 0,
-      runFeedback: "",
-      responseScore: 0,
-      responseFeedback: "",
-    };
   }
 
-  // ---- Rubric text per band ----
-  const codeRubricText =
-    stripHtml(
-      codeBucket.instructionsRaw || codeBucket.instructionsHtml || ""
-    ) || "(none)";
+  // If answer is obviously empty/gibberish, we can force a follow-up regardless of author followupPrompt.
+  const obviouslyBad = !answerRaw || looksGibberish(answerRaw);
 
-  const runRubricText =
-    stripHtml(runBucket.instructionsRaw || runBucket.instructionsHtml || "") ||
-    "(none)";
-
-  const responseRubricText =
-    stripHtml(respBucket.instructionsRaw || respBucket.instructionsHtml || "") ||
-    "(none)";
-
-  console.log('🧮 [gradeTestQuestion] INPUTS', {
-    q: (questionText || '').slice(0, 80),
-    maxCodePts, maxRunPts, maxRespPts,
-    hasResponseText: !!(responseText || '').trim(),
-    codeCellsCount: Array.isArray(codeCells) ? codeCells.length : 0,
-    hasOutputText: !!(outputText || '').trim(),
-    codeRubricLen: codeRubricText.length,
-    runRubricLen: runRubricText.length,
-    respRubricLen: responseRubricText.length,
-  });
-  // ---- Build code bundle for the prompt ----
-  const codeBundle = codeCells
-    .map((cell, idx) => {
-      const lang = (cell.lang || "").toLowerCase();
-      const label = cell.label ? ` (${cell.label})` : "";
-      const fence =
-        lang === "cpp" || lang === "c++"
-          ? "cpp"
-          : lang === "python"
-            ? "python"
-            : "";
-      return [
-        `Code cell ${idx + 1}${label}:`,
-        "```" + fence,
-        cell.code || "",
-        "```",
-      ].join("\n");
-    })
-    .join("\n\n");
-
+  // Build prompt
   const sys = [
-    "You are grading a short quiz/exam question for an intro programming course.",
-    "You will assign numeric points separately for:",
-    "- CODE (implementation quality / correctness)",
-    "- RUN (program output, tests, harness behavior)",
-    "- RESPONSE (written explanation or short answer).",
-    "Use the rubric text exactly; partial credit is allowed.",
-    "If a band has full credit, feedback for that band should be null.",
-    "Return ONLY JSON, no commentary.",
+    "You are a concise, supportive learning facilitator for an ungraded collaborative activity.",
+    "Decide whether the submission is sufficient to proceed.",
+    "Return ONLY JSON matching the schema exactly.",
+    "If the submission is on-topic and sufficient, set accepted=true.",
+    "If the submission is off-topic, incoherent, or too thin/vague, set accepted=false.",
+    "If accepted=false, feedback MUST be a short actionable hint (1–2 sentences).",
+    "If accepted=true, feedback must be null unless positive feedback is enabled.",
+    "Do NOT mention grading, points, rubrics, or scoring.",
   ].join("\n");
 
-  const userLines = [];
+  const schema = `Return JSON only:
+{"accepted":true|false,
+ "feedback": null|string}`;
 
-  userLines.push("Question:");
-  userLines.push(stripHtml(questionText || "(missing)"));
-  userLines.push("");
+  const user = [
+    `Question:\n${stripHtml(questionText)}`,
+    codeContext ? `Shown code/context:\n${stripHtml(codeContext)}` : "",
+    sampleResponse
+      ? `Sample / acceptance envelope (do not quote):\n${stripHtml(sampleResponse)}`
+      : "",
+    questionGuide ? `Instructor feedbackprompt (meta; do not quote):\n${questionGuide}` : "",
+    followupRaw && !followupIsNone
+      ? `Instructor followupprompt (optional; prefer this wording if you choose to ask a follow-up):\n${followupRaw}`
+      : "",
+    `Student submission:\n${stripHtml(studentAnswer)}`,
+    "",
+    schema,
+    forceFollowup || obviouslyBad
+      ? "If uncertain, prefer {\"accepted\":false}"
+      : "If reasonable, prefer {\"accepted\":true}",
 
-  userLines.push(`Max code points: ${maxCodePts}`);
-  userLines.push(`Max run/output points: ${maxRunPts}`);
-  userLines.push(`Max response points: ${maxRespPts}`);
-  userLines.push("");
-
-  userLines.push("Rubric for CODE band:");
-  userLines.push(codeRubricText);
-  userLines.push("");
-
-  userLines.push("Rubric for RUN/OUTPUT band:");
-  userLines.push(runRubricText);
-  userLines.push("");
-
-  userLines.push("Rubric for RESPONSE band:");
-  userLines.push(responseRubricText);
-  userLines.push("");
-
-  userLines.push("Student written RESPONSE (if any):");
-  userLines.push(stripHtml(responseText || "(none)"));
-  userLines.push("");
-
-  if (codeBundle) {
-    userLines.push("Student CODE submission(s):");
-    userLines.push(codeBundle);
-    userLines.push("");
-  } else {
-    userLines.push("Student CODE submission(s): (none)");
-    userLines.push("");
-  }
-
-  if (outputText) {
-    userLines.push("PROGRAM OUTPUT / TEST OUTPUT:");
-    userLines.push(stripHtml(outputText));
-    userLines.push("");
-  } else {
-    userLines.push("PROGRAM OUTPUT / TEST OUTPUT: (none provided).");
-    userLines.push("");
-  }
-
-userLines.push(
-  `Return strict JSON only in this form:\n` +
-  `{"codeScore": number, "codeFeedback": string|null, ` +
-  `"runScore": number, "runFeedback": string|null, ` +
-  `"responseScore": number, "responseFeedback": string|null}\n` +
-  `- codeScore must be between 0 and ${maxCodePts}.\n` +
-  `- runScore must be between 0 and ${maxRunPts}.\n` +
-  `- responseScore must be between 0 and ${maxRespPts}.\n` +
-  `- For any band with full credit, feedback for that band MUST be null.\n` +
-
-  // 🔑 Core change starts here
-  `- For bands with less than full credit, feedback must explain the MEDICAL or CONCEPTUAL issue only.\n` +
-  `- DO NOT mention grading, points, rubrics, scores, or how to improve a score.\n` +
-  `- DO NOT give advice about future answers (forbidden phrases include: "to get full credit", "you should", "consider providing", "next time").\n` +
-  `- Ignore minor spelling or typographical errors if the intended meaning is clear.\n` +
-
-  `- If the RESPONSE is multiple-choice (single letter a/b/c/d):\n` +
-  `  * First line: "Correct answer: <letter>."\n` +
-  `  * Then ONE sentence explaining why the chosen option is medically incorrect.\n` +
-  `  * Then ONE sentence explaining why the correct option is medically correct.\n` +
-  `  * Do NOT say "invalid", "incorrect response format", or similar.\n` +
-
-  `- If the RESPONSE is short-answer:\n` +
-  `  * Explain what key clinical concept is missing, incorrect, or incomplete.\n` +
-  `  * Frame the explanation as medical reasoning, not scoring guidance.\n`
-);
-
-
-  const user = userLines.join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   try {
     const chat = await openai.chat.completions.create({
       model: MODEL,
       messages: [
-        { name: "grader", role: "system", content: sys },
+        { role: "system", content: sys },
         { role: "user", content: user },
       ],
-      temperature: 0.1,
-      max_tokens: 260,
-      // 🔑 Enforce that the model returns a JSON object
-      response_format: { type: "json_object" },
+      temperature: 0.2,
+      max_tokens: 220,
     });
 
     const raw = (chat.choices?.[0]?.message?.content ?? "").trim();
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+
     let obj;
-
     try {
-      obj = JSON.parse(raw);
-
-    } catch (e) {
-      console.error("❌ gradeTestQuestion JSON parse error:", e, "raw:", raw);
-      return {
-        codeScore: 0,
-        codeFeedback: "",
-        runScore: 0,
-        runFeedback: "",
-        responseScore: 0,
-        responseFeedback: "",
-      };
+      obj = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(raw);
+    } catch {
+      return res.status(200).json({ accepted: true, feedback: null });
     }
 
-    let codeScore = Number(obj.codeScore ?? 0);
-    let runScore = Number(obj.runScore ?? 0);
-    let responseScore = Number(obj.responseScore ?? 0);
+    const norm = normalizeAIResult(obj); // <-- accepts feedback/feedback/followupQuestion etc
 
-    if (!Number.isFinite(codeScore)) codeScore = 0;
-    if (!Number.isFinite(runScore)) runScore = 0;
-    if (!Number.isFinite(responseScore)) responseScore = 0;
+    let { accepted } = norm;
+    let feedback = norm.feedback; // string|null
 
-    // Clamp into bands
-    codeScore = Math.max(0, Math.min(maxCodePts, codeScore));
-    runScore = Math.max(0, Math.min(maxRunPts, runScore));
-    responseScore = Math.max(0, Math.min(maxRespPts, responseScore));
+    // preserve your soft-nitpick filter
+    if (isSoftNitpick(feedback) && !isFatal(feedback)) feedback = null;
 
-    const codeFeedback =
-      (obj.codeFeedback && String(obj.codeFeedback).trim()) || "";
-    const runFeedback =
-      (obj.runFeedback && String(obj.runFeedback).trim()) || "";
-    const responseFeedback =
-      (obj.responseFeedback && String(obj.responseFeedback).trim()) || "";
+    // If NOT accepted, require feedback
+    if (!accepted && !feedback) {
+      feedback = "Add one more concrete detail that directly answers the prompt.";
+    }
 
-    console.log("🧮 gradeTestQuestion result:", {
-      maxCodePts,
-      maxRunPts,
-      maxRespPts,
-      codeScore,
-      runScore,
-      responseScore,
-    });
+    // If accepted and positive feedback disabled, feedback must be null
+    if (accepted && !positiveEnabled) feedback = null;
 
-    return {
-      codeScore,
-      codeFeedback,
-      runScore,
-      runFeedback,
-      responseScore,
-      responseFeedback,
-    };
+    // If accepted and positive enabled but model gave nothing, optionally use author followupprompt as praise/nudge
+    if (accepted && positiveEnabled && !feedback && followupRaw && !followupIsNone) {
+      feedback = followupRaw;
+    }
+
+    return sendAI(res, { accepted, feedback });
+
   } catch (err) {
-    console.error("❌ gradeTestQuestion OpenAI error:", err);
-    return {
-      codeScore: 0,
-      codeFeedback: "",
-      runScore: 0,
-      runFeedback: "",
-      responseScore: 0,
-      responseFeedback: "",
-    };
+    console.error("❌ OpenAI evaluateStudentResponse failed:", err);
+    return res.status(200).json({ accepted: true, feedback: null });
+  }
+} // <-- closes evaluateStudentResponse
+
+// ---------- PYTHON CODE (LEARNING MODE) ----------
+async function evaluatePythonCode(req, res) {
+  const {
+    questionText,
+    studentCode,
+    codeVersion,
+    guidance = "",
+    isCodeOnly = false,
+    feedbackPrompt = "",
+    sampleResponse = "",
+    followupPrompt = "",
+  } = req.body || {};
+
+  if (!questionText || !studentCode) {
+    return res.status(400).json({ error: "Missing question text or student code" });
+  }
+
+  const result = await evaluateCode({
+    questionText,
+    studentCode,
+    codeVersion,
+    guidance,
+    isCodeOnly,
+    feedbackPrompt,
+    sampleResponse,
+    followupPrompt,
+    lang: "python",
+  });
+
+  return sendAI(res, result);
+}
+
+
+function safeJsonObject(raw = "") {
+  const s = String(raw || "").trim();
+  const match = s.match(/\{[\s\S]*\}/);
+  const candidate = match ? match[0] : s;
+  try {
+    const obj = JSON.parse(candidate);
+    return obj && typeof obj === "object" ? obj : null;
+  } catch {
+    return null;
   }
 }
 
-// ---------------------- TEST-MODE: C++ wrapper ----------------------
+async function evaluateCode({
+  questionText,
+  studentCode,
+  codeVersion,
+  guidance = "",
+  isCodeOnly = false,
+  feedbackPrompt = "",
+  sampleResponse = "",
+  followupPrompt = "",
+  lang,
+}) {
+  // Default: fail-open (don’t block if AI fails)
+  const base = { accepted: true, feedback: null };
+
+  if (!questionText || !studentCode) return base;
+
+  const suppressFeedback = isNone(feedbackPrompt);
+
+  const combined = stripHtml(guidance || "");
+  const parts = combined.split(/\n-{3,}\n/);
+  const qGuide = stripHtml(feedbackPrompt || "");
+  const aGuide = parts[1] || parts[0] || combined;
+  const policy = getEffectivePolicy(aGuide, qGuide);
+
+  const inferred = detectLangFromCode(studentCode);
+  const effLang = String(lang || inferred || "").toLowerCase();
+
+  let langLabel = "the correct language for this code";
+  if (effLang === "cpp" || effLang === "c++") langLabel = "C++";
+  else if (effLang === "python") langLabel = "Python";
+
+  const positiveEnabled = isPositiveFeedbackEnabled(guidance, followupPrompt);
+  const fuParsed = parsePositiveFeedbackFromText(followupPrompt);
+  const followupRaw = fuParsed.cleaned;
+  const followupIsNone = /^(none|no\s*follow-?ups?)$/i.test(followupRaw);
+
+  const rules = [
+    policy.requirementsOnly && "- Judge ONLY whether it meets the stated task; no extras.",
+    policy.ignoreSpacing && "- Ignore whitespace/formatting; never mention spacing.",
+    policy.forbidFStrings && "- Do NOT suggest or use f-strings (environment may not support them).",
+    policy.noExtras && "- Do NOT ask for additional features beyond the prompt.",
+    policy.failOpen && "- If minor issues but functionally OK, treat as acceptable.",
+    "feedbackprompt is meta guidance; do NOT quote it.",
+    "Before suggesting to add a line, verify it is not already present (or equivalent) in the code.",
+  ].filter(Boolean).join("\n");
+
+  const fence =
+    effLang === "cpp" || effLang === "c++" ? "cpp" :
+      effLang === "python" ? "python" : "";
+
+  const prompt = `
+You are a ${langLabel} tutor facilitating an UNGRADED collaborative learning activity.
+
+Task:
+${stripHtml(questionText)}
+
+Acceptance envelope (do not quote):
+${stripHtml(sampleResponse || "(none)")}
+
+Instructor feedbackprompt (meta; do not quote):
+${qGuide || "(none)"}
+
+Student's code (v${codeVersion}):
+\`\`\`${fence}
+${studentCode}
+\`\`\`
+
+Return STRICT JSON with exactly these keys:
+{"accepted":true|false,"feedback":string|null}
+
+Rules:
+- accepted=true if it meets the task; feedback may be null OR brief encouragement (no nitpicks).
+- accepted=false if incomplete/off-prompt; feedback = ONE actionable hint.
+- No style/naming/formatting nits. No extra features beyond the prompt.
+${rules ? "\n" + rules : ""}
+`.trim();
+
+  let chat;
+  try {
+    chat = await openai.chat.completions.create({
+      model: MODEL,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.2,
+      max_tokens: 220,
+    });
+  } catch (err) {
+    console.error("❌ OpenAI evaluateCode failed:", err);
+    return base;
+  }
+
+  const raw = (chat.choices?.[0]?.message?.content ?? "").trim();
+  const obj = safeJsonObject(raw);
+  if (!obj) return base;
+
+  // modelAccepted is the model’s real gate
+  const norm = normalizeAIResult(obj);
+  let { accepted } = norm;
+  let feedback = norm.feedback;
+
+  // strip soft nitpicks, etc (keep your existing filters)
+  if (isSoftNitpick(feedback) && !isFatal(feedback)) feedback = null;
+
+  // If NOT accepted, we require a feedback (a real actionable hint)
+  if (!accepted && !feedback) {
+    feedback = "Make one small change that directly moves the code toward the stated task.";
+  }
+
+  // If accepted and positive feedback disabled, feedback must be null
+  if (accepted && !positiveEnabled) feedback = null;
+
+  // If suppressFeedback, always null (but still allowed to reject!)
+  if (suppressFeedback) feedback = null;
+
+  return { accepted, feedback };
+}
+
+
+
 async function evaluateCppCode(req, res) {
   const {
     questionText,
@@ -840,75 +563,38 @@ async function evaluateCppCode(req, res) {
     guidance = "",
     isCodeOnly = false,
     feedbackPrompt = "",
+    sampleResponse = "",
+    followupPrompt = "",
   } = req.body || {};
 
   if (!questionText || !studentCode) {
     return res.status(400).json({ error: "Missing question text or student code" });
   }
 
-  try {
-    const { feedback, followup } = await evaluateCode({
-      questionText,
-      studentCode,
-      codeVersion,
-      guidance,
-      isCodeOnly,
-      feedbackPrompt,
-      lang: "cpp", // 🔒 FORCE C++
-    });
+  const result = await evaluateCode({
+    questionText,
+    studentCode,
+    codeVersion,
+    guidance,
+    isCodeOnly,
+    feedbackPrompt,
+    sampleResponse,
+    followupPrompt,
+    lang: "cpp",
+  });
 
-    // "minor" is a safe default verdict for the HTTP shape
-    return res.status(200).json({ feedback, followup, verdict: "minor" });
-  } catch (err) {
-    console.error("Error evaluating C++ code:", err);
-    return res
-      .status(200)
-      .json({ feedback: null, followup: null, verdict: "minor" });
-  }
-}
-
-// ---------------------- TEST-MODE: HTTP wrapper for gradeTestQuestion ----------------------
-async function gradeTestQuestionHttp(req, res) {
-  try {
-    const {
-      questionText,
-      scores,
-      responseText,
-      codeCells,
-      outputText,
-      rubric,
-    } = req.body || {};
-
-    if (!questionText || !scores) {
-      return res
-        .status(400)
-        .json({ error: 'Missing questionText or scores' });
-    }
-
-    const result = await gradeTestQuestion({
-      questionText,
-      scores,
-      responseText: responseText || '',
-      codeCells: Array.isArray(codeCells) ? codeCells : [],
-      outputText: outputText || '',
-      rubric: rubric || scores,
-    });
-
-    return res.json(result);
-  } catch (err) {
-    console.error('❌ gradeTestQuestionHttp failed:', err);
-    return res.status(500).json({ error: 'grading failed' });
-  }
+  return sendAI(res, result);
 }
 
 
+// NOTE: plug your existing gradeTestQuestion + gradeTestQuestionHttp here unchanged
+// (omitted in this snippet to keep it readable)
 
-// ---------------------- EXPORTS ----------------------
 module.exports = {
   evaluateStudentResponse,
   evaluatePythonCode,
   evaluateCode,
+  evaluateCppCode,
   gradeTestQuestion,
   gradeTestQuestionHttp,
-  evaluateCppCode,
 };

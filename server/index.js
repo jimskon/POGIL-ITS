@@ -46,6 +46,16 @@ app.use(cors({
 }));
 
 app.options("*", cors());
+app.use((req, res, next) => {
+  res.setHeader('X-POGIL-PID', String(process.pid));
+  next();
+});
+
+app.use('/api/ai', (req, res, next) => {
+  console.log('*** HIT /api/ai ***', req.method, req.originalUrl, 'pid=', process.pid);
+  next();
+});
+
 app.use('/api/ai', aiRoutes);
 
 app.use(session({

@@ -7,5 +7,8 @@ export default defineConfig({
   server: {
     host: true,
     port: 3000
-  }
+  },
+  build: {
+    //sourcemap: true,  // Enable if you need source maps for debugging
+  },
 });

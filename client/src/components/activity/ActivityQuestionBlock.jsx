@@ -1,15 +1,29 @@
+// components/activity/ActivityQuestionBlock.jsx
 import React from 'react';
 import { Form, Table } from 'react-bootstrap';
+import { makeResponseAttrs } from '../../utils/responseDom';
 
 export default function ActivityQuestionBlock({ question, editable = false }) {
+  // Must be stable and unique within the submit scope
+  const qid = question.qid || question.id || question.key;
   return (
     <div className="mb-4">
       <p dangerouslySetInnerHTML={{ __html: question.text }} />
       {editable ? (
-        <Form.Control as="textarea" rows={question.responseLines || 1} placeholder="Your response..." />
-      ) : (
-        <Form.Control as="textarea" disabled value="(Student will answer here in Run mode)" rows={question.responseLines || 1} />
-      )}
+        <Form.Control
+          as="textarea"
+          rows={question.responseLines || 1}
+          placeholder="Your response..."
+          {...makeResponseAttrs({ key: qid, kind: "text", qid })}
+          defaultValue={question.prefill || ""}
+        />) : (
+        <Form.Control
+          as="textarea"
+          disabled
+          rows={question.responseLines || 1}
+          value="(Student will answer here in Run mode)"
+          {...makeResponseAttrs({ key: qid, kind: "text", qid })}
+        />)}
       {question.samples.length > 0 && (
         <>
           <h6>Sample Responses</h6>

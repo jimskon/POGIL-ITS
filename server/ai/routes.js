@@ -25,6 +25,7 @@ router.post('/evaluate-python-code', evaluatePythonCode);
 
 // Generic code (Python/C++/etc.)
 router.post('/evaluate-code', async (req, res) => {
+  console.error('[AI!!!!!] /api/ai/evaluate-code');
   try {
     const result = await evaluateCode(req.body);
     return res.json(result);
