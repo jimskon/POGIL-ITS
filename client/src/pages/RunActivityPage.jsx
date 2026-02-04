@@ -333,7 +333,7 @@ export default function RunActivityPage({
       ? activeStudentRoles.map((role) => roleLabels[role] || role).join(', ')
       : 'unknown';
 
-  /*const currentQuestionGroupIndex = useMemo(() => {
+  /*const currentGroupIndex = useMemo(() => {
     if (!existingAnswers || Object.keys(existingAnswers).length === 0) return 0;
     let count = 0;
 
@@ -1674,7 +1674,7 @@ export default function RunActivityPage({
       });
 
 
-      const currentGroup = groups[currentQuestionGroupIndex];
+      const currentGroup = groups[currentGroupIndex];
       blocks = [currentGroup.intro, ...currentGroup.content];
       dbg('handleSubmit blocks', {
         blocksLen: blocks?.length,
@@ -2358,6 +2358,10 @@ export default function RunActivityPage({
         ? 'complete'
         : 'inprogress';
 
+    // ✅ Group number is derived only from instance progress
+    const completedCount = Number(activity?.completed_groups ?? 0);
+    const groupNum = completedCount + 1; // 1-based for backend
+
     const stateKey = `${groupNum}state`;
     answers[stateKey] = computedState;
 
@@ -2410,7 +2414,7 @@ export default function RunActivityPage({
     try {
 
       // ✅ Group number is derived only from instance progress
-      const completedCount = Number(activity?.completed_groups ?? 0);
+      //const completedCount = Number(activity?.completed_groups ?? 0);
       const groupNum = completedCount + 1; // 1-based for backend
 
 
@@ -2446,7 +2450,7 @@ export default function RunActivityPage({
           });
         }
 
-        if (currentQuestionGroupIndex + 1 === groups.length) {
+        if (currentGroupIndex + 1 === groups.length) {
           await fetch(`${API_BASE_URL}/api/responses/mark-complete`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
