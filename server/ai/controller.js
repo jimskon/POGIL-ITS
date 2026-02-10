@@ -241,6 +241,21 @@ function getEffectivePolicy(activityGuide, questionGuide) {
 
 // ---------- STUDENT RESPONSE (TEXT, LEARNING MODE) ----------
 async function evaluateStudentResponse(req, res) {
+  const t0 = Date.now();
+  const qidHint =
+    req.body?.qid ||
+    req.body?.questionId ||
+    (req.body?.questionText ? stripHtml(req.body.questionText).slice(0, 30) : '(no qid)');
+
+  console.log('AI eval START', { qidHint });
+
+  res.on('finish', () => {
+    console.log('AI eval FINISH', {
+      qidHint,
+      status: res.statusCode,
+      ms: Date.now() - t0,
+    });
+  });
   const {
     questionText,
     studentAnswer,

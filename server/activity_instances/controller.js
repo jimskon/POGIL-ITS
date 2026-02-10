@@ -208,6 +208,8 @@ async function getActivityInstanceById(req, res) {
          ai.group_number,
          ai.status,
          ai.total_groups,
+         ai.completed_groups,
+         ai.progress_status,
          ai.test_start_at,
          ai.test_duration_minutes,
          ai.test_reopen_until,
@@ -603,7 +605,7 @@ async function submitGroupResponses(req, res) {
       }
 
       const qComplete = hasMain && allFollowupsAnswered;
-      const qState = qComplete ? 'completed' : 'inprogress';
+      const qState = qComplete ? 'complete' : 'inprogress';
 
       await conn.query(
         `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
@@ -616,8 +618,8 @@ async function submitGroupResponses(req, res) {
     // ---- 3) Mark the submitted GROUP as completed (this is the critical fix) ----
     await conn.query(
       `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-       VALUES (?, ?, 'text', 'completed', ?)
-       ON DUPLICATE KEY UPDATE response = 'completed', updated_at = CURRENT_TIMESTAMP`,
+       VALUES (?, ?, 'text', 'complete', ?)
+       ON DUPLICATE KEY UPDATE response = 'complete', updated_at = CURRENT_TIMESTAMP`,
       [instanceId, `${groupNum}state`, studentId]
     );
 
@@ -643,7 +645,7 @@ async function submitGroupResponses(req, res) {
       );
 
       for (let i = 1; i <= totalGroups; i++) {
-        if (stateMap.get(`${i}state`) === 'completed') completedGroups++;
+        if (stateMap.get(`${i}state`) === 'complete') completedGroups++;
         else break; // sequential contract
       }
     }

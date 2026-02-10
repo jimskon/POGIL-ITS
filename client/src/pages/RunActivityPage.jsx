@@ -273,12 +273,17 @@ export default function RunActivityPage({
 
   // ✅ Single source of truth for "where are we?"
   const currentGroupIndex = useMemo(() => {
-    const n = Number(activity?.completed_groups ?? 0);
-    const safe = Number.isFinite(n) && n >= 0 ? n : 0;
-    const len = Number.isFinite(groups?.length) ? groups.length : 0;
-    // clamp to [0, len]
-    return Math.min(safe, len);
+    const completed = Number(activity?.completed_groups ?? 0);
+    const safeCompleted = Number.isFinite(completed) && completed >= 0 ? completed : 0;
+
+    const len = Array.isArray(groups) ? groups.length : 0;
+    if (len <= 0) return 0;
+
+    // completed_groups means “how many groups are finished”
+    // so the next group index is exactly completed_groups, but must be <= last index
+    return Math.min(safeCompleted, len - 1);
   }, [activity?.completed_groups, groups?.length]);
+
 
 
   const [skulptLoaded, setSkulptLoaded] = useState(false);
@@ -576,7 +581,9 @@ export default function RunActivityPage({
         );
         const data = await res.json();
         if (data.activeStudentId !== activeStudentId) {
+          console.log('[RUNDBG] after submit, about to reload', { loading: loadingRef.current, t: Date.now() });
           await loadActivity();
+          console.log('[RUNDBG] after submit, reload done');
         }
       } catch { }
     }, 10000);
@@ -943,25 +950,39 @@ export default function RunActivityPage({
   }
 
   async function loadActivity() {
-    if (loadingRef.current) return;
+    if (loadingRef.current) {
+      console.log('[RUNDBG] loadActivity SKIP (already loading)', { t: Date.now() });
+      return;
+    }
+
     loadingRef.current = true;
+    console.log('[RUNDBG] loadActivity ENTER', { t: Date.now() });
+
     try {
-      const instanceRes = await fetch(
-        `${API_BASE_URL}/api/activity-instances/${instanceId}`
-      );
-      let instanceData = await instanceRes.json();
+      const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
+      const instanceData = await instanceRes.json();
+
+      console.log('[RUNDBG] loadActivity fetched completed_groups', {
+        completed_groups: instanceData?.completed_groups,
+        total_groups: instanceData?.total_groups,
+      });
+
       setActivity(instanceData);
 
-      if (!instanceData.total_groups) {
-        await fetch(
-          `${API_BASE_URL}/api/activity-instances/${instanceId}/refresh-groups`
-        );
-        const updatedRes = await fetch(
-          `${API_BASE_URL}/api/activity-instances/${instanceId}`
-        );
+      let effective = instanceData;
+
+      if (!effective.total_groups) {
+        await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/refresh-groups`);
+        const updatedRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
         const updatedData = await updatedRes.json();
+
+        console.log('[RUNDBG] loadActivity after refresh-groups', {
+          completed_groups: updatedData?.completed_groups,
+          total_groups: updatedData?.total_groups,
+        });
+
         setActivity(updatedData);
-        instanceData = updatedData;
+        effective = updatedData;
       }
 
       const activeRes = await fetch(
@@ -1213,6 +1234,7 @@ export default function RunActivityPage({
       console.error('Failed to load activity data', err);
     } finally {
       loadingRef.current = false;
+      console.log('[RUNDBG] loadActivity EXIT', { t: Date.now() });
     }
   }
 
@@ -1221,19 +1243,20 @@ export default function RunActivityPage({
     studentAnswer,
     { forceFollowup = false } = {}
   ) {
-    // ✅ TEST MODE: no AI feedback at all (unchanged behavior)
-    if (isTestMode) return null;
+    // ✅ TEST MODE: no AI feedback at all
+    if (isTestMode) return { accepted: true, feedback: null, skipped: true };
 
     const qid = `${questionBlock.groupId}${questionBlock.id}`;
     const qText = getQuestionText(questionBlock, qid);
 
-    // Respect per-question "none"
+    // ✅ If sheet disables AI, DO NOT CALL AI. Treat as accepted.
     if (
       isLockedFU(qid) ||
       isNoAI(questionBlock?.followups?.[0]) ||
       isNoAI(questionBlock?.feedback?.[0])
     ) {
-      return null;
+      console.log('[EVAL SKIP] AI disabled for question', { qid });
+      return { accepted: true, feedback: null, skipped: true };
     }
 
     const codeContext = [
@@ -1271,11 +1294,22 @@ export default function RunActivityPage({
       });
 
       const raw = await res.text();
+
+      // ✅ if backend returns an error, treat as failure
+      if (!res.ok) {
+        console.error('[EVAL HTTP ERROR]', {
+          qid,
+          status: res.status,
+          rawHead: raw.slice(0, 200),
+        });
+        throw new Error(`evaluate-response failed ${res.status}`);
+      }
+
       let data = null;
       try {
         data = raw ? JSON.parse(raw) : null;
       } catch (e) {
-        console.error('[EVAL RECV response] JSON parse failed', {
+        console.error('[EVAL JSON parse failed]', {
           qid,
           status: res.status,
           rawHead: raw.slice(0, 200),
@@ -1283,8 +1317,6 @@ export default function RunActivityPage({
         throw e;
       }
 
-      // ✅ Normalize to the ONLY contract we want everywhere:
-      // { accepted: true|false, feedback: null|string }
       const accepted = data?.accepted !== false; // default true
       const feedback =
         typeof data?.feedback === 'string' && data.feedback.trim()
@@ -1300,7 +1332,8 @@ export default function RunActivityPage({
         feedbackLen: (feedback || '').length,
       });
 
-      return { accepted, feedback };
+      // ✅ IMPORTANT: this function MUST NOT write to `answers` here.
+      return { accepted, feedback, skipped: false };
     } catch (err) {
       console.error('[EVAL ERROR response]', {
         qid,
@@ -1308,11 +1341,11 @@ export default function RunActivityPage({
         msg: err?.message,
       });
 
-      // IMPORTANT: do not deadlock on AI failure.
-      // Treat as accepted with a neutral feedback note (optional).
-      return { accepted: true, feedback: '(AI unavailable; continuing)' };
+      // For now you’re choosing to NOT deadlock on AI failure:
+      return { accepted: true, feedback: '(AI unavailable; continuing)', skipped: false };
     }
   }
+
 
 
   function buildMarkdownTableFromBlock(block, container) {
@@ -1720,7 +1753,9 @@ export default function RunActivityPage({
           return;
         }
 
+        console.log('[RUNDBG] after submit, about to reload', { loading: loadingRef.current, t: Date.now() });
         await loadActivity();
+        console.log('[RUNDBG] after submit, reload done');
         alert('Test submitted. Your answers have been recorded.');
       } catch (err) {
         console.error('❌ Test submission failed:', err);
@@ -2221,20 +2256,18 @@ export default function RunActivityPage({
         return next;
       });
 
-      // Also clear persisted F1/FM by default for this submission.
-      // If AI returns new feedback, we'll overwrite below.
       answers[`${qid}F1`] = '';
       answers[`${qid}FM`] = 'accepted';   // default; may flip to needsRevision
       answers[`${qid}AF`] = 'resolved';   // default; may flip to active
 
       // Tell observers to clear the yellow box too
       emitTextAIState(qid, { f1: '', fm: 'accepted', af: 'resolved' });
-
       if (!looksCodeOnlyNow && !isTestMode) {
         const ai = await evaluateResponseWithAI(block, aiInput);
 
-        accepted = ai ? ai.accepted : true;
-        feedback = ai ? (ai.feedback || null) : null;
+        // ✅ Default accept unless AI explicitly rejects
+        accepted = ai.accepted !== false;
+        feedback = typeof ai.feedback === 'string' ? ai.feedback : '';
 
         const newHasFeedback = typeof feedback === 'string' && feedback.trim().length > 0;
         const becomingAccepted = (prevAF === 'active') && accepted;
@@ -2242,15 +2275,11 @@ export default function RunActivityPage({
         if (newHasFeedback) {
           const f = feedback.trim();
 
-          // 1) ALWAYS display feedback (accepted or not)
           setTextFeedbackShown((prev) => ({ ...prev, [qid]: f }));
 
-          // Persist it
           answers[`${qid}F1`] = f;
           answers[`${qid}FM`] = accepted ? 'accepted' : 'needsRevision';
         } else {
-          // 2) No new feedback returned this submit:
-          //    If we transition from not-accepted -> accepted, clear old temporary feedback.
           if (becomingAccepted && prevFM === 'needsrevision') {
             setTextFeedbackShown((prev) => {
               const next = { ...prev };
@@ -2258,24 +2287,20 @@ export default function RunActivityPage({
               return next;
             });
 
-            // Clear persisted temporary feedback in DB
             answers[`${qid}F1`] = '';
             answers[`${qid}FM`] = 'accepted';
           }
-          // Otherwise: leave existing accepted feedback alone (it persists)
         }
 
-        // Always update AF
         answers[`${qid}AF`] = accepted ? 'resolved' : 'active';
 
-        // Sync observers ONLY if we changed F1/FM or AF
         emitTextAIState(qid, {
           af: answers[`${qid}AF`],
-          ...(Object.prototype.hasOwnProperty.call(answers, `${qid}F1`)
-            ? { f1: answers[`${qid}F1`], fm: answers[`${qid}FM`] }
-            : {}),
+          f1: answers[`${qid}F1`],
+          fm: answers[`${qid}FM`],
         });
       }
+
 
       // Completion gate for this question depends ONLY on accepted
       answers[`${qid}S`] = accepted ? 'complete' : 'inprogress';
@@ -2301,102 +2326,66 @@ export default function RunActivityPage({
 
     const pendingBase = unanswered.length > 0;
 
-    // TEXT AI gating: use textFeedbackShown instead of followupsShown
-    const pendingTextFollowups = qBlocks.some((b) => {
+    // ✅ Group number is derived only from instance progress
+    const completedCount = Number(activity?.completed_groups ?? 0);
+    const groupNum = completedCount + 1; // 1-based for backend
+
+    // ✅ Only acceptance matters: if any question isn't complete, group is inprogress
+    const pendingByStatus = qBlocks.some((b) => {
       const qid = `${b.groupId}${b.id}`;
-      if (isCodeOnlyMap[qid]) return false;
-
-      const af = String(
-        answers[`${qid}AF`] ?? existingAnswers[`${qid}AF`]?.response ?? ''
-      ).trim().toLowerCase();
-      const suggestionStored = String(
-        answers[`${qid}F1`] ?? existingAnswers[`${qid}F1`]?.response ?? ''
-      ).trim();
-
-      const suggestionUI = String(textFeedbackShown[qid] ?? '').trim();
-
-      const suggestion = suggestionStored || suggestionUI;
-
-
-      const status = normalizeStatus(
-        answers[`${qid}S`] ?? existingAnswers[`${qid}S`]?.response
-      );
-
-      // Pending if there is an AI suggestion and the question isn't marked complete
-      return (af === 'active' || !!suggestion) && status !== 'complete';
-    });
-
-    const pendingCodeGates = qBlocks.some((b) => {
-      const qid = `${b.groupId}${b.id}`;
-      if (!isCodeOnlyMap[qid]) return false;
-
       const status = normalizeStatus(
         answers[`${qid}S`] ?? existingAnswers[`${qid}S`]?.response
       );
       return status !== 'complete';
     });
 
-    // In "requirements-only" mode, AI feedback is advisory, not a gate
-    const effectiveTextPending = isRequirementsOnly
-      ? false
-      : pendingTextFollowups;
-    const effectiveCodePending = isRequirementsOnly
-      ? false
-      : pendingCodeGates;
 
     const overrideThisGroup =
       forceOverride || !!overrideGroups[currentGroupIndex];
 
-
-    const hasAIFromThisRun = unanswered.some((u) =>
-      /\(AI feedback\)/.test(u)
-    );
-
     const computedState =
-      overrideThisGroup ||
-        (!pendingBase && !effectiveTextPending && !effectiveCodePending)
+      overrideThisGroup || (!pendingBase && !pendingByStatus)
         ? 'complete'
         : 'inprogress';
 
-    // ✅ Group number is derived only from instance progress
-    const completedCount = Number(activity?.completed_groups ?? 0);
-    const groupNum = completedCount + 1; // 1-based for backend
+
 
     const stateKey = `${groupNum}state`;
     answers[stateKey] = computedState;
 
-
+    console.log('[RUNDBG] gate vars', {
+      pendingBase,
+      unanswered,
+      pendingByStatus,
+      overrideThisGroup,
+      computedState,
+      S: qBlocks.map(b => {
+        const qid = `${b.groupId}${b.id}`;
+        return [qid, answers[`${qid}S`], existingAnswers[`${qid}S`]?.response];
+      }),
+    });
 
     if (computedState === 'inprogress') {
-      const msgParts = [];
+      console.warn('[RUNDBG] BLOCKING GROUP ADVANCE', {
+        pendingBase,
+        pendingByStatus,
+        unanswered,
+        overrideThisGroup,
+        statuses: qBlocks.map(b => {
+          const qid = `${b.groupId}${b.id}`;
+          return {
+            qid,
+            S_new: answers[`${qid}S`],
+            S_old: existingAnswers[`${qid}S`]?.response,
+            hasAnswer: String(answers[qid] ?? '').trim().length > 0,
+          };
+        }),
+      });
 
-      if (unanswered.length) {
-        msgParts.push(`Please complete: ${unanswered.join(', ')}.`);
-      }
-
-      if ((effectiveTextPending || hasAIFromThisRun) && !isRequirementsOnly) {
-        msgParts.push(
-          'There are AI suggestions (yellow boxes) for one or more questions. ' +
-          'You can revise your answers and submit again, or click ' +
-          '"Continue without addressing AI feedback" to move on.'
-        );
-      }
-
-      if (effectiveCodePending && !isRequirementsOnly) {
-        msgParts.push(
-          'One or more code questions still have issues according to the code checker. ' +
-          'Try improving your program and submit again, or ask your instructor about overriding.'
-        );
-      }
-
-      if (msgParts.length === 0) {
-        msgParts.push('There are still items to review in this group.');
-      }
-
-      //alert(msgParts.join(' '));
       setIsSubmitting(false);
       return;
     }
+
 
     if (
       computedState === 'complete' &&
@@ -2417,6 +2406,7 @@ export default function RunActivityPage({
       //const completedCount = Number(activity?.completed_groups ?? 0);
       const groupNum = completedCount + 1; // 1-based for backend
 
+      console.log('[RUNDBG] ABOUT TO SUBMIT-GROUP', { groupNum, computedState, stateKey, stateVal: answers[stateKey] });
 
       const response = await fetch(
         `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`,
@@ -2430,13 +2420,16 @@ export default function RunActivityPage({
           }),
         }
       );
+      console.log('[RUNDBG] submit-group response', { ok: response.ok, status: response.status });
 
 
       if (!response.ok) {
         const errorData = await response.json();
         alert(`Submission failed: ${errorData.error || 'Unknown error'}`);
       } else {
+        console.log('[RUNDBG] after submit, about to reload', { loading: loadingRef.current, t: Date.now() });
         await loadActivity();
+        console.log('[RUNDBG] after submit, reload done');
         if (!isTestMode && overrideThisGroup) {
           // Clear any lingering AI suggestions for this group on the client side
           const qBlocksForGroup = blocks.filter((b) => b.type === 'question');
