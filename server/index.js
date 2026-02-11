@@ -133,36 +133,96 @@ const io = new Server(server, {
 
 global.io = io;
 
-io.on('connection', (socket) => {
-  console.log('🔌 Socket.IO client connected');
+function roomOfInstance(instanceId) {
+  return `instance-${instanceId}`;
+}
 
-  socket.on('joinRoom', (instanceId) => {
+global.emitInstanceState = function emitInstanceState(instanceId, patch) {
+  global.io.to(roomOfInstance(instanceId)).emit('instance:state', {
+    instanceId,
+    patch,
+    ts: Date.now(),
+  });
+};
+
+global.emitResponsePatch = function emitResponsePatch(instanceId, key, value, meta = {}) {
+  global.io.to(roomOfInstance(instanceId)).emit('response:patch', {
+    instanceId,
+    key,
+    value,
+    ...meta,
+    ts: Date.now(),
+  });
+};
+
+global.emitAIPatch = function emitAIPatch(instanceId, qid, patch) {
+  global.io.to(roomOfInstance(instanceId)).emit('ai:patch', {
+    instanceId,
+    qid,
+    ...patch, // { f1, fm, af }
+    ts: Date.now(),
+  });
+};
+
+
+
+io.on('connection', (socket) => {
+  console.log('🔌 Socket.IO client connected', socket.id);
+
+  socket.on('instance:join', ({ instanceId }) => {
     socket.join(`instance-${instanceId}`);
     console.log(`👥 Client joined room instance-${instanceId}`);
   });
 
-  socket.on('response:update', ({ instanceId, responseKey, value }) => {
+  // Back-compat: old joinRoom
+  socket.on('joinRoom', (instanceId) => {
+    socket.join(`instance-${instanceId}`);
+    console.log(`👥 Client joined room instance-${instanceId} (legacy)`);
+  });
+
+  // Typing / observer sync (not authoritative)
+  socket.on('response:update', ({ instanceId, responseKey, value, answeredBy }) => {
     socket.to(`instance-${instanceId}`).emit('response:update', {
       instanceId,
       responseKey,
-      value
+      value,
+      answeredBy,
+      ts: Date.now(),
     });
   });
 
-  // ✅ NEW: Broadcast AI feedback to other users in the room
-  socket.on('feedback:update', ({ instanceId, responseKey, feedback }) => {
+  // New name (preferred)
+  socket.on('response:upsert', ({ instanceId, key, value, answeredBy }) => {
+    socket.to(`instance-${instanceId}`).emit('response:patch', {
+      instanceId,
+      key,
+      value,
+      answeredBy,
+      ts: Date.now(),
+    });
+  });
+
+  // Code feedback / AI guidance relay (non-authoritative UI hints)
+  socket.on('feedback:update', ({ instanceId, responseKey, feedback, followup }) => {
     socket.to(`instance-${instanceId}`).emit('feedback:update', {
       instanceId,
       responseKey,
-      feedback
+      feedback,
+      followup,
+      ts: Date.now(),
     });
   });
 
+  // Optional: socket-based presence ping
+  socket.on('presence:ping', ({ instanceId, userId }) => {
+    // implement presence map later; for now just accept
+  });
 
   socket.on('disconnect', () => {
-    console.log('❌ Socket.IO client disconnected');
+    console.log('❌ Socket.IO client disconnected', socket.id);
   });
 });
+
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`ITS server with Socket.IO running on port ${PORT}`);

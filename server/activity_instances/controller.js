@@ -126,17 +126,30 @@ async function clearResponsesForInstance(req, res) {
     // Reset submission + reopen state so instructor can restart
     await db.query(
       `UPDATE activity_instances
-       SET submitted_at     = NULL,
-           graded_at        = NULL,
-           review_complete  = 0,
-           reviewed_at      = NULL,
-           points_earned    = NULL,
-           points_possible  = NULL,
-           progress_status  = 'in_progress',
-           test_reopen_until = NULL
-       WHERE id = ?`,
+   SET submitted_at      = NULL,
+       graded_at         = NULL,
+       review_complete   = 0,
+       reviewed_at       = NULL,
+       points_earned     = NULL,
+       points_possible   = NULL,
+       progress_status   = 'in_progress',
+       test_reopen_until = NULL,
+       completed_groups  = 0
+   WHERE id = ?`,
       [instanceId]
     );
+    global.emitInstanceState?.(instanceId, {
+      submitted_at: null,
+      graded_at: null,
+      review_complete: 0,
+      reviewed_at: null,
+      points_earned: null,
+      points_possible: null,
+      progress_status: 'in_progress',
+      test_reopen_until: null,
+      completed_groups: 0, // only if you also want to reset it; if not, omit
+    });
+
 
     res.json({ ok: true, cleared: del.affectedRows || 0 });
   } catch (e) {
@@ -334,6 +347,7 @@ async function recordHeartbeat(req, res) {
           `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
           [newActiveId, instanceId]
         );
+        global.emitInstanceState?.(Number(instanceId), { activeStudentId: newActiveId });
         return res.json({ success: true, becameActive: true, activeStudentId: newActiveId });
       }
     }
@@ -390,6 +404,7 @@ async function rotateActiveStudent(req, res) {
     const next = others.length ? others[Math.floor(Math.random() * others.length)] : members[0];
 
     await db.query(`UPDATE activity_instances SET active_student_id = ? WHERE id = ?`, [next.student_id, instanceId]);
+    global.emitInstanceState?.(Number(instanceId), { activeStudentId: next.student_id });
     res.json({ activeStudentId: next.student_id });
   } catch (err) {
     console.error("❌ rotateActiveStudent:", err);
@@ -660,6 +675,11 @@ async function submitGroupResponses(req, res) {
       [completedGroups, progressStatus, instanceId]
     );
 
+    global.emitInstanceState?.(instanceId, {
+      completed_groups: completedGroups,
+      progress_status: progressStatus,
+    });
+
     // ---- 5) Rotate active student among connected members ----
     const [connected] = await conn.query(
       `SELECT student_id
@@ -677,6 +697,8 @@ async function submitGroupResponses(req, res) {
         `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
         [next, instanceId]
       );
+
+      global.emitInstanceState?.(instanceId, { activeStudentId: next });
     }
 
     await conn.commit();
@@ -756,6 +778,7 @@ async function getInstancesForActivityInCourse(req, res) {
       [courseId, activityId]
     );
 
+
     const groups = [];
     for (const inst of instances) {
       const [members] = await db.query(
@@ -779,6 +802,8 @@ async function getInstancesForActivityInCourse(req, res) {
             [fallback, inst.instance_id]
           );
           activeId = fallback;
+          global.emitInstanceState?.(inst.instance_id, { activeStudentId: activeId });
+
         }
       }
 
@@ -1369,6 +1394,13 @@ async function regradeTestInstance(req, res) {
        WHERE id = ?`,
       [totalEarnedPoints, totalMaxPoints, instanceId]
     );
+    global.emitInstanceState?.(Number(instanceId), {
+      points_earned: totalEarnedPoints,
+      points_possible: totalMaxPoints,
+      review_complete: 0,
+      reviewed_at: null,
+      // graded_at is DB-time; optional select to send exact
+    });
 
     await conn.commit();
     return res.json({ ok: true, regraded: true, earned: totalEarnedPoints, max: totalMaxPoints });
@@ -1672,10 +1704,18 @@ async function submitTest(req, res) {
          progress_status  = 'completed',
          is_test          = 1,
          submitted_at     = COALESCE(submitted_at, UTC_TIMESTAMP()),
- graded_at        = UTC_TIMESTAMP()
+         graded_at        = UTC_TIMESTAMP()
        WHERE id = ?`,
       [totalEarnedPoints, totalMaxPoints, instanceId]
     );
+    global.emitInstanceState?.(Number(instanceId), {
+      points_earned: totalEarnedPoints,
+      points_possible: totalMaxPoints,
+      progress_status: 'completed',
+      is_test: 1,
+      // submitted_at / graded_at are DB-time; optional to fetch+emit exact values
+    });
+
 
 
     await conn.commit();
