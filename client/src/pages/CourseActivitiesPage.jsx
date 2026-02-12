@@ -54,27 +54,39 @@ export default function CourseActivitiesPage() {
   const toggleHidden = async (activity) => {
     const newHidden = !activity.hidden;
 
-    const res = await fetch(
-      `${API_BASE_URL}/api/courses/${courseId}/activities/${activity.activity_id}/hidden`,
-      {
+    const url = `${API_BASE_URL}/api/courses/${courseId}/activities/${activity.activity_id}/hidden`;
+    console.log('[HIDE] url:', url, 'newHidden:', newHidden);
+
+    try {
+      const res = await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ hidden: newHidden }),
+      });
+
+      console.log('[HIDE] status:', res.status);
+
+      const txt = await res.text();           // <-- don’t assume JSON
+      console.log('[HIDE] body head:', txt.slice(0, 200));
+
+      if (!res.ok) {
+        alert(`Failed: HTTP ${res.status}`);
+        return;
       }
-    );
 
-    if (!res.ok) {
-      alert('Failed to change visibility');
-      return;
+      // only if OK:
+      setActivities((prev) =>
+        prev.map((a) =>
+          a.activity_id === activity.activity_id ? { ...a, hidden: newHidden } : a
+        )
+      );
+    } catch (e) {
+      console.error('[HIDE] fetch failed:', e);
+      alert(`Fetch failed: ${e.message}`);
     }
-
-    setActivities((prev) =>
-      prev.map((a) =>
-        a.activity_id === activity.activity_id ? { ...a, hidden: newHidden } : a
-      )
-    );
   };
+
 
 
   const isInstructorLike =
@@ -155,30 +167,35 @@ export default function CourseActivitiesPage() {
                               </Button>
                             )
                           ) : !activity.has_groups ? (
-                            <Button variant="primary" onClick={() => handleDoActivity(activity, true)}>
+                            <Button
+                              variant="primary"
+                              onClick={() => handleDoActivity(activity, true)}
+                            >
                               Setup Groups
                             </Button>
                           ) : (
-                            <Button
-                              variant="secondary"
-                              onClick={() =>
-                                navigate(`/view-groups/${courseId}/${activity.activity_id}`, {
-                                  state: { courseName },
-                                })
-                              }
-                            >
-                              View Groups
-                            </Button>
+                            <>
+                              <Button
+                                variant="secondary"
+                                onClick={() =>
+                                  navigate(`/view-groups/${courseId}/${activity.activity_id}`, {
+                                    state: { courseName },
+                                  })
+                                }
+                              >
+                                View Groups
+                              </Button>
+
+                              {/* 🔒 Hide only if groups exist */}
+                              <Button
+                                variant={activity.hidden ? 'success' : 'outline-danger'}
+                                onClick={() => toggleHidden(activity)}
+                              >
+                                {activity.hidden ? 'Unhide' : 'Hide'}
+                              </Button>
+                            </>
                           )
                         }
-
-                        {/* 🔒 Hide / Unhide toggle */}
-                        <Button
-                          variant={activity.hidden ? 'success' : 'outline-danger'}
-                          onClick={() => toggleHidden(activity)}
-                        >
-                          {activity.hidden ? 'Unhide' : 'Hide'}
-                        </Button>
                       </ButtonGroup>
                     ) : (
                       <span>Not available</span>

@@ -148,59 +148,68 @@ async function getCourseActivities(req, res) {
   }
 
   try {
+    const role = req.user?.role;
+
+    // Students: only show activities that have groups (instances) AND are not hidden
+    const studentHaving = (role === 'student')
+      ? `HAVING COUNT(ai.id) > 0 AND MAX(COALESCE(ai.hidden, 0)) = 0`
+      : '';
     const [rows] = await db.query(
       `
-      SELECT 
-        a.id AS activity_id,
-        a.name AS activity_name,
-        a.title AS activity_title,
-        a.order_index AS activity_index,
-        COALESCE(a.is_test, 0) AS is_test,
+  SELECT 
+    a.id AS activity_id,
+    a.name AS activity_name,
+    a.title AS activity_title,
+    a.order_index AS activity_index,
+    COALESCE(a.is_test, 0) AS is_test,
 
-        (
-          SELECT ai2.id
-          FROM activity_instances ai2
-          JOIN group_members gm ON gm.activity_instance_id = ai2.id
-          WHERE ai2.activity_id = a.id
-            AND ai2.course_id = c.id
-            AND gm.student_id = ?
-          LIMIT 1
-        ) AS instance_id,
+    (
+      SELECT ai2.id
+      FROM activity_instances ai2
+      JOIN group_members gm ON gm.activity_instance_id = ai2.id
+      WHERE ai2.activity_id = a.id
+        AND ai2.course_id = c.id
+        AND gm.student_id = ?
+      LIMIT 1
+    ) AS instance_id,
 
-        (
-          SELECT ai2.submitted_at
-          FROM activity_instances ai2
-          JOIN group_members gm ON gm.activity_instance_id = ai2.id
-          WHERE ai2.activity_id = a.id
-            AND ai2.course_id = c.id
-            AND gm.student_id = ?
-          LIMIT 1
-        ) AS submitted_at,
+    (
+      SELECT ai2.submitted_at
+      FROM activity_instances ai2
+      JOIN group_members gm ON gm.activity_instance_id = ai2.id
+      WHERE ai2.activity_id = a.id
+        AND ai2.course_id = c.id
+        AND gm.student_id = ?
+      LIMIT 1
+    ) AS submitted_at,
 
-        (
-          SELECT ai2.status
-          FROM activity_instances ai2
-          JOIN group_members gm ON gm.activity_instance_id = ai2.id
-          WHERE ai2.activity_id = a.id
-            AND ai2.course_id = c.id
-            AND gm.student_id = ?
-          LIMIT 1
-        ) AS instance_status,
+    (
+      SELECT ai2.status
+      FROM activity_instances ai2
+      JOIN group_members gm ON gm.activity_instance_id = ai2.id
+      WHERE ai2.activity_id = a.id
+        AND ai2.course_id = c.id
+        AND gm.student_id = ?
+      LIMIT 1
+    ) AS instance_status,
 
-        COUNT(ai.id) AS group_count,
-        MAX(ai.status = 'in_progress') AS is_ready,
-        MAX(COALESCE(ai.hidden, 0)) AS hidden
-      FROM pogil_activities a
-      JOIN courses c ON a.class_id = c.class_id
-      LEFT JOIN activity_instances ai
-        ON ai.activity_id = a.id
-       AND ai.course_id = c.id
-      WHERE c.id = ?
-      GROUP BY a.id, a.name, a.title, a.order_index, a.is_test
-      ORDER BY a.order_index ASC
-      `,
+    COUNT(ai.id) AS group_count,
+    MAX(ai.status = 'in_progress') AS is_ready,
+    MAX(COALESCE(ai.hidden, 0)) AS hidden
+
+  FROM pogil_activities a
+  JOIN courses c ON a.class_id = c.class_id
+  LEFT JOIN activity_instances ai
+    ON ai.activity_id = a.id
+   AND ai.course_id = c.id
+  WHERE c.id = ?
+  GROUP BY a.id, a.name, a.title, a.order_index, a.is_test
+  ${studentHaving}
+  ORDER BY a.order_index ASC
+  `,
       [userId, userId, userId, courseId]
     );
+
 
     const activities = rows.map((row) => ({
       activity_id: row.activity_id,
