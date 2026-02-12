@@ -124,6 +124,33 @@ function isCodeOnlyByBlock(block) {
   return anyCode && !hasText && !hasTable;
 }
 
+function isCodeOnlyQuestion(block, qid, container, existingAnswers) {
+  // If the parser says there is a text/table response, it's not code-only
+  if (block?.hasTextResponse || block?.hasTableResponse) return false;
+
+  // If there are authored code blocks, treat as code-only
+  const anyAuthoredCode =
+    (block?.pythonBlocks?.length || 0) > 0 ||
+    (block?.turtleBlocks?.length || 0) > 0 ||
+    (block?.cppBlocks?.length || 0) > 0 ||
+    (block?.codeBlocks?.length || 0) > 0;
+
+  if (anyAuthoredCode) return true;
+
+  // Fallback: if DOM has code textareas for this qid and no base textarea, treat as code-only
+  const hasBaseTA = !!container?.querySelector?.(`textarea[data-response-key="${qid}"]`);
+  const codeTAs = container?.querySelectorAll?.(`textarea[data-response-key^="${qid}code"]`);
+  const hasCodeTA = (codeTAs?.length || 0) > 0;
+
+  if (!hasBaseTA && hasCodeTA) return true;
+
+  // Fallback: if DB has code keys for this qid and no base answer key, treat as code-only
+  const hasBaseInDB = existingAnswers && Object.prototype.hasOwnProperty.call(existingAnswers, qid);
+  const hasCodeInDB = existingAnswers && Object.keys(existingAnswers).some(k => k.startsWith(`${qid}code`));
+
+  return !hasBaseInDB && !!hasCodeInDB;
+}
+
 
 // NEW: pretty formatting for countdown
 function formatRemainingSeconds(sec) {
