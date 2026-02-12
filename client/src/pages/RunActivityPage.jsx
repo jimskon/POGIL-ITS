@@ -571,41 +571,27 @@ export default function RunActivityPage({
     console.debug(`[${PAGE_TAG}] fileContents changed:`, sizes);
   }, [fileContents]);
 
-  useEffect(() => {
-    if (isTestMode) return; // test mode: no “active student” concept
 
+  const activeStudentIdRef = useRef(null);
+  useEffect(() => { activeStudentIdRef.current = activeStudentId; }, [activeStudentId]);
+
+  useEffect(() => {
+    if (isTestMode) return;
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(
-          `${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`
-        );
+        const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
         const data = await res.json();
-        if (data.activeStudentId !== activeStudentId) {
-          console.log('[RUNDBG] after submit, about to reload', { loading: loadingRef.current, t: Date.now() });
-          await loadActivity();
-          console.log('[RUNDBG] after submit, reload done');
+
+        const nextId = Number(data?.activeStudentId);
+
+        if (Number.isFinite(nextId) && nextId > 0 && nextId !== activeStudentIdRef.current) {
+          setActiveStudentId(nextId);
         }
       } catch { }
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [instanceId, activeStudentId]);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // In test mode, NEVER refresh for an active student while the test is editable.
-      // Refreshing can only cause harm (overwrites), and you already save code on change.
-      if (isTestMode && isStudent && !activity?.submitted_at) {
-        return;
-      }
-
-      // Otherwise keep old behavior
-      if (!isActive || Date.now() - lastEditTs > 15000) {
-        loadActivity();
-      }
-    }, 10000);
+    }, 5000);
 
     return () => clearInterval(interval);
-  }, [instanceId, isActive, lastEditTs, isTestMode, isStudent, activity?.submitted_at]);
+  }, [instanceId, isTestMode]);
 
 
   useEffect(() => {
@@ -617,6 +603,7 @@ export default function RunActivityPage({
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify({ userId: user.id }),
           }
         );
@@ -790,6 +777,7 @@ export default function RunActivityPage({
         fetch(`${API_BASE_URL}/api/responses/bulk-save`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({
             instanceId,
             userId: user.id,
@@ -941,6 +929,7 @@ export default function RunActivityPage({
     await fetch(`${API_BASE_URL}/api/responses/bulk-save`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
         instanceId,
         userId: user.id,
@@ -1290,6 +1279,7 @@ export default function RunActivityPage({
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(body),
       });
 
@@ -1387,121 +1377,67 @@ export default function RunActivityPage({
       .trim();
   }
 
-  // Get all code blocks (Python/C++) for this question
   function collectQuestionCodeBlocks(block, qid, container, existingAnswers) {
-    // Prefer parser-declared blocks…
-    const totals = [
-      block?.pythonBlocks?.length || 0,
-      block?.cppBlocks?.length || 0,
-      block?.turtleBlocks?.length || 0,
-      block?.codeBlocks?.length || 0,
-    ];
-    let total = totals[0] + totals[1] + totals[2] + totals[3];
+  const prefix = `${qid}code`;
 
-    const result = [];
+  // 1) Build authored blocks list in order
+  const authoredBlocks = [
+    ...(block?.pythonBlocks ?? []).map(b => ({ lang: 'python', content: b.content })),
+    ...(block?.turtleBlocks ?? []).map(b => ({ lang: 'python', content: b.content })),
+    ...(block?.cppBlocks ?? []).map(b => ({ lang: 'cpp', content: b.content })),
+    ...(block?.codeBlocks ?? []).map(b => ({ lang: (b.lang || 'python'), content: b.content })),
+  ];
 
-    const authoredBlocks = [
-      ...(block?.pythonBlocks ?? []).map(b => ({ lang: 'python', content: b.content })),
-      ...(block?.turtleBlocks ?? []).map(b => ({ lang: 'python', content: b.content })),
-      ...(block?.cppBlocks ?? []).map(b => ({ lang: 'cpp', content: b.content })),
-      ...(block?.codeBlocks ?? []).map(b => ({ lang: (b.lang || 'python'), content: b.content })),
-    ];
+  // ✅ YOUR POLICY: only keep the most recent authored code block
+  const lastAuthored = authoredBlocks.length ? authoredBlocks[authoredBlocks.length - 1] : null;
 
-    if (total > 0) {
-      for (let i = 0; i < total; i++) {
-        const key = `${qid}code${i + 1}`;
-        const fromMap = getLatestCode(key);
+  // Helper: get current code for a specific key, preferring live DOM/editor state
+  const getLiveCodeForKey = (key) => {
+    // A) Prefer DOM textarea if it exists (works for your current renderBlocks textarea approach)
+    const ta = container?.querySelector?.(`textarea[data-response-key="${key}"]`);
+    if (ta && typeof ta.value === 'string') return ta.value;
 
-        const authored = authoredBlocks[i]?.content || '';
-        const lang = authoredBlocks[i]?.lang || 'python';
+    // B) Otherwise prefer your in-memory ref (set by handleCodeChange)
+    const fromRef = codeByKeyRef?.current?.[key];
+    if (typeof fromRef === 'string') return fromRef;
 
-        const chosen =
-          (fromMap != null && String(fromMap).length ? fromMap : null) ??
-          authored ??
-          '';
+    // C) Otherwise fallback to what’s already saved
+    const fromDB = existingAnswers?.[key]?.response;
+    if (typeof fromDB === 'string') return fromDB;
 
-        result.push({ key, lang, code: chosen, template: authored });
-      }
-      return result;
-    }
+    return null;
+  };
 
-    // …fallback if parser didn't annotate
-    const prefix = `${qid}code`;
-    const keys = Object.keys(existingAnswers)
-      .filter((k) => k.startsWith(prefix))
-      .sort((a, b) => {
-        const ai = Number(a.replace(prefix, '')) || 0;
-        const bi = Number(b.replace(prefix, '')) || 0;
-        return ai - bi;
-      });
+  // 2) If parser indicates code exists, we expose ONE cell: qidcode1
+  if (lastAuthored) {
+    const key = `${prefix}1`;
 
-    if (keys.length === 0) {
-      const tAs =
-        container?.querySelectorAll(
-          `textarea[data-response-key^="${prefix}"]`
-        ) || [];
-      if (tAs.length) {
-        Array.from(tAs).forEach((ta, idx) => {
-          const key =
-            ta.getAttribute('data-response-key') || `${prefix}${idx + 1}`;
-          result.push({ key, code: ta.value || '', template: '' });
-        });
-      } else {
-        result.push({
-          key: `${prefix}1`,
-          code: existingAnswers[`${prefix}1`]?.response || '',
-          template: '',
-        });
-      }
-    } else {
-      keys.forEach((k) => {
-        result.push({
-          key: k,
-          code: existingAnswers[k]?.response || '',
-          template: '',
-        });
-      });
-    }
+    const live = getLiveCodeForKey(key);
+    const template = lastAuthored.content || '';
+    const lang = lastAuthored.lang || 'python';
 
-    return result;
+    // live > db/ref > template
+    const code = (live != null ? live : template);
+
+    return [{ key, lang, code: code ?? '', template }];
   }
 
-  // Treat as code-only if there's code and no text/table inputs present.
-  function isCodeOnlyQuestion(block, qid, container, existingAnswers) {
-    // real text input?
-    const textInputEl = container?.querySelector(`textarea[data-response-key="${qid}"]`);
+  // 3) Fallback: if parser didn't annotate, discover keys from DB/DOM
+  const keysFromDB = Object.keys(existingAnswers || {})
+    .filter(k => k.startsWith(prefix))
+    .sort((a, b) => (Number(a.replace(prefix, '')) || 0) - (Number(b.replace(prefix, '')) || 0));
 
-    const effectiveHasText = !!textInputEl;
+  // If we found multiple keys, keep ONLY the most recent one (highest index)
+  const chosenKey =
+    keysFromDB.length ? keysFromDB[keysFromDB.length - 1]
+    : `${prefix}1`;
 
-    // any table input cells?
-    const tableInputEl = container?.querySelector(`[data-response-key^="${qid}table"]`);
+  const live = getLiveCodeForKey(chosenKey);
+  const code = live ?? '';
 
-    const effectiveHasTable = !!tableInputEl;
+  return [{ key: chosenKey, lang: 'python', code, template: '' }];
+}
 
-    // parser-declared code?
-    const anyParserCode =
-      (block?.pythonBlocks?.length || 0) +
-      (block?.cppBlocks?.length || 0) +
-      (block?.turtleBlocks?.length || 0) +
-      (block?.codeBlocks?.length || 0) >
-      0;
-
-    // DOM textareas
-    const taCount = container
-      ? container.querySelectorAll(
-        `textarea[data-response-key^="${qid}code"]`
-      ).length
-      : 0;
-
-    // existing answers
-    const ansCount = Object.keys(existingAnswers || {}).filter((k) =>
-      k.startsWith(`${qid}code`)
-    ).length;
-
-    const anyCode = anyParserCode || taCount > 0 || ansCount > 0;
-
-    return anyCode && !effectiveHasText && !effectiveHasTable;
-  }
 
   // Prefer parser hints; otherwise fallback to simple detection
   function pickLangForBlock(block, studentCode) {
@@ -1735,6 +1671,7 @@ export default function RunActivityPage({
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify({
               studentId: user.id,
               answers,
@@ -1920,10 +1857,16 @@ export default function RunActivityPage({
 
         codeCells.forEach(({ key, code }) => (answers[key] = code));
 
-        const studentCode = codeCells
+        // this send all code, remove
+        /*const studentCode = codeCells
           .map((c) => c.code || '')
           .join('\n\n')
-          .trim();
+          .trim();*/
+
+        // ✅ AI should evaluate ONLY the most recent code block (last one)
+        const lastCell = codeCells[codeCells.length - 1];
+        const studentCode = String(lastCell?.code ?? '').trim();
+
 
         if (!studentCode) {
           const msg =
@@ -2263,6 +2206,16 @@ export default function RunActivityPage({
       // Tell observers to clear the yellow box too
       emitTextAIState(qid, { f1: '', fm: 'accepted', af: 'resolved' });
       if (!looksCodeOnlyNow && !isTestMode) {
+        const dbgInput = String(aiInput ?? '').trim();
+        console.log('[EVALDBG]', {
+          qid,
+          hasText: dbgInput.length > 0,
+          py: block?.pythonBlocks?.length || 0,
+          codeBlocks: block?.codeBlocks?.length || 0,
+          keys: Object.keys(existingAnswers || {})
+            .filter(k => k.toLowerCase().includes(String(qid).toLowerCase()))
+            .slice(0, 20),
+        });
         const ai = await evaluateResponseWithAI(block, aiInput);
 
         // ✅ Default accept unless AI explicitly rejects
@@ -2413,6 +2366,7 @@ export default function RunActivityPage({
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({
             studentId: user.id,
             groupNum,          // ✅ NEW: 1-based group number
@@ -2447,6 +2401,7 @@ export default function RunActivityPage({
           await fetch(`${API_BASE_URL}/api/responses/mark-complete`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify({ instanceId }),
           });
         }
@@ -2486,6 +2441,7 @@ export default function RunActivityPage({
       await fetch(`${API_BASE_URL}/api/responses/bulk-save`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           instanceId,
           userId: user.id,
@@ -2520,97 +2476,40 @@ export default function RunActivityPage({
   }
 
   async function handleCodeChange(responseKey, updatedCode, meta = {}) {
+
+    console.log('[CODECHANGE] fired', {
+      responseKey,
+      len: (updatedCode || '').length,
+      head: (updatedCode || '').slice(0, 40),
+      t: Date.now(),
+    });
+
     const broadcastOnly = !!meta?.__broadcastOnly;
 
-    // ✅ A) single source of truth for code (NO DOM needed later)
     codeByKeyRef.current[responseKey] = updatedCode;
 
-    // --- broadcast-only: just show observers; no dirty, no DB, no AI ---
+    // If broadcast-only, still only the active student should broadcast
     if (broadcastOnly) {
-      if (!isActive) return; // only the active student broadcasts to others
-
-      socket?.emit('response:update', {
-        instanceId,
-        responseKey,
-        value: updatedCode,
-        answeredBy: user.id,
-      });
-
-      console.log('[EVAL] broadcastOnly call (expected on submit-sync)', { responseKey });
+      if (!isActive) return;
+      socket?.emit('response:update', { instanceId, responseKey, value: updatedCode, answeredBy: user.id });
       return;
     }
 
-    // --- real typing/save path ---
     setLastEditTs(Date.now());
     dirtyKeysRef.current.add(responseKey);
 
-    if (!isActive) return;
-
+    // ✅ Always reflect locally (so UI is consistent)
     setExistingAnswers((prev) => ({
       ...prev,
-      [responseKey]: {
-        ...(prev[responseKey] || {}),
-        response: updatedCode,
-        type: 'text',
-      },
+      [responseKey]: { ...(prev[responseKey] || {}), response: updatedCode, type: 'text' },
     }));
 
-    // broadcast the current value to observers (so they see the real edit too)
-    socket?.emit('response:update', {
-      instanceId,
-      responseKey,
-      value: updatedCode,
-      answeredBy: user.id,
-    });
-
-    // clear old code guidance immediately on new edits
-    setCodeFeedbackShown((prev) => ({ ...prev, [responseKey]: null }));
-
-    const baseQid = baseQidFromResponseKey(responseKey);
-
-    /*const baseQid = String(responseKey).replace(/code\d+$/, '');
-    setFollowupsShown((prev) => {
-      const next = { ...prev };
-      delete next[baseQid];
-      return next;
-    });*/
-
-    socket?.emit('feedback:update', {
-      instanceId,
-      responseKey,
-      feedback: null,
-      followup: null,
-    });
-
-    if (qidsNoFURef.current?.has(baseQid)) {
-      socket?.emit('feedback:update', {
-        instanceId,
-        responseKey,
-        feedback: null,
-        followup: null,
-      });
-      setFollowupsShown((prev) => {
-        const next = { ...prev };
-        delete next[baseQid];
-        return next;
-      });
-      return;
-    }
-
-    if (!window.Sk || !skulptLoaded) {
-      socket?.emit('feedback:update', {
-        instanceId,
-        responseKey,
-        feedback: null,
-        followup: null,
-      });
-    }
-
+    // ✅ Always save to DB (THIS fixes “revert on refresh”)
     try {
-      // ✅ Save code
       await fetch(`${API_BASE_URL}/api/responses/code`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include', // keep if you use cookies/sessions
         body: JSON.stringify({
           question_id: responseKey,
           activity_instance_id: instanceId,
@@ -2618,18 +2517,23 @@ export default function RunActivityPage({
           response: updatedCode,
         }),
       });
-
       dirtyKeysRef.current.delete(responseKey);
-
-      // ✅ IMPORTANT CHANGE FOR YOUR GOALS:
-      // remove keystroke AI evaluation from here.
-      // (Periodic AI on heartbeat + AI on submit will handle it.)
-      return;
-
     } catch (err) {
       console.error('handleCodeChange failed:', err);
     }
+
+    // ✅ Only broadcast if active (THIS fixes observer lag behavior)
+    if (isActive) {
+      socket?.emit('response:update', { instanceId, responseKey, value: updatedCode, answeredBy: user.id });
+    }
+
+    // Clear guidance locally + for observers if active
+    setCodeFeedbackShown((prev) => ({ ...prev, [responseKey]: null }));
+    if (isActive) {
+      socket?.emit('feedback:update', { instanceId, responseKey, feedback: null, followup: null });
+    }
   }
+
 
 
   // Helper: tri-band scores + feedback for a base question id like "1a"
