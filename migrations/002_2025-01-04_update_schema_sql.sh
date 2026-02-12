@@ -1,4 +1,9 @@
 #!/bin/bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/db.sh"
+
 # migrations/update_schema_sql.sh
 # Regenerate schema.sql from the current database schema (no data)
 

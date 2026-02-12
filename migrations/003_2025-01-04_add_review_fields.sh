@@ -1,4 +1,9 @@
 #!/bin/bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/db.sh"
+
 # migrations/004_add_review_fields.sh
 # Ensures submitted_at, graded_at, review_complete, and reviewed_at
 # columns exist on activity_instances.

@@ -1,36 +1,14 @@
 #!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/db.sh"
+
 
 echo "=== coLearnAI / POGIL-ITS: Add test-related fields ==="
 
-# Prompt for connection info
-read -p "MySQL host [localhost]: " DB_HOST
-DB_HOST=${DB_HOST:-localhost}
 
-read -p "Database name: " DB_NAME
-if [ -z "$DB_NAME" ]; then
-  echo "❌ Database name is required."
-  exit 1
-fi
-
-read -p "MySQL user: " DB_USER
-if [ -z "$DB_USER" ]; then
-  echo "❌ MySQL user is required."
-  exit 1
-fi
-
-read -s -p "MySQL password for user '$DB_USER': " DB_PASS
-echo
-echo
-
-echo "About to run migration on $DB_USER@$DB_HOST/$DB_NAME"
-read -p "Continue? [y/N]: " CONFIRM
-CONFIRM=${CONFIRM:-N}
-if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-  echo "Aborting."
-  exit 0
-fi
-
-mysql -h "$DB_HOST" -u "$DB_USER" -p"$DB_PASS" "$DB_NAME" <<SQL
+db_exec <<'SQL'
 SET NAMES utf8mb4;
 
 -- ============================================================

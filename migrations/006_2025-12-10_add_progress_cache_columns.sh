@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/db.sh"
+
 # migrations/20251210_add_progress_cache_columns.sh
 # Adds cached progress + test score columns to activity_instances.
 # Uses DB_* credentials from server/.env.
