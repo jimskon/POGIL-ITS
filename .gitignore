@@ -37,3 +37,18 @@ server/utils/service-account.json
 *~
 \#*\#
 .DS_Store
+
+# Python caches / venv variants
+__pycache__/
+**/__pycache__/
+venv/
+**/venv/
+
+# Database dumps / backups
+*.sql
+pogil_db_*.sql
+*_backup.sql
+*_pre_repair_*.sql
+
+# Local artifacts
+client/hash
