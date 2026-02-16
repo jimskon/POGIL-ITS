@@ -10,8 +10,10 @@ export async function runSkulptCode({
   turtleHeight = 400,
   // 👇 NEW: callback that lets the caller broadcast file writes
   onFileWrite = null,
+  stdin = null,
 }) {
   setOutput('');
+  console.log("[runSkulptCode] stdin =", stdin);
 
   if (!window.Sk || !Sk.configure) {
     setOutput('❌ Skulpt not loaded');
@@ -135,6 +137,8 @@ def open(filename, mode='r'):
 
     // Put the input prompt in the dialog box
     inputfun: (promptText) => {
+      if (promptText) setOutput((prev) => prev + String(promptText));
+      if (stdin && typeof stdin.readLine === 'function') return stdin.readLine();
       const val = window.prompt(promptText ?? '') ?? '';
       return Promise.resolve(val);
     },
@@ -226,7 +230,7 @@ def open(filename, mode='r'):
   } else if (window.Sk && window.Sk.TurtleGraphics) {
     try {
       delete window.Sk.TurtleGraphics;
-    } catch {}
+    } catch { }
   }
 
   try {

@@ -7,6 +7,55 @@ const { gradeTestQuestionHttp, gradeTestQuestion } = require("./grading");
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
+console.log("[AI_FINGERPRINT] controller.js loaded at", new Date().toISOString(), "AI_DEBUG=", process.env.AI_DEBUG);
+
+
+// ---------- DEBUG HELPERS ----------
+const AI_DEBUG = process.env.AI_DEBUG === "1";
+
+function clip(s, n = 240) {
+  const t = String(s ?? "");
+  return t.length <= n ? t : t.slice(0, n) + `...(+${t.length - n} chars)`;
+}
+
+function lensObj(obj = {}) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === "string") out[k] = v.length;
+    else if (Array.isArray(v)) out[k] = `array(${v.length})`;
+    else if (v && typeof v === "object") out[k] = "object";
+    else out[k] = v;
+  }
+  return out;
+}
+
+function logReq(tag, req) {
+  if (!AI_DEBUG) return;
+  const b = req.body || {};
+  console.log(`[AI_DEBUG] ${tag} keys=`, Object.keys(b));
+  console.log(`[AI_DEBUG] ${tag} lens=`, lensObj(b));
+  // A few safe previews (edit/remove if you prefer)
+  if (b.qid || b.questionId) console.log(`[AI_DEBUG] ${tag} qid=`, b.qid || b.questionId);
+  if (b.questionText) console.log(`[AI_DEBUG] ${tag} questionText=`, clip(stripHtml(b.questionText), 180));
+  if (b.feedbackPrompt) console.log(`[AI_DEBUG] ${tag} feedbackPrompt=`, clip(stripHtml(b.feedbackPrompt), 180));
+  if (b.sampleResponse) console.log(`[AI_DEBUG] ${tag} sampleResponse=`, clip(stripHtml(b.sampleResponse), 180));
+  if (b.followupPrompt) console.log(`[AI_DEBUG] ${tag} followupPrompt=`, clip(stripHtml(b.followupPrompt), 180));
+  if (b.studentCode) console.log(`[AI_DEBUG] ${tag} studentCode=`, clip(b.studentCode, 220));
+  if (b.studentAnswer) console.log(`[AI_DEBUG] ${tag} studentAnswer=`, clip(stripHtml(b.studentAnswer), 220));
+}
+
+function logPrompt(tag, prompt) {
+  if (!AI_DEBUG) return;
+  console.log(`[AI_DEBUG] ${tag} PROMPT len=${String(prompt||"").length}`);
+  console.log(`[AI_DEBUG] ${tag} PROMPT preview=\n${clip(prompt, 1200)}\n---`);
+}
+
+function logModelRaw(tag, raw) {
+  if (!AI_DEBUG) return;
+  console.log(`[AI_DEBUG] ${tag} MODEL_RAW len=${String(raw||"").length}`);
+  console.log(`[AI_DEBUG] ${tag} MODEL_RAW preview=\n${clip(raw, 800)}\n---`);
+}
+
 // ---------- Shared helpers ----------
 function stripHtml(s = "") {
   return String(s)
@@ -269,7 +318,8 @@ async function evaluateStudentResponse(req, res) {
 
   // Hard “no feedback at all” switch (rare, but keep it)
   if (isNone(feedbackPrompt) || !questionText || studentAnswer == null) {
-    return sendAI(res, { accepted: true, feedback: null });
+    return sendAI(res, { accepted: false, feedback: "I couldn't interpret that response—please add one concrete sentence answering the question." });
+
   }
 
 
@@ -409,6 +459,11 @@ async function evaluateStudentResponse(req, res) {
 
 // ---------- PYTHON CODE (LEARNING MODE) ----------
 async function evaluatePythonCode(req, res) {
+  console.log("[AI_FINGERPRINT] evaluatePythonCode HIT", {
+  t: Date.now(),
+  AI_DEBUG: process.env.AI_DEBUG,
+  bodyKeys: Object.keys(req.body || {}),
+});
   const {
     questionText,
     studentCode,
@@ -423,7 +478,15 @@ async function evaluatePythonCode(req, res) {
   if (!questionText || !studentCode) {
     return res.status(400).json({ error: "Missing question text or student code" });
   }
-
+if (process.env.AI_DEBUG === "1") {
+  console.log("[AI_DEBUG] evaluate-code body keys:", Object.keys(req.body || {}));
+  console.log("[AI_DEBUG] isCodeOnly:", req.body?.isCodeOnly, "codeVersion:", req.body?.codeVersion);
+  console.log("[AI_DEBUG] questionText (first 120):", String(req.body?.questionText || "").slice(0,120));
+  console.log("[AI_DEBUG] sampleResponse len:", String(req.body?.sampleResponse || "").length);
+  console.log("[AI_DEBUG] feedbackPrompt (first 120):", String(req.body?.feedbackPrompt || "").slice(0,120));
+  console.log("[AI_DEBUG] followupPrompt (first 120):", String(req.body?.followupPrompt || "").slice(0,120));
+  console.log("[AI_DEBUG] studentCode (first 200):\n" + String(req.body?.studentCode || "").slice(0,200));
+}
   const result = await evaluateCode({
     questionText,
     studentCode,
@@ -478,7 +541,9 @@ async function evaluateCode({
 
   const inferred = detectLangFromCode(studentCode);
   const effLang = String(lang || inferred || "").toLowerCase();
-
+if (process.env.AI_DEBUG === "1") {
+  console.log("[AI_DEBUG] effLang:", effLang, "inferred:", inferred, "lang arg:", lang);
+}
   let langLabel = "the correct language for this code";
   if (effLang === "cpp" || effLang === "c++") langLabel = "C++";
   else if (effLang === "python") langLabel = "Python";
@@ -529,6 +594,11 @@ Rules:
 ${rules ? "\n" + rules : ""}
 `.trim();
 
+if (process.env.AI_DEBUG === "1") {
+  console.log("[AI_DEBUG] PROMPT (first 800):\n" + prompt.slice(0, 800));
+  console.log("[AI_DEBUG] PROMPT len:", prompt.length);
+}
+
   let chat;
   try {
     chat = await openai.chat.completions.create({
@@ -541,7 +611,9 @@ ${rules ? "\n" + rules : ""}
     console.error("❌ OpenAI evaluateCode failed:", err);
     return base;
   }
-
+if (process.env.AI_DEBUG === "1") {
+  console.log("[AI_DEBUG] OpenAI raw (first 400):", raw.slice(0, 400));
+}
   const raw = (chat.choices?.[0]?.message?.content ?? "").trim();
   const obj = safeJsonObject(raw);
   if (!obj) return base;

@@ -3,6 +3,34 @@ import { Form, Button } from 'react-bootstrap';
 import Prism from 'prismjs';
 import { runSkulptCode } from '../../utils/runSkulptCode';
 
+function createStdinController() {
+  let waitingResolve = null;
+  const queue = [];
+
+  return {
+    pushLine(line) {
+      const s = String(line ?? "");
+      if (waitingResolve) {
+        const r = waitingResolve;
+        waitingResolve = null;
+        r(s);
+      } else {
+        queue.push(s);
+      }
+    },
+    readLine() {
+      if (queue.length) return Promise.resolve(queue.shift());
+      return new Promise((resolve) => {
+        waitingResolve = resolve;
+      });
+    },
+    reset() {
+      waitingResolve = null;
+      queue.length = 0;
+    },
+  };
+}
+
 export default function ActivityPythonBlock({
   code: initialCode,
   blockIndex,
@@ -19,6 +47,10 @@ export default function ActivityPythonBlock({
   editable = true,
   includeFiles = [],
 }) {
+  const stdinRef = useRef(null);
+  if (!stdinRef.current) stdinRef.current = createStdinController();
+
+  const [consoleInput, setConsoleInput] = useState('');
   const [code, setCode] = useState(initialCode ?? '');
   useEffect(() => { if (localOnly) setCode(initialCode ?? ''); }, [initialCode, localOnly]);
 
@@ -169,7 +201,8 @@ export default function ActivityPythonBlock({
       execLimit: timeLimit,
       turtleTargetId,
       turtleWidth,
-      turtleHeight
+      turtleHeight,
+      stdin: stdinRef.current,
     });
   };
 
@@ -380,7 +413,37 @@ export default function ActivityPythonBlock({
 
       {/* Visible output for the student */}
       <pre className="mt-2 bg-light p-2 border">{outputText}</pre>
+      <div className="d-flex gap-2 mt-2">
+        <Form.Control
+          value={consoleInput}
+          onChange={(e) => setConsoleInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              const line = consoleInput;
+              setConsoleInput('');
 
+              // echo typed input to console (optional but feels right)
+              setOutputText((prev) => prev + line + '\n');
+
+              // feed Skulpt input() (include newline)
+              stdinRef.current.pushLine(line + '\n');
+            }
+          }}
+          placeholder='Type input() here and press Enter'
+        />
+        <Button
+          variant="secondary"
+          onClick={() => {
+            const line = consoleInput;
+            setConsoleInput('');
+            setOutputText((prev) => prev + line + '\n');
+            stdinRef.current.pushLine(line + '\n');
+          }}
+        >
+          Send
+        </Button>
+      </div>
       {codeFeedbackShown[responseKey] && (
         <div className="mt-2 p-3 border rounded bg-warning-subtle">
           <strong>AI Feedback:</strong>
