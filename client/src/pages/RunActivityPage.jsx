@@ -298,7 +298,6 @@ export default function RunActivityPage({
     return null;
   };
 
-  // ✅ Single source of truth for "where are we?"
   const currentGroupIndex = useMemo(() => {
     const completed = Number(activity?.completed_groups ?? 0);
     const safeCompleted = Number.isFinite(completed) && completed >= 0 ? completed : 0;
@@ -306,11 +305,9 @@ export default function RunActivityPage({
     const len = Array.isArray(groups) ? groups.length : 0;
     if (len <= 0) return 0;
 
-    // completed_groups means “how many groups are finished”
-    // so the next group index is exactly completed_groups, but must be <= last index
-    return Math.min(safeCompleted, len - 1);
+    // ✅ next group index; when all groups complete this becomes len
+    return safeCompleted >= len ? len : safeCompleted;
   }, [activity?.completed_groups, groups?.length]);
-
 
 
   const [skulptLoaded, setSkulptLoaded] = useState(false);
@@ -1405,65 +1402,65 @@ export default function RunActivityPage({
   }
 
   function collectQuestionCodeBlocks(block, qid, container, existingAnswers) {
-  const prefix = `${qid}code`;
+    const prefix = `${qid}code`;
 
-  // 1) Build authored blocks list in order
-  const authoredBlocks = [
-    ...(block?.pythonBlocks ?? []).map(b => ({ lang: 'python', content: b.content })),
-    ...(block?.turtleBlocks ?? []).map(b => ({ lang: 'python', content: b.content })),
-    ...(block?.cppBlocks ?? []).map(b => ({ lang: 'cpp', content: b.content })),
-    ...(block?.codeBlocks ?? []).map(b => ({ lang: (b.lang || 'python'), content: b.content })),
-  ];
+    // 1) Build authored blocks list in order
+    const authoredBlocks = [
+      ...(block?.pythonBlocks ?? []).map(b => ({ lang: 'python', content: b.content })),
+      ...(block?.turtleBlocks ?? []).map(b => ({ lang: 'python', content: b.content })),
+      ...(block?.cppBlocks ?? []).map(b => ({ lang: 'cpp', content: b.content })),
+      ...(block?.codeBlocks ?? []).map(b => ({ lang: (b.lang || 'python'), content: b.content })),
+    ];
 
-  // ✅ YOUR POLICY: only keep the most recent authored code block
-  const lastAuthored = authoredBlocks.length ? authoredBlocks[authoredBlocks.length - 1] : null;
+    // ✅ YOUR POLICY: only keep the most recent authored code block
+    const lastAuthored = authoredBlocks.length ? authoredBlocks[authoredBlocks.length - 1] : null;
 
-  // Helper: get current code for a specific key, preferring live DOM/editor state
-  const getLiveCodeForKey = (key) => {
-    // A) Prefer DOM textarea if it exists (works for your current renderBlocks textarea approach)
-    const ta = container?.querySelector?.(`textarea[data-response-key="${key}"]`);
-    if (ta && typeof ta.value === 'string') return ta.value;
+    // Helper: get current code for a specific key, preferring live DOM/editor state
+    const getLiveCodeForKey = (key) => {
+      // A) Prefer DOM textarea if it exists (works for your current renderBlocks textarea approach)
+      const ta = container?.querySelector?.(`textarea[data-response-key="${key}"]`);
+      if (ta && typeof ta.value === 'string') return ta.value;
 
-    // B) Otherwise prefer your in-memory ref (set by handleCodeChange)
-    const fromRef = codeByKeyRef?.current?.[key];
-    if (typeof fromRef === 'string') return fromRef;
+      // B) Otherwise prefer your in-memory ref (set by handleCodeChange)
+      const fromRef = codeByKeyRef?.current?.[key];
+      if (typeof fromRef === 'string') return fromRef;
 
-    // C) Otherwise fallback to what’s already saved
-    const fromDB = existingAnswers?.[key]?.response;
-    if (typeof fromDB === 'string') return fromDB;
+      // C) Otherwise fallback to what’s already saved
+      const fromDB = existingAnswers?.[key]?.response;
+      if (typeof fromDB === 'string') return fromDB;
 
-    return null;
-  };
+      return null;
+    };
 
-  // 2) If parser indicates code exists, we expose ONE cell: qidcode1
-  if (lastAuthored) {
-    const key = `${prefix}1`;
+    // 2) If parser indicates code exists, we expose ONE cell: qidcode1
+    if (lastAuthored) {
+      const key = `${prefix}1`;
 
-    const live = getLiveCodeForKey(key);
-    const template = lastAuthored.content || '';
-    const lang = lastAuthored.lang || 'python';
+      const live = getLiveCodeForKey(key);
+      const template = lastAuthored.content || '';
+      const lang = lastAuthored.lang || 'python';
 
-    // live > db/ref > template
-    const code = (live != null ? live : template);
+      // live > db/ref > template
+      const code = (live != null ? live : template);
 
-    return [{ key, lang, code: code ?? '', template }];
+      return [{ key, lang, code: code ?? '', template }];
+    }
+
+    // 3) Fallback: if parser didn't annotate, discover keys from DB/DOM
+    const keysFromDB = Object.keys(existingAnswers || {})
+      .filter(k => k.startsWith(prefix))
+      .sort((a, b) => (Number(a.replace(prefix, '')) || 0) - (Number(b.replace(prefix, '')) || 0));
+
+    // If we found multiple keys, keep ONLY the most recent one (highest index)
+    const chosenKey =
+      keysFromDB.length ? keysFromDB[keysFromDB.length - 1]
+        : `${prefix}1`;
+
+    const live = getLiveCodeForKey(chosenKey);
+    const code = live ?? '';
+
+    return [{ key: chosenKey, lang: 'python', code, template: '' }];
   }
-
-  // 3) Fallback: if parser didn't annotate, discover keys from DB/DOM
-  const keysFromDB = Object.keys(existingAnswers || {})
-    .filter(k => k.startsWith(prefix))
-    .sort((a, b) => (Number(a.replace(prefix, '')) || 0) - (Number(b.replace(prefix, '')) || 0));
-
-  // If we found multiple keys, keep ONLY the most recent one (highest index)
-  const chosenKey =
-    keysFromDB.length ? keysFromDB[keysFromDB.length - 1]
-    : `${prefix}1`;
-
-  const live = getLiveCodeForKey(chosenKey);
-  const code = live ?? '';
-
-  return [{ key: chosenKey, lang: 'python', code, template: '' }];
-}
 
 
   // Prefer parser hints; otherwise fallback to simple detection
@@ -1669,6 +1666,10 @@ export default function RunActivityPage({
         editableContainerAttr: container?.getAttribute('data-current-group'),
       });
 
+      if (currentGroupIndex >= groups.length) {
+        setIsSubmitting(false);
+        return;
+      }
 
       const currentGroup = groups[currentGroupIndex];
       blocks = [currentGroup.intro, ...currentGroup.content];
@@ -2938,9 +2939,9 @@ export default function RunActivityPage({
           </div>
         )}
 
-        {groups.length > 0 && currentGroupIndex === groups.length && (
-          <Alert variant="success">
-            All questions complete! Review your responses above.
+        {groups.length > 0 && Number(activity?.completed_groups ?? 0) >= groups.length && (
+          <Alert variant="success" className="mt-3">
+            Activity is complete! Review your responses above.
           </Alert>
         )}
 
