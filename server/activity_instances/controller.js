@@ -675,10 +675,8 @@ async function submitGroupResponses(req, res) {
       [completedGroups, progressStatus, instanceId]
     );
 
-    global.emitInstanceState?.(instanceId, {
-      completed_groups: completedGroups,
-      progress_status: progressStatus,
-    });
+    emitPatch = { completed_groups: completedGroups, progress_status: progressStatus };
+
 
     // ---- 5) Rotate active student among connected members ----
     const [connected] = await conn.query(
@@ -698,11 +696,18 @@ async function submitGroupResponses(req, res) {
         [next, instanceId]
       );
 
-      global.emitInstanceState?.(instanceId, { activeStudentId: next });
+      emitPatch = { ...(emitPatch || {}), activeStudentId: next };
     }
 
     await conn.commit();
-    return res.json({ success: true, completed_groups: completedGroups, progress_status: progressStatus });
+
+    if (emitPatch) global.emitInstanceState?.(instanceId, emitPatch);
+
+    return res.json({
+      success: true, completed_groups: completedGroups, progress_status: progressStatus,
+      ...(emitPatch?.activeStudentId ? { activeStudentId: emitPatch.activeStudentId } : {}),
+
+    });
   } catch (err) {
     await conn.rollback();
     console.error('❌ submitGroupResponses:', err);
