@@ -1700,25 +1700,23 @@ async function submitTest(req, res) {
     await upsertTotal('testMaxScore', totalMaxPoints);
     await upsertTotal('testSummary', summaryText);
 
-    // NEW: cache overall scores on the activity_instance itself
     await conn.query(
       `UPDATE activity_instances
-       SET
-         points_earned    = ?,
-         points_possible  = ?,
-         progress_status  = 'completed',
-         is_test          = 1,
-         submitted_at     = COALESCE(submitted_at, UTC_TIMESTAMP()),
-         graded_at        = UTC_TIMESTAMP()
-       WHERE id = ?`,
+   SET
+     points_earned    = ?,
+     points_possible  = ?,
+     progress_status  = 'completed',
+     submitted_at     = COALESCE(submitted_at, UTC_TIMESTAMP()),
+     graded_at        = UTC_TIMESTAMP()
+   WHERE id = ?`,
       [totalEarnedPoints, totalMaxPoints, instanceId]
     );
+
     global.emitInstanceState?.(Number(instanceId), {
       points_earned: totalEarnedPoints,
       points_possible: totalMaxPoints,
       progress_status: 'completed',
-      is_test: 1,
-      // submitted_at / graded_at are DB-time; optional to fetch+emit exact values
+      // no is_test here
     });
 
 
@@ -1772,14 +1770,13 @@ async function markTestSubmitted(req, res) {
   try {
     await db.query(
       `UPDATE activity_instances
-       SET
-         points_earned   = ?,
-         points_possible = ?,
-         progress_status = 'completed',
-         is_test         = 1,
-         submitted_at    = UTC_TIMESTAMP(),
-         graded_at       = UTC_TIMESTAMP()
-       WHERE id = ?`,
+   SET
+     points_earned   = ?,
+     points_possible = ?,
+     progress_status = 'completed',
+     submitted_at    = UTC_TIMESTAMP(),
+     graded_at       = UTC_TIMESTAMP()
+   WHERE id = ?`,
       [totalEarnedPoints ?? 0, totalMaxPoints ?? 0, instanceId]
     );
 
