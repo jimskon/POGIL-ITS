@@ -161,7 +161,7 @@ async function getCourseActivities(req, res) {
     a.name AS activity_name,
     a.title AS activity_title,
     a.order_index AS activity_index,
-    COALESCE(a.is_test, 0) AS is_test,
+    a.is_test AS is_test,
 
     (
       SELECT ai2.id
@@ -210,26 +210,33 @@ async function getCourseActivities(req, res) {
       [userId, userId, userId, courseId]
     );
 
+    const activities = rows.map((row) => {
+      const is_test = row.is_test; // 1 / 0 / null
 
-    const activities = rows.map((row) => ({
-      activity_id: row.activity_id,
-      activity_name: row.activity_name,         // optional, but useful
-      title: row.activity_title || row.activity_name,  // ✅ preferred + safe fallback
-      order_index: row.activity_index,
-      isTest: !!row.is_test,
-      instance_id: row.instance_id || null,
-      submitted_at: row.submitted_at || null,
+      return {
+        activity_id: row.activity_id,
+        activity_name: row.activity_name,
+        title: row.activity_title || row.activity_name,
+        order_index: row.activity_index,
 
-      instance_status: row.instance_status || null,
-      is_complete:
-        row.instance_status === 'complete' ||
-        row.instance_status === 'completed' ||
-        !!row.submitted_at,
+        is_test,                    // raw (can be null)
+        isTest: is_test === 1,      // true only when explicitly test
+        isTestKnown: is_test !== null && is_test !== undefined,
 
-      is_ready: !!row.is_ready,
-      has_groups: row.group_count > 0,
-      hidden: !!row.hidden,
-    }));
+        instance_id: row.instance_id || null,
+        submitted_at: row.submitted_at || null,
+
+        instance_status: row.instance_status || null,
+        is_complete:
+          row.instance_status === 'complete' ||
+          row.instance_status === 'completed' ||
+          !!row.submitted_at,
+
+        is_ready: !!row.is_ready,
+        has_groups: row.group_count > 0,
+        hidden: !!row.hidden,
+      };
+    });
 
 
     res.json(activities);
@@ -407,12 +414,12 @@ async function getCourseProgress(req, res) {
 
     // 2) Get NON-TEST activities for this course's class_id
     const [activitiesRows] = await db.query(
-      `SELECT id, name, COALESCE(is_test, 0) AS is_test
+      `SELECT id, name, is_test
        FROM pogil_activities
        WHERE class_id = (
          SELECT class_id FROM courses WHERE id = ?
        )
-         AND COALESCE(is_test, 0) = 0   -- only regular activities
+         AND is_test = 0
        ORDER BY order_index`,
       [courseId]
     );
@@ -441,7 +448,7 @@ async function getCourseProgress(req, res) {
     JOIN pogil_activities a2 ON a2.id = ai2.activity_id
     JOIN group_members gm2   ON gm2.activity_instance_id = ai2.id
     WHERE ai2.course_id = ?
-      AND COALESCE(a2.is_test, 0) = 1
+      AND a2.is_test = 1
     GROUP BY gm2.student_id, ai2.activity_id
   ) latest
     ON latest.student_id = gm.student_id
@@ -449,7 +456,7 @@ async function getCourseProgress(req, res) {
    AND COALESCE(ai.graded_at, ai.submitted_at) = latest.last_ts
    AND ai.id = latest.last_id
   WHERE ai.course_id = ?
-    AND COALESCE(a.is_test, 0) = 1
+    AND a.is_test = 1
   `,
       [courseId, courseId]
     );
@@ -585,12 +592,12 @@ async function getCourseTestResults(req, res) {
 
     // 2) Test activities for this course's class_id
     const [testsRows] = await db.query(
-      `SELECT id, name, COALESCE(is_test, 0) AS is_test
+      `SELECT id, name, is_test
        FROM pogil_activities
        WHERE class_id = (
          SELECT class_id FROM courses WHERE id = ?
        )
-         AND COALESCE(is_test, 0) = 1
+       AND is_test = 1
        ORDER BY order_index`,
       [courseId]
     );
@@ -622,7 +629,7 @@ async function getCourseTestResults(req, res) {
     JOIN pogil_activities a2 ON a2.id = ai2.activity_id
     JOIN group_members gm2   ON gm2.activity_instance_id = ai2.id
     WHERE ai2.course_id = ?
-      AND COALESCE(a2.is_test, 0) = 1
+      AND a2.is_test = 1
     GROUP BY gm2.student_id, ai2.activity_id
   ) latest
     ON latest.student_id = gm.student_id
@@ -630,7 +637,7 @@ async function getCourseTestResults(req, res) {
    AND COALESCE(ai.graded_at, ai.submitted_at, ai.start_time) = latest.last_ts
    AND ai.id = latest.last_id
   WHERE ai.course_id = ?
-    AND COALESCE(a.is_test, 0) = 1
+    AND a.is_test = 1
   `,
       [courseId, courseId]
     );

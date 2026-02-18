@@ -1,7 +1,7 @@
 // client/src/pages/ActivityPreview.jsx
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams } from 'react-router-dom';
-import { Container } from 'react-bootstrap';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { Container, Button } from 'react-bootstrap';
 import Prism from 'prismjs';
 import 'prismjs/themes/prism.css';
 import 'prismjs/components/prism-python';
@@ -9,7 +9,13 @@ import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
 import { API_BASE_URL } from '../config';
 
 export default function ActivityPreview() {
+
   const { activityId } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const params = new URLSearchParams(location.search);
+  const returnTo = params.get('returnTo'); // null if missing
 
   const [activity, setActivity] = useState(null);
   const [blocks, setBlocks] = useState([]);
@@ -20,8 +26,6 @@ export default function ActivityPreview() {
   // NEW: local state used by renderBlocks / code blocks
   const [codeViewMode, setCodeViewMode] = useState({}); // { responseKey: 'active'|'local' }
   const [localCode, setLocalCode] = useState({});       // { responseKey: string }
-
-  const fetchedRef = useRef(false);
 
   const handleUpdateFileContents = (updaterFn) => {
     setFileContents((prev) => updaterFn(prev));
@@ -103,21 +107,47 @@ export default function ActivityPreview() {
   }, []);
 
   useEffect(() => {
-    const fetchActivityAndSheet = async () => {
+    if (!skulptLoaded) return;
+    if (!activityId) {
+      console.error("[ActivityPreview] Missing activityId param. Check your route param name.");
+      return;
+    }
+
+    let cancelled = false;
+
+    (async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/activities/${activityId}`);
+        console.log("[ActivityPreview] fetching activity", { activityId });
+
+        const res = await fetch(`${API_BASE_URL}/api/activities/${activityId}`, {
+          credentials: 'include',
+        });
+        if (!res.ok) throw new Error(`activity fetch failed ${res.status}`);
         const activityData = await res.json();
+        if (cancelled) return;
+
         setActivity(activityData);
 
-        if (!activityData.sheet_url || activityData.sheet_url === 'undefined') {
-          console.warn('Skipping doc preview because sheet_url is missing:', activityData.sheet_url);
+        const url = String(activityData?.sheet_url || '').trim();
+        console.log("[ActivityPreview] activity loaded", { id: activityData?.id, url });
+
+        if (!url || url === 'undefined') {
+          console.warn("[ActivityPreview] No sheet_url on activity; nothing to preview.");
+          setBlocks([]);
+          setFileContents({});
           return;
         }
 
         const docRes = await fetch(
-          `${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activityData.sheet_url)}`
+          `${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(url)}`,
+          { credentials: 'include' }
         );
-        const { lines } = await docRes.json();
+        if (!docRes.ok) throw new Error(`preview-doc failed ${docRes.status}`);
+
+        const body = await docRes.json();
+        const lines = body?.lines || [];
+        console.log("[ActivityPreview] preview-doc lines", { count: lines.length });
+
         const parsed = parseSheetToBlocks(lines);
 
         const files = {};
@@ -127,19 +157,16 @@ export default function ActivityPreview() {
           }
         }
 
+        if (cancelled) return;
         setBlocks(parsed);
         setFileContents(files);
       } catch (err) {
-        console.error('Failed to fetch preview data', err);
+        console.error("[ActivityPreview] Failed to fetch preview data", err);
       }
-    };
+    })();
 
-    if (skulptLoaded && !fetchedRef.current) {
-      fetchedRef.current = true;
-      fetchActivityAndSheet();
-    }
+    return () => { cancelled = true; };
   }, [activityId, skulptLoaded]);
-
   useEffect(() => {
     const rendered = renderBlocks(blocks, {
       mode: 'preview',
@@ -166,7 +193,19 @@ export default function ActivityPreview() {
 
   return (
     <Container>
-      <h2>Preview: {activity?.title}</h2>
+      <div className="d-flex justify-content-between align-items-center mt-2 mb-2">
+        <h2 className="mb-0">Preview: {activity?.title}</h2>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            if (!returnTo) navigate(-1);
+            else navigate(returnTo);
+          }}
+        >
+          Back
+        </Button>
+      </div>
+
       {!skulptLoaded ? (
         <p>Loading Python engine (Skulpt)...</p>
       ) : (

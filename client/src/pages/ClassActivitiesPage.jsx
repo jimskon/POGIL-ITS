@@ -1,14 +1,13 @@
 // pages/ClassActivitiesPage.jsx
 import React, { useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
-import { useNavigate } from 'react-router-dom';
-const navigate = useNavigate();
 
 export default function ClassActivitiesPage() {
   const { id: classId } = useParams();
   const { user } = useUser();
+  const location = useLocation();
   const navigate = useNavigate();
 
   const [activities, setActivities] = useState([]);
@@ -16,7 +15,7 @@ export default function ClassActivitiesPage() {
     name: '',
     title: '',
     sheet_url: '',
-    order_index: 1
+    order_index: 1,
   });
 
   useEffect(() => {

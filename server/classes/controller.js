@@ -81,7 +81,9 @@ exports.createActivityForClass = async (req, res) => {
       [name, title, sheet_url, order_index, classId, createdBy]
     );
 
+    // ✅ RETURN THE INSERTED ID
     res.status(201).json({
+      id: Number(result.insertId),          // <--- THIS IS THE FIX
       name,
       title,
       sheet_url,
@@ -262,12 +264,18 @@ exports.importFolderActivities = async (req, res) => {
 
       const [result] = await db.query(
         `INSERT INTO pogil_activities (name, title, sheet_url, order_index, class_id, created_by)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+   VALUES (?, ?, ?, ?, ?, ?)`,
         [name, title, url, index + 1, classId, createdBy]
       );
-      console.log(`Inserted activity: ${name} (${title})`);
+
       inserted.push({
-        name, title, sheet_url: url, order_index: index + 1, class_id: classId, created_by: createdBy
+        id: Number(result.insertId),
+        name,
+        title,
+        sheet_url: url,
+        order_index: index + 1,
+        class_id: Number(classId),
+        created_by: createdBy
       });
     }
 

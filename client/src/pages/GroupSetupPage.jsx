@@ -105,7 +105,11 @@ export default function GroupSetupPage() {
           }
         }
 
-        const dbFlag = data.is_test ?? data.isTest ?? false;
+        const dbFlag =
+          data.is_test ?? data.isTest ?? null;   // preserve unknown
+
+        const isTest = dbFlag === 1 || dbFlag === true;
+
         // Sheet is the truth; DB is just a fallback
         setIsTest(sheetHasTestTag || !!dbFlag);
       } catch (err) {

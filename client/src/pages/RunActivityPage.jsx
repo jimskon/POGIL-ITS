@@ -387,8 +387,11 @@ export default function RunActivityPage({
       return true;
     }
 
-    // Secondary: explicit DB flag, once we start storing it
-    if (activity?.is_test) return true;
+    // Secondary: explicit DB flag (tri-state: 1/0/NULL)
+    if (activity?.is_test === 1) return true;
+
+    // If we *know* it's not a test, don't use heuristics
+    if (activity?.is_test === 0) return false;
 
     // Fallback heuristic (only if we *really* don't know)
     if (!groups || groups.length !== 1) return false;
@@ -417,62 +420,62 @@ export default function RunActivityPage({
   }, [isTestMode, activity?.test_start_at]);
 
   useEffect(() => {
-  // Create exactly once
-  const s = io(API_BASE_URL, {
-    transports: ['websocket'], // optional but avoids long-polling weirdness
-  });
+    // Create exactly once
+    const s = io(API_BASE_URL, {
+      transports: ['websocket'], // optional but avoids long-polling weirdness
+    });
 
-  setSocket(s);
+    setSocket(s);
 
-  return () => {
-    s.disconnect();
-  };
-}, []);
+    return () => {
+      s.disconnect();
+    };
+  }, []);
 
-useEffect(() => {
-  // Create exactly once
-  const s = io(API_BASE_URL, {
-    transports: ['websocket'], // optional but avoids long-polling weirdness
-  });
+  useEffect(() => {
+    // Create exactly once
+    const s = io(API_BASE_URL, {
+      transports: ['websocket'], // optional but avoids long-polling weirdness
+    });
 
-  setSocket(s);
+    setSocket(s);
 
-  return () => {
-    s.disconnect();
-  };
-}, []);
+    return () => {
+      s.disconnect();
+    };
+  }, []);
 
-useEffect(() => {
-  if (!socket) return;
-  if (!instanceId) return;
+  useEffect(() => {
+    if (!socket) return;
+    if (!instanceId) return;
 
-  socket.emit('instance:join', { instanceId });
+    socket.emit('instance:join', { instanceId });
 
-  return () => {
-    socket.emit('instance:leave', { instanceId });
-  };
-}, [socket, instanceId]);
+    return () => {
+      socket.emit('instance:leave', { instanceId });
+    };
+  }, [socket, instanceId]);
 
-useEffect(() => {
-  if (!socket) return;
+  useEffect(() => {
+    if (!socket) return;
 
-  function onInstanceState(msg) {
-    const msgId = msg?.instanceId;
-    const patch = msg?.patch;
+    function onInstanceState(msg) {
+      const msgId = msg?.instanceId;
+      const patch = msg?.patch;
 
-    if (String(msgId) !== String(instanceId)) return;
-    if (!patch || typeof patch !== 'object') return;
+      if (String(msgId) !== String(instanceId)) return;
+      if (!patch || typeof patch !== 'object') return;
 
-    // IMPORTANT: patch your *activity instance* state (whatever variable holds it)
-    setActivity((prev) => (prev ? { ...prev, ...patch } : prev));
+      // IMPORTANT: patch your *activity instance* state (whatever variable holds it)
+      setActivity((prev) => (prev ? { ...prev, ...patch } : prev));
 
-    // If some patch fields live elsewhere, update them too:
-    if (patch.activeStudentId != null) setActiveStudentId(patch.activeStudentId);
-  }
+      // If some patch fields live elsewhere, update them too:
+      if (patch.activeStudentId != null) setActiveStudentId(patch.activeStudentId);
+    }
 
-  socket.on('instance:state', onInstanceState);
-  return () => socket.off('instance:state', onInstanceState);
-}, [socket, instanceId, setActiveStudentId]);
+    socket.on('instance:state', onInstanceState);
+    return () => socket.off('instance:state', onInstanceState);
+  }, [socket, instanceId, setActiveStudentId]);
 
   useEffect(() => {
     console.log('[RUN] isTestMode:', isTestMode);
@@ -1179,7 +1182,7 @@ useEffect(() => {
         // ---- compute test + legacy flags from the fresh instanceData ----
         const isTestNow =
           (!!instanceData?.test_start_at && Number(instanceData?.test_duration_minutes) > 0) ||
-          !!instanceData?.is_test;
+          instanceData?.is_test === 1;
 
         const cutoff = new Date(Date.UTC(2026, 0, 1, 0, 0, 0)); // 2026-01-01 UTC
         const startNow = instanceData?.test_start_at

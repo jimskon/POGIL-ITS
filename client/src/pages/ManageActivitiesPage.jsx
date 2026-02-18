@@ -1,6 +1,6 @@
 // src/pages/ManageActivitiesPage.jsx
 import React, { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
 import { API_BASE_URL } from '../config';
 import { Table, Button, Form, Container, Modal } from 'react-bootstrap';
@@ -25,6 +25,8 @@ export default function ManageActivitiesPage() {
   const canManage = user?.role === 'root' || user?.role === 'creator';
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [folderUrl, setFolderUrl] = useState('');
+
+  const location = useLocation();
 
   useEffect(() => {
     if (!canManage) {
@@ -86,16 +88,32 @@ export default function ManageActivitiesPage() {
     const res = await fetch(`${API_BASE_URL}/api/classes/${classId}/activities`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(activity)
+      body: JSON.stringify(activity),
+      credentials: 'include',
     });
 
     const data = await res.json();
-    if (res.ok) {
-      setActivities([...activities, data]);
-      setNewActivity({ name: '', title: '', sheet_url: '', order_index: '' });
-    } else {
-      alert(data.error || "Add failed.");
+
+    if (!res.ok) {
+      alert(data.error || 'Add failed.');
+      return;
     }
+
+    // ✅ Do NOT trust returned object
+    // Re-fetch from DB (single source of truth)
+
+    const refreshed = await fetch(
+      `${API_BASE_URL}/api/classes/${classId}/activities`,
+      { credentials: 'include' }
+    );
+
+    const refreshedData = await refreshed.json();
+
+    if (Array.isArray(refreshedData)) {
+      setActivities(refreshedData);
+    }
+
+    setNewActivity({ name: '', title: '', sheet_url: '', order_index: '' });
   };
 
   const confirmShareAndCheckAccess = async () => {
@@ -268,7 +286,7 @@ export default function ManageActivitiesPage() {
                   if (!activity.sheet_url) {
                     alert("No document URL specified for this activity.");
                   } else {
-                    navigate(`/preview/${activity.id}`);
+                    navigate(`/preview/${activity.id}?returnTo=${encodeURIComponent(location.pathname)}`);
                   }
                 }} className="me-2">Preview</Button>
                 <Button variant="warning" size="sm" onClick={() => navigate(`/editor/${activity.id}`)} className="me-2">Edit</Button>
