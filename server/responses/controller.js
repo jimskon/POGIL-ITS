@@ -182,36 +182,76 @@ exports.getGroupResponses = async (req, res) => {
 
 
 exports.bulkSaveResponses = async (req, res) => {
-  const { instanceId, userId, answers } = req.body;
+  const instanceId = Number(req.body?.instanceId);
+  const userId = Number(req.body?.userId);
+  const answers = req.body?.answers;
 
+  if (!instanceId || !userId || !answers || typeof answers !== 'object') {
+    return res.status(400).json({ error: 'Missing/invalid instanceId, userId, or answers' });
+  }
+
+  // Stable order => stable lock order
+  const entries = Object.entries(answers)
+    .map(([qid, val]) => [String(qid).trim(), String(val ?? '')])
+    .filter(([qid]) => qid.length > 0)
+    .sort((a, b) => a[0].localeCompare(b[0]));
+
+  if (entries.length === 0) return res.json({ success: true, saved: 0 });
+
+  const conn = await db.getConnection();
   try {
-    const entries = Object.entries(answers);
-    for (const [questionId, responseText] of entries) {
-      // 🛑 Skip saving if this is a follow-up (prompt or answer) that already exists
-      const isFollowup = /^(\d+[a-z]F\d*)$/.test(questionId); // Matches both F1 and FA1
-      if (isFollowup) {
-        const [existing] = await db.query(
-          `SELECT id FROM responses WHERE activity_instance_id = ? AND question_id = ?`,
-          [instanceId, questionId]
-        );
-        if (existing.length > 0) {
-          continue; // Already saved via socket; skip to avoid duplicates
-        }
+    const MAX_RETRIES = 3;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        await conn.beginTransaction();
+
+        // Build one multi-row insert
+        const values = [];
+        const placeholders = entries.map(([questionId, responseText]) => {
+          values.push(instanceId, questionId, 'text', responseText, userId);
+          return '(?, ?, ?, ?, ?)';
+        }).join(',');
+
+        // IMPORTANT: conditional overwrite to avoid stomping followups if they were already written
+        // - For normal questions: always upsert response
+        // - For followups (F* or FA*): only set response if it's currently empty
+        //   (no SELECT required)
+        const sql = `
+          INSERT INTO responses
+            (activity_instance_id, question_id, response_type, response, answered_by_user_id)
+          VALUES ${placeholders}
+          ON DUPLICATE KEY UPDATE
+            response = CASE
+              WHEN question_id REGEXP '^[0-9]+[a-zA-Z]F[0-9]+$'
+                OR question_id REGEXP '^[0-9]+[a-zA-Z]FA[0-9]+$'
+              THEN IF(responses.response IS NULL OR responses.response = '', VALUES(response), responses.response)
+              ELSE VALUES(response)
+            END,
+            response_type = VALUES(response_type),
+            answered_by_user_id = VALUES(answered_by_user_id),
+            updated_at = CURRENT_TIMESTAMP
+        `;
+
+        await conn.query(sql, values);
+
+        await conn.commit();
+        return res.json({ success: true, saved: entries.length });
+      } catch (err) {
+        await conn.rollback();
+
+        const deadlock = err && (err.code === 'ER_LOCK_DEADLOCK' || err.errno === 1213);
+        if (!deadlock || attempt === MAX_RETRIES) throw err;
+
+        // small backoff and retry
+        await new Promise(r => setTimeout(r, 30 * attempt));
       }
-
-      // ✅ Save or update the response
-      await db.query(
-        `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-         VALUES (?, ?, 'text', ?, ?)
-         ON DUPLICATE KEY UPDATE response = VALUES(response)`,
-        [instanceId, questionId, responseText, userId]
-      );
     }
-
-    res.json({ success: true });
   } catch (err) {
-    console.error("❌ Failed to bulk save responses:", err);
-    res.status(500).json({ error: "Failed to bulk save" });
+    console.error('❌ Failed to bulk save responses:', err);
+    return res.status(500).json({ error: 'Failed to bulk save' });
+  } finally {
+    conn.release();
   }
 };
 

@@ -1429,12 +1429,22 @@ async function submitTest(req, res) {
       .json({ error: 'Missing instanceId, studentId, or answers' });
   }
 
+  const lockName = `submitTest:${instanceId}`;
+
   console.log('🧪 submitTest instance:', instanceId, 'student:', studentId);
   console.log('🧪 submitTest answers keys:', Object.keys(answers));
   console.log('🧪 submitTest question list:', questions.length);
 
   const conn = await db.getConnection();
+
   try {
+    // ✅ Serialize grading for this instanceId
+    const [[lockRow]] = await conn.query(`SELECT GET_LOCK(?, 5) AS got`, [lockName]);
+    if (!lockRow?.got) {
+      return res.status(409).json({
+        error: 'This test is currently being submitted/graded by someone else. Try again in a moment.',
+      });
+    }
     await conn.beginTransaction();
 
     let totalEarnedPoints = 0;
@@ -1730,10 +1740,12 @@ async function submitTest(req, res) {
       summary: summaryText,
     });
   } catch (err) {
-    await conn.rollback();
+    try { await conn.rollback(); } catch { }
     console.error('❌ submitTest failed:', err);
     return res.status(500).json({ error: 'submit-test failed' });
   } finally {
+    // ✅ Always release lock + connection
+    try { await conn.query(`SELECT RELEASE_LOCK(?)`, [lockName]); } catch { }
     conn.release();
   }
 }
