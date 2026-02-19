@@ -611,12 +611,17 @@ if (process.env.AI_DEBUG === "1") {
     console.error("❌ OpenAI evaluateCode failed:", err);
     return base;
   }
-if (process.env.AI_DEBUG === "1") {
-  console.log("[AI_DEBUG] OpenAI raw (first 400):", raw.slice(0, 400));
-}
+
+  // ✅ define raw BEFORE any logging that references it
   const raw = (chat.choices?.[0]?.message?.content ?? "").trim();
+
+  if (process.env.AI_DEBUG === "1") {
+    console.log("[AI_DEBUG] OpenAI raw (first 400):", raw.slice(0, 400));
+  }
+
   const obj = safeJsonObject(raw);
   if (!obj) return base;
+
 
   // modelAccepted is the model’s real gate
   const norm = normalizeAIResult(obj);

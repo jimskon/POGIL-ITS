@@ -283,6 +283,10 @@ export default function RunActivityPage({
   const [activity, setActivity] = useState(null);
 
 
+  const [unansweredShown, setUnansweredShown] = useState({}); // { "1e": "Unanswered: ..." }
+
+
+
   const [groups, setGroups] = useState([]);
   const [activeStudentName, setActiveStudentName] = useState('');
   const [preamble, setPreamble] = useState([]);
@@ -326,6 +330,8 @@ export default function RunActivityPage({
 
   // NEW: UI-only “time expired” flag for tests (locks editing, shows submit alert)
   const [timeExpired, setTimeExpired] = useState(false);
+  // ✅ add this (prevents repeat auto-submit calls)
+  const [autoSubmitted, setAutoSubmitted] = useState(false);
 
 
   const [nonLegacyForUI, setNonLegacyForUI] = useState(false);
@@ -893,42 +899,47 @@ export default function RunActivityPage({
     };
   }, [user?.id, activeStudentId]);
 
-  // NEW: auto-submit at time 0 for active student in test mode
-  /*useEffect(() => {
+
+  useEffect(() => {
+    if (!isTestMode || !testWindow) {
+      setTestLockState({ lockedBefore: false, lockedAfter: false, remainingSeconds: null });
+      setTimeExpired(false);
+      setAutoSubmitted(false); // ✅ reset when leaving test window
+      return;
+    }
+
+  // ✅ Auto-submit exactly once when time expires (test mode only)
+  useEffect(() => {
     if (!isTestMode) return;
     if (!isStudent) return;
-    if (!isActive) return;
-    if (!testWindow) return;
-    if (autoSubmitted) return;
+    if (isSubmitted) return;
+    if (testLockState.lockedBefore) return;
 
-    if (testLockState.lockedAfter) return;
-    if (testLockState.remainingSeconds !== 0) return;
+    // Only fire when window is over
+    if (!timeExpired) return;
+
+    // Only once
+    if (autoSubmitted) return;
 
     (async () => {
       try {
         setAutoSubmitted(true);
-        await handleSubmit(false);
+        await handleSubmit(false);   // uses your TEST MODE PATH
       } catch (err) {
         console.error('Auto-submit failed:', err);
+        // If it failed, allow manual submit button to work; don't retry in a loop
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     isTestMode,
     isStudent,
-    isActive,
-    testWindow,
-    testLockState.remainingSeconds,
-    testLockState.lockedAfter,
+    isSubmitted,
+    testLockState.lockedBefore,
+    timeExpired,
     autoSubmitted,
-  ]);*/
-
-  useEffect(() => {
-    if (!isTestMode || !testWindow) {
-      setTestLockState({ lockedBefore: false, lockedAfter: false, remainingSeconds: null });
-      setTimeExpired(false);
-      return;
-    }
+    instanceId,
+  ]);
 
     const { start, end } = testWindow;
 
@@ -1767,6 +1778,7 @@ export default function RunActivityPage({
     // ---------- ORIGINAL LEARNING-MODE PATH ----------
     const answers = {};
     const unanswered = [];
+    const unansweredMap = {};
 
     for (let block of blocks) {
       if (block.type !== 'question') continue;
@@ -1910,6 +1922,7 @@ export default function RunActivityPage({
 
           answers[`${qid}S`] = 'inprogress';
           unanswered.push(`${qid} (code not changed)`);
+          unansweredMap[qid] = 'Unanswered: modify the code before submitting.';
 
           codeCells.forEach(({ key, code }) => (answers[key] = code));
           continue;
@@ -1935,6 +1948,7 @@ export default function RunActivityPage({
           setFollowupsShown((prev) => ({ ...prev, [qid]: msg }));
           answers[`${qid}S`] = 'inprogress';
           unanswered.push(`${qid} (no code)`);
+          unansweredMap[qid] = 'Unanswered: add or modify code before submitting.';
           continue;
         }
 
@@ -2224,9 +2238,9 @@ export default function RunActivityPage({
       // If nothing at all was entered → required
       if (!aiInput) {
         unanswered.push(`${qid} (base)`);
+        unansweredMap[qid] = 'Unanswered: enter a response before submitting.';
         answers[`${qid}S`] = 'inprogress';
 
-        // also clear any old suggestion
         setTextFeedbackShown((prev) => {
           const next = { ...prev };
           delete next[qid];
@@ -2235,6 +2249,7 @@ export default function RunActivityPage({
 
         continue;
       }
+
 
       // Save the main answer (text or table) to DB payload
       answers[qid] = aiInput;   // saves text OR table snapshot consistently
@@ -2379,6 +2394,7 @@ export default function RunActivityPage({
       }),
     });
 
+    setUnansweredShown(unansweredMap);
     if (computedState === 'inprogress') {
       console.warn('[RUNDBG] BLOCKING GROUP ADVANCE', {
         pendingBase,
@@ -2651,6 +2667,16 @@ export default function RunActivityPage({
       t: Date.now(),
     });
 
+    const baseQid = baseQidFromResponseKey(responseKey);
+    if (baseQid) {
+      setUnansweredShown((prev) => {
+        if (!prev[baseQid]) return prev;
+        const next = { ...prev };
+        delete next[baseQid];
+        return next;
+      });
+    }
+
     const broadcastOnly = !!meta?.__broadcastOnly;
 
     codeByKeyRef.current[responseKey] = updatedCode;
@@ -2919,6 +2945,7 @@ export default function RunActivityPage({
                 )}
 
               {group.content.map((block, bIndex) => {
+
                 // Render this block as usual
                 const renderedBlock = renderBlocks([block], {
                   editable,
@@ -2946,6 +2973,15 @@ export default function RunActivityPage({
                   onTextChange: (responseKey, value) => {
                     dirtyKeysRef.current.add(responseKey);
                     const qid = baseQidFromResponseKey(responseKey);
+                    if (qid) {
+                      setUnansweredShown((prev) => {
+                        if (!prev[qid]) return prev;
+                        const next = { ...prev };
+                        delete next[qid];
+                        return next;
+                      });
+                    }
+
 
                     // Mark this question as "being revised" so loadActivity won't rehydrate stale F1
                     if (qid) dirtyTextQidsRef.current.add(qid);
