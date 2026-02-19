@@ -20,9 +20,6 @@ router.post('/:instanceId/reopen', controller.reopenInstance);
 
 router.post('/:instanceId/test-settings', controller.updateTestSettings);
 
-// ✅ Mark test as submitted (cached totals)
-router.post('/:instanceId/mark-test-submitted', controller.markTestSubmitted);
-
 // ✅ Submit a test for this instance
 router.post('/:instanceId/submit-test', controller.submitTest);   
 
