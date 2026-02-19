@@ -1036,6 +1036,10 @@ export function renderBlocks(blocks, options = {}) {
 
   let standaloneCodeCounter = 1;
   const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
+  const canEditTable =
+  runMode === 'preview'
+    ? editable
+    : (editable && isActive);   // only active student edits in RUN
 
   return blocks.map((block, index) => {
     if (hiddenTypes.includes(block.type) && runMode !== 'preview') return null;
@@ -1532,6 +1536,8 @@ export function renderBlocks(blocks, options = {}) {
 
 
     if (block.type === 'table') {
+      // Base id for this standalone table instance
+      const tableBaseKey = `table${index}`;
       return (
         <div key={`table-${index}`} className="my-4">
           <h4 className="mb-2">{block.title}</h4>
@@ -1540,19 +1546,19 @@ export function renderBlocks(blocks, options = {}) {
               {block.rows.map((row, i) => (
                 <tr key={`table-${index}-row-${i}`}>
                   {row.map((cell, j) => {
-                    const cellKey = `table${index}cell${i}_${j}`;
+                    const cellKey = `${tableBaseKey}cell${i}_${j}`;
                     if (cell.type === 'input') {
                       return (
                         <td key={cellKey}>
                           <Form.Control
                             type="text"
-                            {...makeResponseAttrs({ key: cellKey, kind: "table", qid: responseKey })}
+                            {...makeResponseAttrs({ key: cellKey, kind: "table", qid: cellKey })}
                             value={prefill?.[cellKey]?.response || ''}
                             onChange={(e) => {
                               const val = e.target.value;
                               options.onTextChange?.(cellKey, val);
                             }}
-                            readOnly={!editable}
+                            readOnly={!canEditTable}
                           />
 
                         </td>
@@ -1831,7 +1837,7 @@ export function renderBlocks(blocks, options = {}) {
                                     options.onTextChange(cellKey, val);
                                   }
                                 }}
-                                readOnly={!editable}
+                                readOnly={!canEditTable}
                                 data-response-key={cellKey}
                               />
                             </td>

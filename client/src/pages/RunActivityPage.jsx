@@ -95,7 +95,7 @@ function getQuestionText(block, qid) {
   ].filter(Boolean);
   const raw =
     candidates.find((s) => String(s).trim().length > 0) || `Question ${qid}`;
-  return stripHtml(raw).trim()
+  return stripHtml(raw).trim();
 }
 
 function detectLanguageFromCode(code = '') {
@@ -433,19 +433,6 @@ export default function RunActivityPage({
   }, []);
 
   useEffect(() => {
-    // Create exactly once
-    const s = io(API_BASE_URL, {
-      transports: ['websocket'], // optional but avoids long-polling weirdness
-    });
-
-    setSocket(s);
-
-    return () => {
-      s.disconnect();
-    };
-  }, []);
-
-  useEffect(() => {
     if (!socket) return;
     if (!instanceId) return;
 
@@ -728,20 +715,6 @@ export default function RunActivityPage({
       loadActivity();
     }
   }, [user?.id, instanceId]);
-
-  useEffect(() => {
-    const newSocket = io(API_BASE_URL);
-    setSocket(newSocket);
-    return () => {
-      newSocket.disconnect();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (socket && instanceId) {
-      socket.emit('joinRoom', instanceId);
-    }
-  }, [socket, instanceId]);
 
   // NOTE: findQuestionBlockByQid moved inside component so it can see `groups`
   function findQuestionBlockByQid(qid) {
@@ -2428,11 +2401,7 @@ export default function RunActivityPage({
     }
 
 
-    if (
-      computedState === 'complete' &&
-      overrideThisGroup &&
-      (pendingBase || pendingTextFollowups || pendingCodeGates)
-    ) {
+    if (computedState === 'complete' && overrideThisGroup && pendingBase) {
       alert(
         'You chose to continue without addressing AI feedback. ' +
         'Your instructor may review this later.'
@@ -2502,6 +2471,116 @@ export default function RunActivityPage({
     }
   } // END handleSubmit
 
+  async function handleRegradeTest() {
+    if (isSubmitting) return;
+
+    console.log('[REGRD] click', {
+      t: Date.now(),
+      instanceId,
+      isTestMode,
+      isInstructor,
+      submitted_at: activity?.submitted_at,
+      submitted_by_user_id: activity?.submitted_by_user_id,
+    });
+
+    setIsSubmitting(true);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+
+    try {
+      const studentId = activity?.submitted_by_user_id;
+
+      if (!studentId) {
+        console.warn('[REGRD] missing studentId; abort');
+        alert('Regrade failed: missing submitted_by_user_id for this test instance.');
+        return;
+      }
+
+      const blocks = groups.flatMap((g) => [g.intro, ...(g.content || [])]);
+
+      const answers = {};
+      const questions = [];
+
+      for (const block of blocks) {
+        if (block?.type !== 'question') continue;
+
+        const qid = `${block.groupId}${block.id}`;
+        const questionText = getQuestionText(block, qid);
+
+        const responseText = String(existingAnswers?.[qid]?.response ?? '').trim();
+
+        const codeKeys = Object.keys(existingAnswers || {})
+          .filter((k) => k.toLowerCase().startsWith(`${qid}code`))
+          .sort();
+
+        codeKeys.forEach((k) => { answers[k] = String(existingAnswers?.[k]?.response ?? ''); });
+
+        const outputKey = `${qid}output`;
+        const outputText = String(existingAnswers?.[outputKey]?.response ?? '').trim();
+        if (outputText) answers[outputKey] = outputText;
+
+        answers[qid] = responseText;
+
+        const codeCells = codeKeys
+          .map((k) => {
+            const code = String(existingAnswers?.[k]?.response ?? '');
+            return { code, lang: pickLangForBlock(block, code), label: k };
+          })
+          .filter((c) => c.code.trim() !== '');
+
+        questions.push({ qid, questionText, scores: block.scores || {}, responseText, codeCells, outputText });
+      }
+
+      console.log('[REGRD] about to POST', {
+        url: `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-test`,
+        studentId,
+        answersCount: Object.keys(answers).length,
+        questionsCount: questions.length,
+      });
+
+      const res = await fetch(
+        `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-test`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          signal: controller.signal,
+          body: JSON.stringify({
+            studentId,
+            regrade: true,
+            answers,
+            questions,
+          }),
+        }
+      );
+
+      const raw = await res.text();
+      console.log('[REGRD] response', { ok: res.ok, status: res.status, rawHead: raw.slice(0, 200) });
+
+      if (!res.ok) {
+        alert(`Regrade failed: ${raw.slice(0, 200) || 'Unknown error'}`);
+        return;
+      }
+
+      await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/recompute-test-totals`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      await loadActivity();
+
+
+      await loadActivity();
+      alert('Regrade complete.');
+    } catch (e) {
+      console.error('[REGRD] error', e);
+      alert(e?.name === 'AbortError' ? 'Regrade timed out (20s).' : 'Regrade failed.');
+    } finally {
+      clearTimeout(timeoutId);
+      setIsSubmitting(false);
+      console.log('[REGRD] done');
+    }
+  }
   // Instructor override: save edited per-question scores & feedback
   async function handleSaveQuestionScores(qid, local) {
     if (!activity || !instanceId || !user?.id) return;
@@ -2995,6 +3074,18 @@ export default function RunActivityPage({
               ) : (
                 'Submit Test'
               )}
+            </Button>
+          </div>
+        )}
+
+        {isTestMode && isInstructor && isSubmitted && (
+          <div className="mt-3 d-flex gap-2">
+            <Button
+              variant="warning"
+              onClick={() => handleRegradeTest()}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Regrading…' : 'Regrade Test'}
             </Button>
           </div>
         )}

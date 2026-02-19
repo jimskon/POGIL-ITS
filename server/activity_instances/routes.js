@@ -16,7 +16,7 @@ router.post('/setup-groups', controller.setupMultipleGroupInstances);
 router.post('/:instanceId/reopen', controller.reopenInstance);
 
 // ✅ Regrade this test instance using stored answers
-router.post('/:instanceId/regrade', controller.regradeTestInstance);
+//router.post('/:instanceId/regrade', controller.regradeTestInstance);
 
 router.post('/:instanceId/test-settings', controller.updateTestSettings);
 
@@ -58,6 +58,9 @@ router.get('/by-activity/:courseId/:activityId', controller.getInstancesForActiv
 
 // ✅ Refresh total_groups by parsing the linked Google Doc
 router.get('/:instanceId/refresh-groups', controller.refreshTotalGroups);
+
+router.post('/:instanceId/recompute-test-totals', controller.recomputeTestTotals);
+
 
 
 module.exports = router;

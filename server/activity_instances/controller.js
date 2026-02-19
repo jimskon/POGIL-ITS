@@ -217,7 +217,7 @@ async function getActivityInstanceById(req, res) {
       `SELECT
          ai.id,
          ai.course_id,
-         ai.activity_id,
+         ai.submitted_by_user_id,
          ai.group_number,
          ai.status,
          ai.total_groups,
@@ -1202,239 +1202,33 @@ async function getBaseQidsFirstSeen(conn, instanceId) {
 }
 
 
-async function regradeTestInstance(req, res) {
-  const { instanceId } = req.params;
-  if (!instanceId) return res.status(400).json({ error: 'Missing instanceId' });
-
-  let questions;
-  try {
-    questions = await loadTestQuestionsForInstance(instanceId);
-  } catch (err) {
-    console.error('❌ regradeTestInstance: failed to load questions:', err);
-    return res.status(500).json({ error: 'Failed to load test questions for regrade' });
-  }
-
-  console.log('🔁 regradeTestInstance for', instanceId, 'questions:', questions.length);
-
-  let conn = null;
-  try {
-    conn = await db.getConnection();
-    await conn.beginTransaction();
-
-    // Pick any student in this instance as the "answer owner"
-    const [[memberRow]] = await conn.query(
-      `SELECT student_id
-       FROM group_members
-       WHERE activity_instance_id = ?
-       ORDER BY id
-       LIMIT 1`,
-      [instanceId]
-    );
-    const defaultAnswererId = memberRow?.student_id || 0;
-
-    // Load all stored responses for this instance
-    const [rows] = await conn.query(
-      `SELECT question_id, response
-       FROM responses
-       WHERE activity_instance_id = ?`,
-      [instanceId]
-    );
-
-    const answers = {};
-    for (const row of rows) {
-      answers[row.question_id] = row.response ?? '';
-    }
-
-    // Map parsed question order -> base qids found in DB
-    const baseIds = await getBaseQidsFirstSeen(conn, instanceId);
-    console.log('🧭 [regrade] baseIds from DB (first-seen):', baseIds.slice(0, 60));
-
-    for (let i = 0; i < questions.length; i++) {
-      if (baseIds[i]) questions[i].id = baseIds[i];
-    }
-
-    const upsertResponse = async (qid, value, type = 'text') => {
-      if (value == null) return;
-      const s = String(value);
-      if (!s.trim()) return;
-
-      await conn.query(
-        `
-        INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-        VALUES (?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-          response      = VALUES(response),
-          response_type = VALUES(response_type),
-          answered_by_user_id = VALUES(answered_by_user_id),
-          updated_at    = CURRENT_TIMESTAMP
-        `,
-        [instanceId, qid, type, s, defaultAnswererId]
-      );
-    };
-
-    const bucketPoints = (bucket) => {
-      if (!bucket) return 0;
-      if (typeof bucket === 'number') return bucket;
-      if (typeof bucket === 'object' && typeof bucket.points === 'number') return bucket.points;
-      return 0;
-    };
-
-    let totalEarnedPoints = 0;
-    let totalMaxPoints = 0;
-    const questionResults = [];
-
-    for (const q of questions) {
-      const baseId = q.id || q.qid;
-      if (!baseId) continue;
-
-      const text = q.text || '';
-      const scores = q.scores || {};
-
-      const maxCodePts = bucketPoints(scores.code);
-      const maxRunPts = bucketPoints(scores.output);
-      const maxRespPts = bucketPoints(scores.response);
-
-      if (maxCodePts <= 0 && maxRunPts <= 0 && maxRespPts <= 0) {
-        console.log('⚠️ [regrade] No points configured for question', baseId, '- skipping grading.');
-        continue;
-      }
-
-      const written = (answers[baseId] || '').trim();
-
-      // code cells from stored answers
-      const codeCells = [];
-      const rxOld = new RegExp(`^${escapeRegExp(baseId)}code(\\d+)$`, 'i');
-      const rxNew = new RegExp(`^${escapeRegExp(baseId)}-code-(\\d+)$`, 'i');
-
-      for (const [key, value] of Object.entries(answers)) {
-        if (!value || !String(value).trim()) continue;
-
-        let m = key.match(rxOld);
-        if (!m) m = key.match(rxNew);
-        if (!m) continue;
-
-        const n = m[1];
-        codeCells.push({
-          qid: key,
-          code: String(value),
-          lang: 'cpp',
-          label: `code ${n}`,
-        });
-      }
-
-
-      // output saved by submitTest as `${baseId}Output`
-      let outputText = String(answers[`${baseId}Output`] || '').trim();
-
-      // Back-compat fallbacks (only if you used other key styles at some point)
-      if (!outputText) {
-        const rxOut1 = new RegExp(`^${escapeRegExp(baseId)}output$`, 'i');
-        const rxOut2 = new RegExp(`^${escapeRegExp(baseId)}-output$`, 'i');
-
-        for (const [k, v] of Object.entries(answers)) {
-          if (rxOut1.test(k) || rxOut2.test(k)) {
-            outputText = String(v || '').trim();
-            break;
-          }
-        }
-      }
-
-
-      console.log('🧪 [regrade] artifacts for', baseId, {
-        writtenPresent: !!written,
-        codeCellsCount: codeCells.length,
-        hasOutput: !!outputText,
-      });
-
-      const {
-        codeScore, codeFeedback,
-        runScore, runFeedback,
-        responseScore, responseFeedback,
-      } = await gradeTestQuestion({
-        questionText: text,
-        scores,
-        responseText: written,
-        codeCells,
-        outputText,
-        rubric: scores,
-      });
-
-      const earned = (codeScore || 0) + (runScore || 0) + (responseScore || 0);
-      const maxPts = maxCodePts + maxRunPts + maxRespPts;
-
-      totalEarnedPoints += earned;
-      totalMaxPoints += maxPts;
-
-      questionResults.push({
-        qid: baseId,
-        maxCodePts, maxRunPts, maxRespPts,
-        codeScore, runScore, responseScore,
-        codeFeedback: codeFeedback || '',
-        runFeedback: runFeedback || '',
-        responseFeedback: responseFeedback || '',
-      });
-
-      await upsertResponse(`${baseId}CodeScore`, codeScore, 'text');
-      await upsertResponse(`${baseId}CodeFeedback`, codeFeedback, 'text');
-      await upsertResponse(`${baseId}RunScore`, runScore, 'text');
-      await upsertResponse(`${baseId}RunFeedback`, runFeedback, 'text');
-      await upsertResponse(`${baseId}ResponseScore`, responseScore, 'text');
-      await upsertResponse(`${baseId}ResponseFeedback`, responseFeedback, 'text');
-    }
-
-    const summaryText =
-      questionResults
-        .map(qr => `Question ${qr.qid} – Total ${(qr.codeScore || 0) + (qr.runScore || 0) + (qr.responseScore || 0)}/${qr.maxCodePts + qr.maxRunPts + qr.maxRespPts}`)
-        .join('\n') +
-      `\n\nOverall: ${totalEarnedPoints}/${totalMaxPoints}`;
-
-    await upsertResponse('testTotalScore', totalEarnedPoints, 'text');
-    await upsertResponse('testMaxScore', totalMaxPoints, 'text');
-    await upsertResponse('testSummary', summaryText, 'text');
-
-    await conn.query(
-      `UPDATE activity_instances
-       SET points_earned = ?, points_possible = ?, graded_at = UTC_TIMESTAMP(),
-           review_complete = 0, reviewed_at = NULL
-       WHERE id = ?`,
-      [totalEarnedPoints, totalMaxPoints, instanceId]
-    );
-    global.emitInstanceState?.(Number(instanceId), {
-      points_earned: totalEarnedPoints,
-      points_possible: totalMaxPoints,
-      review_complete: 0,
-      reviewed_at: null,
-      // graded_at is DB-time; optional select to send exact
-    });
-
-    await conn.commit();
-    return res.json({ ok: true, regraded: true, earned: totalEarnedPoints, max: totalMaxPoints });
-  } catch (err) {
-    if (conn) await conn.rollback();
-    console.error('❌ regradeTestInstance failed:', err);
-    return res.status(500).json({ error: 'regrade-test failed' });
-  } finally {
-    if (conn) conn.release();
-  }
-}
-
 
 async function submitTest(req, res) {
   const { instanceId } = req.params;
-  const { studentId, answers, questions = [] } = req.body || {};
+  const { studentId, answers, questions = [], regrade = false } = req.body || {};
+  const isRegrade = regrade === true;
 
   if (!instanceId || !studentId || !answers) {
-    return res
-      .status(400)
-      .json({ error: 'Missing instanceId, studentId, or answers' });
+    return res.status(400).json({ error: 'Missing instanceId, studentId, or answers' });
+  }
+
+  console.log('[SUBMIT_TEST] ENTER', {
+    instanceId,
+    isRegrade,
+    studentId,
+    qCount: Array.isArray(questions) ? questions.length : 0,
+    aCount: answers ? Object.keys(answers).length : 0,
+    t: new Date().toISOString(),
+  });
+
+  // ✅ Regrade: instructor/root/creator only
+  if (isRegrade) {
+    const role = req.user?.role;
+    const ok = role === 'instructor' || role === 'root' || role === 'creator';
+    if (!ok) return res.status(403).json({ error: 'Forbidden (regrade requires instructor)' });
   }
 
   const lockName = `submitTest:${instanceId}`;
-
-  console.log('🧪 submitTest instance:', instanceId, 'student:', studentId);
-  console.log('🧪 submitTest answers keys:', Object.keys(answers));
-  console.log('🧪 submitTest question list:', questions.length);
-
   const conn = await db.getConnection();
 
   try {
@@ -1445,6 +1239,7 @@ async function submitTest(req, res) {
         error: 'This test is currently being submitted/graded by someone else. Try again in a moment.',
       });
     }
+
     await conn.beginTransaction();
 
     let totalEarnedPoints = 0;
@@ -1467,22 +1262,37 @@ async function submitTest(req, res) {
       );
     };
 
+    const upsertText = async (qid, value) => {
+      const s = value == null ? '' : String(value);  // allow clearing + overwrite
+      await conn.query(
+        `
+    INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
+    VALUES (?, ?, 'text', ?, ?)
+    ON DUPLICATE KEY UPDATE
+      response = VALUES(response),
+      answered_by_user_id = VALUES(answered_by_user_id),
+      updated_at = CURRENT_TIMESTAMP
+    `,
+        [instanceId, qid, s, studentId]
+      );
+    };
+
+    // -------- grade each question --------
     for (const q of questions) {
-      const baseId = q.id || q.qid;
+      // Your client sends {qid, questionText, ...}
+      const baseId = q.qid || q.id;
       if (!baseId) {
-        console.error('❌ submitTest: question missing id:', q);
+        console.error('❌ submitTest: question missing qid/id:', q);
         continue;
       }
 
-      const text = q.text || '';
+      const text = q.questionText || q.text || '';
       const scores = q.scores || {};
 
       const bucketPoints = (bucket) => {
         if (!bucket) return 0;
         if (typeof bucket === 'number') return bucket;
-        if (typeof bucket === 'object' && typeof bucket.points === 'number') {
-          return bucket.points;
-        }
+        if (typeof bucket === 'object' && typeof bucket.points === 'number') return bucket.points;
         return 0;
       };
 
@@ -1490,78 +1300,64 @@ async function submitTest(req, res) {
       const maxRunPts = bucketPoints(scores.output);
       const maxRespPts = bucketPoints(scores.response);
 
-      console.log('🧮 Question rubric:', {
-        qid: baseId,
-        scores,
-        maxCodePts,
-        maxRunPts,
-        maxRespPts,
-      });
+      // Snapshot artifacts from `answers`
+      const written = String(answers[baseId] || '').trim();
 
-      const written = (answers[baseId] || '').trim();
+      // --- code cells ---
       const codeCells = [];
+      // old style: 2acode1
       const rxOld = new RegExp(`^${escapeRegExp(baseId)}code(\\d+)$`, 'i');
+      // new style: 2a-code-1 (if you ever use it)
       const rxNew = new RegExp(`^${escapeRegExp(baseId)}-code-(\\d+)$`, 'i');
 
       for (const [key, value] of Object.entries(answers)) {
         if (!value || !String(value).trim()) continue;
-
-        let m = key.match(rxOld);
-        if (!m) m = key.match(rxNew);
+        let m = String(key).match(rxOld);
+        if (!m) m = String(key).match(rxNew);
         if (!m) continue;
 
         const n = m[1];
         codeCells.push({
-          qid: key,
+          qid: key,                 // store exact response key
           code: String(value),
-          lang: 'cpp',
+          lang: 'cpp',              // you’re currently forcing cpp; fine for now
           label: `code ${n}`,
         });
       }
 
+      // --- output snapshot ---
       let outputText = '';
       const outputPrefix = (baseId + 'output').toLowerCase();
-
       for (const [key, value] of Object.entries(answers)) {
-        const lowerKey = key.toLowerCase();
+        const lowerKey = String(key).toLowerCase();
         if (lowerKey === outputPrefix || lowerKey.startsWith(outputPrefix)) {
           outputText = String(value || '').trim();
           break;
         }
       }
 
-      // 🔹 Persist the raw student artifacts for this question
+      // Persist raw artifacts
+      if (written) await upsertResponse(baseId, written, 'text');
+      for (const cell of codeCells) await upsertResponse(cell.qid, cell.code, 'code');
+      if (outputText) await upsertResponse(`${baseId}Output`, outputText, 'run_output');
 
-      // 1) Written answer (main text)
-      if (written) {
-        await upsertResponse(baseId, written, 'text');
-      }
-
-      // 2) Code cells
-      for (const cell of codeCells) {
-        await upsertResponse(cell.qid, cell.code, 'code');  // e.g., "1code1"
-      }
-
-      // 3) Run output that grading used
-      if (outputText) {
-        await upsertResponse(`${baseId}Output`, outputText, 'run_output');
-      }
-
-      console.log('🧪 submitTest artifacts for', baseId, {
+      console.log('[SUBMIT_TEST] artifacts', {
+        baseId,
         writtenPresent: !!written,
         codeCellsCount: codeCells.length,
         hasOutput: !!outputText,
+        maxCodePts,
+        maxRunPts,
+        maxRespPts,
       });
 
+      // Skip grading if no points
       if (maxCodePts <= 0 && maxRunPts <= 0 && maxRespPts <= 0) {
-        console.log(
-          '⚠️ No points configured for question',
-          baseId,
-          '- skipping grading.'
-        );
+        console.log('[SUBMIT_TEST] skip grading (no points configured)', baseId);
         continue;
       }
 
+      // Grade
       const {
         codeScore,
         codeFeedback,
@@ -1578,23 +1374,8 @@ async function submitTest(req, res) {
         rubric: scores,
       });
 
-      console.log('✅ Test grading result:', {
-        instanceId,
-        studentId,
-        qid: baseId,
-        maxCodePts,
-        maxRunPts,
-        maxRespPts,
-        codeScore,
-        runScore,
-        responseScore,
-      });
-
       const earned =
-        (codeScore || 0) +
-        (runScore || 0) +
-        (responseScore || 0);
-
+        (codeScore || 0) + (runScore || 0) + (responseScore || 0);
       const maxPts = maxCodePts + maxRunPts + maxRespPts;
 
       totalEarnedPoints += earned;
@@ -1605,67 +1386,85 @@ async function submitTest(req, res) {
         maxCodePts,
         maxRunPts,
         maxRespPts,
-        codeScore,
-        runScore,
-        responseScore,
+        codeScore: codeScore || 0,
+        runScore: runScore || 0,
+        responseScore: responseScore || 0,
         codeFeedback: codeFeedback || '',
         runFeedback: runFeedback || '',
         responseFeedback: responseFeedback || '',
       });
 
-      const upsert = async (qid, value) => {
-        if (value == null || value === '') return;
-        await conn.query(
-          `
-          INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-          VALUES (?, ?, 'text', ?, ?)
-          ON DUPLICATE KEY UPDATE
-            response = VALUES(response),
-            answered_by_user_id = VALUES(answered_by_user_id),
-            updated_at = CURRENT_TIMESTAMP
-        `,
-          [instanceId, qid, String(value), studentId]
-        );
-      };
+      // Store per-band grading outputs
+      await upsertText(`${baseId}CodeScore`, codeScore);
+      await upsertText(`${baseId}CodeFeedback`, codeFeedback);
 
-      await upsert(`${baseId}CodeScore`, codeScore);
-      await upsert(`${baseId}CodeFeedback`, codeFeedback);
+      await upsertText(`${baseId}RunScore`, runScore);
+      await upsertText(`${baseId}RunFeedback`, runFeedback);
 
-      await upsert(`${baseId}RunScore`, runScore);
-      await upsert(`${baseId}RunFeedback`, runFeedback);
+      await upsertText(`${baseId}ResponseScore`, responseScore);
+      await upsertText(`${baseId}ResponseFeedback`, responseFeedback);
 
-      await upsert(`${baseId}ResponseScore`, responseScore);
-      await upsert(`${baseId}ResponseFeedback`, responseFeedback);
+      // ✅ DB CHECK (inside loop, baseId exists here)
+const [checkRows] = await conn.query(
+  `SELECT question_id, response, updated_at
+   FROM responses
+   WHERE activity_instance_id = ?
+     AND question_id IN (?, ?, ?, ?, ?, ?)
+   ORDER BY updated_at DESC`,
+  [
+    instanceId,
+    `${baseId}CodeScore`,
+    `${baseId}CodeFeedback`,
+    `${baseId}RunScore`,
+    `${baseId}RunFeedback`,
+    `${baseId}ResponseScore`,
+    `${baseId}ResponseFeedback`,
+  ]
+);
+
+console.log('[SUBMIT_TEST][DB CHECK]', {
+  instanceId,
+  baseId,
+  writtenValues: { codeScore, runScore, responseScore },
+  feedbackLens: {
+    codeFeedbackLen: String(codeFeedback ?? '').length,
+    runFeedbackLen: String(runFeedback ?? '').length,
+    responseFeedbackLen: String(responseFeedback ?? '').length,
+  },
+  rowsInDb: checkRows,
+});
+
+      console.log('[SUBMIT_TEST] graded', {
+        baseId,
+        earned,
+        maxPts,
+        codeScore,
+        runScore,
+        responseScore,
+      });
     }
 
-    const lines = [];
 
+    // -------- summary --------
+    const lines = [];
     for (const qr of questionResults) {
       const {
         qid,
-        maxCodePts = 0,
-        maxRunPts = 0,
-        maxRespPts = 0,
-        codeScore = 0,
-        runScore = 0,
-        responseScore = 0,
-        codeFeedback = '',
-        runFeedback = '',
-        responseFeedback = '',
+        maxCodePts = 0, maxRunPts = 0, maxRespPts = 0,
+        codeScore = 0, runScore = 0, responseScore = 0,
+        codeFeedback = '', runFeedback = '', responseFeedback = '',
       } = qr;
-
-      const bandParts = [];
-      if (maxCodePts > 0) bandParts.push(`Code ${codeScore}/${maxCodePts}`);
-      if (maxRunPts > 0) bandParts.push(`Run ${runScore}/${maxRunPts}`);
-      if (maxRespPts > 0) bandParts.push(`Response ${responseScore}/${maxRespPts}`);
 
       const qMax = maxCodePts + maxRunPts + maxRespPts;
       const qScore = codeScore + runScore + responseScore;
 
       lines.push(`Question ${qid} – Total ${qScore}/${qMax}`);
-      if (bandParts.length) {
-        lines.push(`  ${bandParts.join(' · ')}`);
-      }
+
+      const bandParts = [];
+      if (maxCodePts > 0) bandParts.push(`Code ${codeScore}/${maxCodePts}`);
+      if (maxRunPts > 0) bandParts.push(`Run ${runScore}/${maxRunPts}`);
+      if (maxRespPts > 0) bandParts.push(`Response ${responseScore}/${maxRespPts}`);
+      if (bandParts.length) lines.push(`  ${bandParts.join(' · ')}`);
 
       if (maxCodePts > 0 && codeScore < maxCodePts && codeFeedback) {
         lines.push(`  Code feedback: ${codeFeedback}`);
@@ -1681,123 +1480,79 @@ async function submitTest(req, res) {
     }
 
     lines.push(`Overall: ${totalEarnedPoints}/${totalMaxPoints}`);
+    if (isRegrade) lines.push(`(Regraded at ${new Date().toISOString()})`);
 
     const summaryText = lines.join('\n');
 
-    console.log('📊 Test grading summary:', {
-      instanceId,
-      studentId,
-      totalEarnedPoints,
-      totalMaxPoints,
-    });
+    await upsertText('testTotalScore', totalEarnedPoints);
+    await upsertText('testMaxScore', totalMaxPoints);
+    await upsertText('testSummary', summaryText);
 
-    const upsertTotal = async (qid, value) => {
-      if (value == null) return;
+    // ✅ Update activity_instances:
+    // - On first submit: set submitted_at + submitted_by_user_id if missing
+    // - On regrade: DO NOT touch submitted_at or submitted_by_user_id
+    if (isRegrade) {
       await conn.query(
         `
-        INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
-        VALUES (?, ?, 'text', ?, ?)
-        ON DUPLICATE KEY UPDATE
-          response = VALUES(response),
-          answered_by_user_id = VALUES(answered_by_user_id),
-          updated_at = CURRENT_TIMESTAMP
-      `,
-        [instanceId, qid, String(value), studentId]
+        UPDATE activity_instances
+        SET
+          points_earned    = ?,
+          points_possible  = ?,
+          graded_at        = UTC_TIMESTAMP()
+        WHERE id = ?
+        `,
+        [totalEarnedPoints, totalMaxPoints, instanceId]
       );
-    };
-
-    await upsertTotal('testTotalScore', totalEarnedPoints);
-    await upsertTotal('testMaxScore', totalMaxPoints);
-    await upsertTotal('testSummary', summaryText);
-
-    await conn.query(
-      `UPDATE activity_instances
-   SET
-     points_earned    = ?,
-     points_possible  = ?,
-     progress_status  = 'completed',
-     submitted_at     = COALESCE(submitted_at, UTC_TIMESTAMP()),
-     graded_at        = UTC_TIMESTAMP()
-   WHERE id = ?`,
-      [totalEarnedPoints, totalMaxPoints, instanceId]
-    );
+    } else {
+      await conn.query(
+        `
+        UPDATE activity_instances
+        SET
+          points_earned    = ?,
+          points_possible  = ?,
+          progress_status  = 'completed',
+          submitted_at     = COALESCE(submitted_at, UTC_TIMESTAMP()),
+          graded_at        = UTC_TIMESTAMP(),
+          submitted_by_user_id = COALESCE(submitted_by_user_id, ?)
+        WHERE id = ?
+        `,
+        [totalEarnedPoints, totalMaxPoints, studentId, instanceId]
+      );
+    }
 
     global.emitInstanceState?.(Number(instanceId), {
       points_earned: totalEarnedPoints,
       points_possible: totalMaxPoints,
       progress_status: 'completed',
-      // no is_test here
     });
 
-
-
     await conn.commit();
+
+    console.log('[SUBMIT_TEST] EXIT OK', {
+      instanceId,
+      isRegrade,
+      totalEarnedPoints,
+      totalMaxPoints,
+    });
+
     return res.json({
       ok: true,
       earned: totalEarnedPoints,
       max: totalMaxPoints,
       questions: questionResults,
       summary: summaryText,
+      regrade: isRegrade,
     });
   } catch (err) {
     try { await conn.rollback(); } catch { }
     console.error('❌ submitTest failed:', err);
     return res.status(500).json({ error: 'submit-test failed' });
   } finally {
-    // ✅ Always release lock + connection
     try { await conn.query(`SELECT RELEASE_LOCK(?)`, [lockName]); } catch { }
     conn.release();
   }
 }
 
-// Mark a graded test instance as reviewed by an instructor
-async function markInstanceReviewed(req, res) {
-  const { instanceId } = req.params;
-
-  try {
-    await db.query(
-      `UPDATE activity_instances
-       SET review_complete = 1,
-           reviewed_at     = UTC_TIMESTAMP()
-       WHERE id = ?`,
-      [instanceId]
-    );
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('❌ markInstanceReviewed error:', err);
-    res.status(500).json({ error: 'Failed to mark reviewed' });
-  }
-}
-
-
-// NEW lightweight endpoint
-async function markTestSubmitted(req, res) {
-  const { instanceId } = req.params;
-  const { totalEarnedPoints, totalMaxPoints } = req.body || {};
-
-  if (!instanceId) {
-    return res.status(400).json({ error: 'Missing instanceId' });
-  }
-
-  try {
-    await db.query(
-      `UPDATE activity_instances
-   SET
-     points_earned   = ?,
-     points_possible = ?,
-     progress_status = 'completed',
-     submitted_at    = UTC_TIMESTAMP(),
-     graded_at       = UTC_TIMESTAMP()
-   WHERE id = ?`,
-      [totalEarnedPoints ?? 0, totalMaxPoints ?? 0, instanceId]
-    );
-
-    return res.json({ ok: true });
-  } catch (err) {
-    console.error('❌ markTestSubmitted failed:', err);
-    return res.status(500).json({ error: 'mark-test-submitted failed' });
-  }
-}
 
 // PUT /api/courses/:courseId/activities/:activityId/hidden
 // Body: { hidden: true/false }
@@ -1827,6 +1582,157 @@ async function setActivityHiddenForCourse(req, res) {
   }
 }
 
+// NEW lightweight endpoint
+async function markTestSubmitted(req, res) {
+  const { instanceId } = req.params;
+  const { totalEarnedPoints, totalMaxPoints, studentId } = req.body || {};
+
+  if (!instanceId) return res.status(400).json({ error: 'Missing instanceId' });
+  if (!studentId) return res.status(400).json({ error: 'Missing studentId' });
+
+  try {
+    await db.query(
+      `UPDATE activity_instances
+       SET
+         points_earned   = ?,
+         points_possible = ?,
+         progress_status = 'completed',
+         submitted_at    = COALESCE(submitted_at, UTC_TIMESTAMP()),
+         graded_at       = UTC_TIMESTAMP(),
+         submitted_by_user_id = COALESCE(submitted_by_user_id, ?)
+       WHERE id = ?`,
+      [totalEarnedPoints ?? 0, totalMaxPoints ?? 0, studentId, instanceId]
+    );
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('❌ markTestSubmitted failed:', err);
+    return res.status(500).json({ error: 'mark-test-submitted failed' });
+  }
+}
+
+
+
+// Mark a graded test instance as reviewed by an instructor
+async function markInstanceReviewed(req, res) {
+  const { instanceId } = req.params;
+
+  try {
+    await db.query(
+      `UPDATE activity_instances
+       SET review_complete = 1,
+           reviewed_at     = UTC_TIMESTAMP()
+       WHERE id = ?`,
+      [instanceId]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('❌ markInstanceReviewed error:', err);
+    res.status(500).json({ error: 'Failed to mark reviewed' });
+  }
+}
+
+// activity_instances/controller.js
+
+async function recomputeTestTotals(req, res) {
+  const { instanceId } = req.params;
+
+  const role = req.user?.role;
+  const ok = role === 'instructor' || role === 'root' || role === 'creator';
+  if (!ok) return res.status(403).json({ error: 'Forbidden' });
+
+  const conn = await db.getConnection();
+  try {
+    // 1) Pick an answer owner (must be non-null)
+    const [[inst]] = await conn.query(
+      `SELECT submitted_by_user_id, points_possible
+       FROM activity_instances
+       WHERE id = ?`,
+      [instanceId]
+    );
+    if (!inst) return res.status(404).json({ error: 'Instance not found' });
+
+    let answererId = inst.submitted_by_user_id;
+
+    if (!answererId) {
+      const [[m]] = await conn.query(
+        `SELECT student_id
+         FROM group_members
+         WHERE activity_instance_id = ?
+         ORDER BY id ASC
+         LIMIT 1`,
+        [instanceId]
+      );
+      answererId = m?.student_id || req.user?.id || null;
+    }
+
+    if (!answererId) {
+      return res.status(400).json({ error: 'Cannot determine answered_by_user_id for totals' });
+    }
+
+    // 2) Load all responses
+    const [rows] = await conn.query(
+      `SELECT question_id, response
+       FROM responses
+       WHERE activity_instance_id = ?`,
+      [instanceId]
+    );
+
+    const map = Object.create(null);
+    for (const r of rows) map[r.question_id] = r.response;
+
+    // 3) Sum scores
+    const baseQids = new Set();
+    for (const k of Object.keys(map)) {
+      const m = String(k).match(/^(\d+[a-z]+)(CodeScore|RunScore|ResponseScore)$/);
+      if (m) baseQids.add(m[1]);
+    }
+
+    let earned = 0;
+    for (const qid of baseQids) {
+      const c = Number(map[`${qid}CodeScore`] || 0) || 0;
+      const r = Number(map[`${qid}RunScore`] || 0) || 0;
+      const t = Number(map[`${qid}ResponseScore`] || 0) || 0;
+      earned += (c + r + t);
+    }
+
+    const possible = Number(inst.points_possible || 0) || 0;
+
+    // 4) Update cached totals on activity_instances
+    await conn.query(
+      `UPDATE activity_instances
+       SET points_earned = ?,
+           graded_at = UTC_TIMESTAMP()
+       WHERE id = ?`,
+      [earned, instanceId]
+    );
+
+    // 5) Mirror totals into responses table (optional, but you’re doing it)
+    await conn.query(
+      `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
+       VALUES (?, 'testTotalScore', 'text', ?, ?)
+       ON DUPLICATE KEY UPDATE
+         response = VALUES(response),
+         answered_by_user_id = VALUES(answered_by_user_id),
+         updated_at = CURRENT_TIMESTAMP`,
+      [instanceId, String(earned), answererId]
+    );
+
+    global.emitInstanceState?.(Number(instanceId), {
+      points_earned: earned,
+      points_possible: possible,
+      // don’t lie about graded_at: DB sets it; this is fine as “changed now”
+    });
+
+    return res.json({ ok: true, earned, possible });
+  } catch (e) {
+    console.error('recomputeTestTotals failed:', e);
+    return res.status(500).json({ error: 'recompute failed' });
+  } finally {
+    conn.release();
+  }
+}
+
 
 // Export it as part of the module
 module.exports = {
@@ -1847,8 +1753,8 @@ module.exports = {
   reopenInstance,
   submitTest,
   markInstanceReviewed,
-  regradeTestInstance,
   markTestSubmitted,
   updateTestSettings,
   setActivityHiddenForCourse,
+  recomputeTestTotals,
 };
