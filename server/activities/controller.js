@@ -90,3 +90,22 @@ exports.deleteActivity = async (req, res) => {
     res.status(500).json({ error: 'Failed to delete activity.' });
   }
 };
+
+// PATCH /api/activities/:id/is-test
+exports.setIsTest = async (req, res) => {
+  const { id } = req.params;
+  const { is_test } = req.body; // exact contract: 0/1
+
+  const isTest01 = is_test === 1 ? 1 : 0;
+
+  try {
+    await db.query(
+      'UPDATE pogil_activities SET is_test = ? WHERE id = ?',
+      [isTest01, id]
+    );
+    res.json({ id: Number(id), is_test: isTest01 });
+  } catch (err) {
+    console.error('setIsTest error:', err);
+    res.status(500).json({ error: 'Failed to update is_test.' });
+  }
+};

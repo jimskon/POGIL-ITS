@@ -90,9 +90,8 @@ export default function TestSetupPage() {
 
     // We reuse your existing setup-groups payload format:
     // groups = [{ members: [{student_id, role:null}] }, ...]
-    const groups = attempts.map((a) => ({
-      members: [{ student_id: a.student_id, role: null }],
-    }));
+    const selectedStudentIds = attempts.map((a) => Number(a.student_id)).filter(Boolean);
+
 
     try {
       const res = await fetch(`${API_BASE_URL}/api/activity-instances/setup-groups`, {
@@ -102,12 +101,13 @@ export default function TestSetupPage() {
         body: JSON.stringify({
           activityId: Number(activityId),
           courseId: Number(courseId),
-          groups,
+          selectedStudentIds,
           testStartAt: testStartAtUtc,
           testDurationMinutes: Number(testDurationMinutes),
           lockedBeforeStart: !!lockedBeforeStart,
           lockedAfterEnd: !!lockedAfterEnd,
         }),
+
       });
 
       const data = await res.json().catch(() => ({}));

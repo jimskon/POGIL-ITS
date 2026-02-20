@@ -19,7 +19,6 @@ export default function ViewTestsPage() {
   const [error, setError] = useState('');
 
   const [clearing, setClearing] = useState(new Set());
-  const [regrading, setRegrading] = useState(new Set());
   const [reviewing, setReviewing] = useState(new Set());
 
   const [editing, setEditing] = useState(null); // { instanceId, startAtLocal, durationMinutes }
@@ -166,34 +165,6 @@ console.log('test_start_at raw:', data.groups?.[0]?.test_start_at);
     }
   };
 
-  const handleRegrade = async (instanceId) => {
-    if (!window.confirm('Regrade this test using the current saved answers?')) return;
-
-    const next = new Set(regrading);
-    next.add(instanceId);
-    setRegrading(next);
-
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/regrade`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || 'Failed to regrade');
-
-      await fetchTests();
-    } catch (err) {
-      console.error('❌ Regrade failed:', err);
-      alert(err.message || 'Failed to regrade test.');
-    } finally {
-      const n2 = new Set(regrading);
-      n2.delete(instanceId);
-      setRegrading(n2);
-    }
-  };
-
   const handleMarkReviewed = async (instanceId) => {
     const next = new Set(reviewing);
     next.add(instanceId);
@@ -323,29 +294,6 @@ console.log('test_start_at raw:', data.groups?.[0]?.test_start_at);
                       >
                         Edit
                       </Button>
-
-
-                      {isSubmitted && (
-                        <Button
-                          variant="outline-warning"
-                          size="sm"
-                          disabled={regrading.has(instanceId)}
-                          onClick={() => handleRegrade(instanceId)}
-                        >
-                          {regrading.has(instanceId) ? 'Regrading…' : 'Regrade'}
-                        </Button>
-                      )}
-
-                      {isGraded && !isReviewed && (
-                        <Button
-                          variant="outline-success"
-                          size="sm"
-                          disabled={reviewing.has(instanceId)}
-                          onClick={() => handleMarkReviewed(instanceId)}
-                        >
-                          {reviewing.has(instanceId) ? 'Marking…' : 'Mark Reviewed'}
-                        </Button>
-                      )}
 
                       <Button
                         variant="outline-danger"

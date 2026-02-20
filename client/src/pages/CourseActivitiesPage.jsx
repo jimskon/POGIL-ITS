@@ -40,7 +40,7 @@ export default function CourseActivitiesPage() {
   const handleDoActivity = (activity, isInstructor = false) => {
     const activityId = activity.activity_id;
     const instanceId = activity.instance_id;
-    const isTest = !!activity.isTest;
+    const isTest = activity.is_test === 1;
 
     const path = isInstructor
       ? (isTest
@@ -115,7 +115,7 @@ export default function CourseActivitiesPage() {
               const title = activity.title || activity.activity_name || 'Untitled Activity';
 
               // ✅ single source of truth from backend
-              const isTest = !!activity.isTest;
+              const isTest = activity.is_test === 1;
 
               return (
                 <tr key={activity.activity_id}>
@@ -152,7 +152,7 @@ export default function CourseActivitiesPage() {
                                   })
                                 }
                               >
-                                Test Setup
+                                Setup Tests
                               </Button>
                             ) : (
                               <Button
@@ -164,8 +164,7 @@ export default function CourseActivitiesPage() {
                                 }
                               >
                                 View Tests
-                              </Button>
-                            )
+                              </Button>)
                           ) : !activity.has_groups ? (
                             <Button
                               variant="primary"

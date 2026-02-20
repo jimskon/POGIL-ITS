@@ -411,34 +411,53 @@ async function rotateActiveStudent(req, res) {
 }
 
 
-// Body: { activityId, courseId, groups: [ { members: [ { student_id, role } ] } ], testStartAt?, testDurationMinutes? }
+// Body:
+// Non-test: { activityId, courseId, groups: [ { members: [ { student_id, role } ] } ] }
+// Test:     { activityId, courseId, selectedStudentIds: [id...], testStartAt, testDurationMinutes, lockedBeforeStart, lockedAfterEnd }
 async function setupMultipleGroupInstances(req, res) {
   const {
     activityId,
     courseId,
     groups,
+    selectedStudentIds,
     testStartAt,
-    testDurationMinutes
+    testDurationMinutes,
+    lockedBeforeStart,
+    lockedAfterEnd,
   } = req.body;
 
-  if (!activityId || !courseId || !Array.isArray(groups)) {
-    return res.status(400).json({ error: 'activityId, courseId, and groups are required' });
+  if (!activityId || !courseId) {
+    return res.status(400).json({ error: 'ZZZ_NEW_GUARD activityId and courseId are required' });
   }
 
   const conn = await db.getConnection();
   try {
     await conn.beginTransaction();
 
-    // Look up whether this activity is a test + sheet_url (we need sheet_url to compute total_groups)
+    // Look up DB truth
     const [[activityRow]] = await conn.query(
       `SELECT is_test, sheet_url FROM pogil_activities WHERE id = ?`,
       [activityId]
     );
 
-    // Treat either a DB flag *or* explicit timing info as "this is a test".
-    let isTest = !!activityRow?.is_test;
-    if (testStartAt && Number(testDurationMinutes) > 0) {
-      isTest = true;
+    // Decide test vs non-test
+    const dbIsTest = !!activityRow?.is_test;
+    const hasTiming = !!testStartAt && Number(testDurationMinutes) > 0;
+    const isTest = dbIsTest || hasTiming;
+
+    // For NON-tests, we require groups[]
+    if (!isTest) {
+      if (!Array.isArray(groups) || groups.length === 0) {
+        return res.status(400).json({ error: 'groups are required for non-test activities' });
+      }
+    } else {
+      // For TESTS, we require selectedStudentIds[]
+      if (!Array.isArray(selectedStudentIds) || selectedStudentIds.length === 0) {
+        return res.status(400).json({ error: 'selectedStudentIds are required for tests' });
+      }
+      if (!testStartAt || !(Number(testDurationMinutes) > 0)) {
+        return res.status(400).json({ error: 'testStartAt and positive testDurationMinutes are required for tests' });
+      }
     }
 
     // Normalize incoming testStartAt (ISO) -> MySQL DATETIME string
@@ -453,13 +472,14 @@ async function setupMultipleGroupInstances(req, res) {
       }
     }
 
-    // Keep pogil_activities.is_test in sync
-    await conn.query(
-      `UPDATE pogil_activities SET is_test = ? WHERE id = ?`,
-      [isTest ? 1 : 0, activityId]
-    );
+    // IMPORTANT: do NOT auto-flip pogil_activities.is_test here based on timing.
+    // DB is source-of-truth. If you want \test tag to set it, do that in refreshTotalGroups().
+    // But if you insist on syncing here, only do it when dbIsTest already true OR you explicitly want timing to imply test.
+    // For now: leave as-is, or keep your existing behavior. I'd recommend NOT mutating it.
+    // ---- If you want your previous behavior, keep this line: ----
+    // await conn.query(`UPDATE pogil_activities SET is_test = ? WHERE id = ?`, [isTest ? 1 : 0, activityId]);
 
-    // ✅ NEW: compute total_groups from the activity doc NOW, once
+    // ✅ Compute total_groups from doc (used by BOTH tests and non-tests)
     let computedTotalGroups = 1;
     try {
       const sheetUrl = activityRow?.sheet_url || '';
@@ -506,55 +526,101 @@ async function setupMultipleGroupInstances(req, res) {
       );
     }
 
-    // One activity_instance per group, then insert members
-    for (let i = 0; i < groups.length; i++) {
-      const group = groups[i];
-      const group_number = i + 1;
-
+    // Helper: insert instance row (keeps defaults consistent)
+    async function insertInstance({ group_number }) {
+      // NOTE: this assumes these columns exist in activity_instances:
+      // test_start_at, test_duration_minutes, locked_before_start, locked_after_end
       const [instanceResult] = await conn.query(
         `INSERT INTO activity_instances
-           (course_id, activity_id, status, group_number, total_groups, completed_groups, progress_status, test_start_at, test_duration_minutes)
-         VALUES (?, ?, 'in_progress', ?, ?, 0, 'not_started', ?, ?)`,
+           (course_id, activity_id, status, group_number, total_groups, completed_groups, progress_status,
+            test_start_at, test_duration_minutes, locked_before_start, locked_after_end)
+         VALUES (?, ?, 'in_progress', ?, ?, 0, 'not_started', ?, ?, ?, ?)`,
         [
           courseId,
           activityId,
           group_number,
-          computedTotalGroups,   // ✅ critical fix
-          testStartForDb,
-          effectiveDuration
+          computedTotalGroups,
+          isTest ? testStartForDb : null,
+          isTest ? effectiveDuration : 0,
+          isTest ? (lockedBeforeStart ? 1 : 0) : 0,
+          isTest ? (lockedAfterEnd ? 1 : 0) : 0,
         ]
       );
-      const instanceId = instanceResult.insertId;
+      return instanceResult.insertId;
+    }
 
-      if (Array.isArray(group.members)) {
-        for (const member of group.members) {
-          if (!member.student_id) continue;
+    // ===== CREATE INSTANCES =====
+    if (isTest) {
+      // One activity_instance per selected student, group_number 1..N
+      for (let i = 0; i < selectedStudentIds.length; i++) {
+        const student_id = Number(selectedStudentIds[i]);
+        if (!student_id) continue;
 
-          const cleanRole =
-            member.role &&
-              ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
-              ? member.role
-              : null;
+        const instanceId = await insertInstance({ group_number: i + 1 });
 
-          await conn.query(
-            `INSERT INTO group_members (activity_instance_id, student_id, role)
-             VALUES (?, ?, ?)`,
-            [instanceId, member.student_id, cleanRole]
-          );
+        // Exactly one member per instance (no roles)
+        await conn.query(
+          `INSERT INTO group_members (activity_instance_id, student_id, role)
+           VALUES (?, ?, NULL)`,
+          [instanceId, student_id]
+        );
+
+        // Make that student active (optional but sensible)
+        await conn.query(
+          `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+          [student_id, instanceId]
+        );
+      }
+    } else {
+      // One activity_instance per group, then insert members (existing behavior)
+      for (let i = 0; i < groups.length; i++) {
+        const group = groups[i];
+        const group_number = i + 1;
+
+        const instanceId = await insertInstance({ group_number });
+
+        if (Array.isArray(group.members)) {
+          for (const member of group.members) {
+            if (!member.student_id) continue;
+
+            const cleanRole =
+              member.role &&
+                ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
+                ? member.role
+                : null;
+
+            await conn.query(
+              `INSERT INTO group_members (activity_instance_id, student_id, role)
+               VALUES (?, ?, ?)`,
+              [instanceId, member.student_id, cleanRole]
+            );
+          }
         }
       }
     }
 
     await conn.commit();
-    return res.json({ success: true, total_groups: computedTotalGroups });
-  } catch (err) {
-    await conn.rollback();
-    console.error('❌ Error setting up groups:', err);
-    return res.status(500).json({ error: 'Failed to setup groups' });
-  } finally {
-    conn.release();
-  }
+    return res.json({
+      success: true,
+      isTest,
+      total_groups: computedTotalGroups,
+      instance_count: isTest ? selectedStudentIds.length : groups.length,
+    });
+} catch (err) {
+  try { await conn.rollback(); } catch {}
+  console.error('❌ Error setting up groups/tests:', err);
+
+  return res.status(500).json({
+    error: 'Failed to setup instances',
+    details: err?.sqlMessage || err?.message || String(err),
+    code: err?.code,
+  });
+} finally {
+  conn.release();
 }
+
+}
+
 
 
 async function submitGroupResponses(req, res) {

@@ -27,7 +27,6 @@ export default function ManageClassesPage() {
 
   const handleAdd = async () => {
     const res = await fetch(`${API_BASE_URL}/api/classes`, {
-      method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...newClass, createdBy: user.id })
     });

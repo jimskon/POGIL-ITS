@@ -30,11 +30,13 @@ export default function GroupSetupPage() {
 
 
   useEffect(() => {
+    if (isTest) return; // no cloning for tests
+
     fetch(`${API_BASE_URL}/api/courses/${courseId}/activities`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => setActivities(Array.isArray(d) ? d : []))
       .catch(err => console.error('❌ Failed to load course activities:', err));
-  }, [courseId]);
+  }, [courseId, isTest]);
 
   const handleCloneGroups = async () => {
     if (!cloneFromActivityId) return;
@@ -80,47 +82,23 @@ export default function GroupSetupPage() {
   useEffect(() => {
     async function fetchActivity() {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/activities/${activityId}`);
+        const res = await fetch(`${API_BASE_URL}/api/activities/${activityId}`, {
+          credentials: 'include'
+        });
+
         if (!res.ok) return;
+
         const data = await res.json();
 
-        const sheetUrl = data.sheet_url;
-        let sheetHasTestTag = false;
-
-        if (sheetUrl && sheetUrl !== 'undefined') {
-          try {
-            const docRes = await fetch(
-              `${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(
-                sheetUrl
-              )}`
-            );
-            if (docRes.ok) {
-              const { lines } = await docRes.json();
-              sheetHasTestTag = Array.isArray(lines)
-                ? lines.some((line) => line.trim() === '\\test')
-                : false;
-            }
-          } catch (err) {
-            console.error('❌ Failed to inspect sheet for \\test:', err);
-          }
-        }
-
-        const dbFlag =
-          data.is_test ?? data.isTest ?? null;   // preserve unknown
-
-        const isTest = dbFlag === 1 || dbFlag === true;
-
-        // Sheet is the truth; DB is just a fallback
-        setIsTest(sheetHasTestTag || !!dbFlag);
+        setIsTest(data.is_test === 1);
       } catch (err) {
         console.error('❌ Failed to load activity meta:', err);
       }
     }
 
-    if (activityId) {
-      fetchActivity();
-    }
+    if (activityId) fetchActivity();
   }, [activityId]);
+
 
 
   // NEW: when this is a test, default to groups-of-1 and no roles
@@ -219,8 +197,16 @@ export default function GroupSetupPage() {
   };
 
   const handleSaveGroups = async () => {
-    // NEW: minimal validation for tests
+    // TEST: no groups, no cloning; one instance per selected student
     if (isTest) {
+      const selectedStudentIds = students
+        .filter(s => selected[s.id] && s.role === 'student')
+        .map(s => s.id);
+
+      if (selectedStudentIds.length === 0) {
+        alert('Select at least one student.');
+        return;
+      }
       if (!testStartAt) {
         alert('Please set the test start date and time.');
         return;
@@ -229,36 +215,71 @@ export default function GroupSetupPage() {
         alert('Please set a positive time limit in minutes.');
         return;
       }
+
+      const testStartAtUtc = new Date(testStartAt).toISOString();
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/activity-instances/setup-groups`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            activityId: Number(activityId),
+            courseId: Number(courseId),
+
+            // ✅ test path
+            selectedStudentIds,
+            testStartAt: testStartAtUtc,
+            testDurationMinutes: Number(testDurationMinutes),
+            lockedBeforeStart: !!lockedBeforeStart,
+            lockedAfterEnd: !!lockedAfterEnd,
+          })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+          alert(`❌ Error: ${data.error || 'Failed to save test settings'}`);
+          return;
+        }
+
+        alert('✅ Test instances created.');
+        navigate(`/view-groups/${courseId}/${activityId}`);
+      } catch (err) {
+        console.error('❌ Save test failed:', err);
+        alert('❌ Failed to save test.');
+      }
+      return;
     }
-    // Convert local datetime-local string → UTC ISO before sending
-    const testStartAtUtc =
-      isTest && testStartAt
-        ? new Date(testStartAt).toISOString()
-        : null;
+
+    // NON-TEST: old groups workflow
+    if (!groups || groups.length === 0) {
+      alert('Generate groups first.');
+      return;
+    }
+
     try {
       const res = await fetch(`${API_BASE_URL}/api/activity-instances/setup-groups`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           activityId: Number(activityId),
           courseId: Number(courseId),
           groups,
-          // test timing + locks
-          testStartAt: isTest ? testStartAtUtc : null,
-          testDurationMinutes: isTest ? Number(testDurationMinutes) : 0,
-          lockedBeforeStart: isTest ? lockedBeforeStart : false,
-          lockedAfterEnd: isTest ? lockedAfterEnd : false,
         })
       });
 
-
       const data = await res.json();
+      if (!res.ok) {
+        alert(`❌ Error: ${data.error || 'Failed to save groups'}`);
+        return;
+      }
 
-      if (res.ok) {
-        alert('✅ Groups saved successfully.');
-        navigate(`/view-groups/${courseId}/${activityId}`);
+      alert('✅ Groups saved successfully.');
+      if (isTest) {
+        navigate(`/view-tests/${courseId}/${activityId}`);
       } else {
-        alert(`❌ Error: ${data.error}`);
+        navigate(`/view-groups/${courseId}/${activityId}`);
       }
     } catch (err) {
       console.error('❌ Save groups failed:', err);
@@ -268,13 +289,16 @@ export default function GroupSetupPage() {
 
   return (
     <Container className="mt-4">
-      <h2>Group Setup</h2>
+      <h2>{isTest ? 'Test Setup' : 'Group Setup'}</h2>
+
 
       {isTest && (
         <p className="text-muted">
-          This activity is marked as a <strong>test</strong>. Defaults: groups of 1, no roles, timed window.
+          This activity is marked as a <strong>test</strong>.
+          Each selected student will receive an individual timed instance.
         </p>
       )}
+
 
       <h5>Select Present Students:</h5>
       <Row>
@@ -294,32 +318,35 @@ export default function GroupSetupPage() {
         )}
       </Row>
 
-      {/* Controls: group size + use roles */}
+      {/* Controls */}
       <Row className="mt-3">
-        <Col md={3}>
-          <Form.Label>Group Size</Form.Label>
-          <Form.Select
-            value={groupSize}
-            onChange={(e) => setGroupSize(Number(e.target.value))}
-            disabled={isTest} // tests default to 1; override if you want
-          >
-            {[1, 2, 3, 4, 5].map(size => (
-              <option key={size} value={size}>{size}</option>
-            ))}
-          </Form.Select>
-        </Col>
-        <Col md={3} className="d-flex align-items-end">
-          <Form.Check
-            type="checkbox"
-            id="use-roles"
-            label="Assign roles to group members"
-            checked={useRoles}
-            disabled={isTest}  // no roles for tests by default
-            onChange={(e) => setUseRoles(e.target.checked)}
-          />
-        </Col>
+        {!isTest && (
+          <Col md={3}>
+            <Form.Label>Group Size</Form.Label>
+            <Form.Select
+              value={groupSize}
+              onChange={(e) => setGroupSize(Number(e.target.value))}
+            >
+              {[1, 2, 3, 4, 5].map(size => (
+                <option key={size} value={size}>{size}</option>
+              ))}
+            </Form.Select>
+          </Col>
+        )}
 
-        {/* NEW: test timing controls */}
+        {!isTest && (
+          <Col md={3} className="d-flex align-items-end">
+            <Form.Check
+              type="checkbox"
+              id="use-roles"
+              label="Assign roles to group members"
+              checked={useRoles}
+              onChange={(e) => setUseRoles(e.target.checked)}
+            />
+          </Col>
+        )}
+
+        {/* Test timing controls */}
         {isTest && (
           <>
             <Col md={3}>
@@ -360,7 +387,7 @@ export default function GroupSetupPage() {
           </>
         )}
       </Row>
-      <Row className="mt-3">
+      {!isTest && (<Row className="mt-3">
         <Col md={6}>
           <Form.Label>Clone groups from another activity (same course)</Form.Label>
           <Form.Select
@@ -387,39 +414,42 @@ export default function GroupSetupPage() {
           </Button>
         </Col>
       </Row>
+      )}
 
-      <Button className="mt-3" onClick={generateGroups}>
-        Generate Groups
-      </Button>
-
-      {groups.length > 0 && (
+      {!isTest && (
         <>
-          <h5 className="mt-4">Generated Groups:</h5>
-          {groups.map((group, idx) => (
-            <Card key={idx} className="mb-3">
-              <Card.Header>Group {idx + 1}</Card.Header>
-              <Card.Body>
-                <ul>
-                  {Array.isArray(group.members) && group.members.length > 0 ? (
-                    group.members.map((m, i) => {
-                      const student = students.find(s => s.id === m.student_id);
-                      const name = student?.name || 'Unknown';
-                      return (
-                        <li key={i}>
-                          {m.role ? `${m.role}: ${name}` : name}
-                        </li>
-                      );
-                    })
-                  ) : (
-                    <li>⚠️ No members in this group.</li>
-                  )}
-                </ul>
-              </Card.Body>
-            </Card>
-          ))}
-          <Button onClick={handleSaveGroups}>Save Groups</Button>
+          <Button className="mt-3" onClick={generateGroups}>
+            Generate Groups
+          </Button>
+
+          {groups.length > 0 && (
+            <>
+              <h5 className="mt-4">Generated Groups:</h5>
+              {groups.map((group, idx) => (
+                <Card key={idx} className="mb-3">
+                  <Card.Header>Group {idx + 1}</Card.Header>
+                  <Card.Body>
+                    <ul>
+                      {Array.isArray(group.members) && group.members.length > 0 ? (
+                        group.members.map((m, i) => {
+                          const student = students.find(s => s.id === m.student_id);
+                          const name = student?.name || 'Unknown';
+                          return <li key={i}>{m.role ? `${m.role}: ${name}` : name}</li>;
+                        })
+                      ) : (
+                        <li>No members in this group.</li>
+                      )}
+                    </ul>
+                  </Card.Body>
+                </Card>
+              ))}
+            </>
+          )}
         </>
       )}
+      <Button className="mt-3" onClick={handleSaveGroups}>
+        Save
+      </Button>
     </Container>
   );
 }

@@ -99,22 +99,29 @@ export default function ManageActivitiesPage() {
       return;
     }
 
-    // ✅ Do NOT trust returned object
-    // Re-fetch from DB (single source of truth)
+    // We only trust the INSERT id so we can open Preview.
+    const newId = data?.id;
 
+    // Reset the form immediately (so if they come back, it's clean)
+    setNewActivity({ name: '', title: '', sheet_url: '', order_index: '' });
+
+    // If there's a doc URL, auto-open Preview so it parses and sets is_test in DB.
+    // (Preview will do the PATCH side-effect.)
+    if (newId && activity?.sheet_url && activity.sheet_url.trim() !== '') {
+      navigate(`/preview/${newId}?returnTo=${encodeURIComponent(location.pathname)}`);
+      return;
+    }
+
+    // Otherwise, re-fetch list from DB (single source of truth)
     const refreshed = await fetch(
       `${API_BASE_URL}/api/classes/${classId}/activities`,
       { credentials: 'include' }
     );
 
     const refreshedData = await refreshed.json();
-
-    if (Array.isArray(refreshedData)) {
-      setActivities(refreshedData);
-    }
-
-    setNewActivity({ name: '', title: '', sheet_url: '', order_index: '' });
+    if (Array.isArray(refreshedData)) setActivities(refreshedData);
   };
+
 
   const confirmShareAndCheckAccess = async () => {
     setShowModal(false);

@@ -115,6 +115,8 @@ router.get('/:id', controller.getActivity);
 // POST /activities/:name/launch
 router.post('/:name/launch', controller.launchActivityInstance);
 
+router.patch('/:id/is-test', controller.setIsTest);
+
 
 
 module.exports = router;
