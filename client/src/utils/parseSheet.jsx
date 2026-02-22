@@ -603,7 +603,7 @@ export function parseSheetToBlocks(lines, options = {}) {
     }
 
     const pythonMatch = trimmed.match(/^\\python(?:\{([^}]*)\})?$/);
-    const turtleMatch = trimmed.match(/^\\pythonturtle(?:\{(\d+)\s*(?:[x,])\s*(\d+)\})?$/i);
+    const turtleMatch = trimmed.match(/^\\pythonturtle(?:\{([^}]*)\})?$/i);
 
     if (pythonMatch) {
       flushCurrentBlock();
@@ -662,26 +662,55 @@ export function parseSheetToBlocks(lines, options = {}) {
     if (turtleMatch) {
       flushCurrentBlock();
       currentField = 'pythonturtle';
-      const w = turtleMatch[1] ? parseInt(turtleMatch[1]) : 600;
-      const h = turtleMatch[2] ? parseInt(turtleMatch[2]) : 400;
-      const blockObj = { type: 'pythonturtle', lines: [], width: w, height: h, timeLimit: 50000 };
+
+      const argStr = (turtleMatch[1] || '').trim();
+
+      let timeLimit = 50000;
+      let w = 600;
+      let h = 400;
+
+      if (argStr) {
+        const parts = argStr
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean);
+
+        // Find a WxH token anywhere (e.g., "900x700")
+        const dimToken = parts.find(p => /^\d+\s*[xX]\s*\d+$/.test(p));
+        if (dimToken) {
+          const m = dimToken.match(/^(\d+)\s*[xX]\s*(\d+)$/);
+          w = parseInt(m[1], 10);
+          h = parseInt(m[2], 10);
+        }
+
+        // Find a pure numeric token anywhere (e.g., "100000") and treat it as timeout
+        // If there are multiple numeric tokens, pick the first one that is NOT part of WxH.
+        const tlToken = parts.find(p => /^\d+$/.test(p));
+        if (tlToken) {
+          timeLimit = parseInt(tlToken, 10);
+        }
+      }
+
+      const blockObj = { type: 'pythonturtle', lines: [], width: w, height: h, timeLimit };
+
       if (currentQuestion && currentQuestion.type === 'question') {
         if (!currentQuestion.pythonBlocks) currentQuestion.pythonBlocks = [];
         currentQuestion.pythonBlocks.push(blockObj);
-        const nextIndex =
-          (currentQuestion.codeBlocks?.length || 0) + 1;
+
+        const nextIndex = (currentQuestion.codeBlocks?.length || 0) + 1;
         currentQuestion.codeBlocks.push({
           lang: 'python',          // turtle is still python
           index: nextIndex,
           editable: true,
           content: '',             // fill on \endpythonturtle
-          timeLimit: 50000,
+          timeLimit,
           width: w,
           height: h
         });
       } else {
         blocks.push({ ...blockObj, localOnly: !inGroup });
       }
+
       continue;
     }
 
@@ -1037,9 +1066,9 @@ export function renderBlocks(blocks, options = {}) {
   let standaloneCodeCounter = 1;
   const hiddenTypes = ['sampleresponses', 'feedbackprompt', 'followupprompt'];
   const canEditTable =
-  runMode === 'preview'
-    ? editable
-    : (editable && isActive);   // only active student edits in RUN
+    runMode === 'preview'
+      ? editable
+      : (editable && isActive);   // only active student edits in RUN
 
   return blocks.map((block, index) => {
     if (hiddenTypes.includes(block.type) && runMode !== 'preview') return null;

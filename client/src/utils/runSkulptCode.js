@@ -218,20 +218,26 @@ def open(filename, mode='r'):
     }
   }
 
-  // Turtle config (unchanged)
-  if (turtleTargetId) {
-    const mount = document.getElementById(turtleTargetId);
-    if (mount) mount.innerHTML = '';
-    window.Sk.TurtleGraphics = {
-      target: turtleTargetId,
-      width: turtleWidth,
-      height: turtleHeight,
-    };
-  } else if (window.Sk && window.Sk.TurtleGraphics) {
-    try {
-      delete window.Sk.TurtleGraphics;
-    } catch { }
+// Turtle config (FIXED for multiple blocks)
+if (turtleTargetId) {
+  const mount = document.getElementById(turtleTargetId);
+  if (mount) mount.innerHTML = '';
+
+  // Ensure TurtleGraphics exists, then mutate fields (don't replace object)
+  if (!window.Sk.TurtleGraphics) window.Sk.TurtleGraphics = {};
+  window.Sk.TurtleGraphics.target = turtleTargetId;
+  window.Sk.TurtleGraphics.width = turtleWidth;
+  window.Sk.TurtleGraphics.height = turtleHeight;
+
+  // Optional but helpful: keep turtle inside the mount
+  if (mount) {
+    mount.style.position = 'relative';
+    mount.style.overflow = 'hidden';
   }
+} else if (window.Sk && window.Sk.TurtleGraphics) {
+  // If you want "no turtle", clear target safely
+  window.Sk.TurtleGraphics.target = null;
+}
 
   try {
     Sk.execLimit = execLimit;
