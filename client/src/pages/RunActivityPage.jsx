@@ -908,38 +908,6 @@ export default function RunActivityPage({
       return;
     }
 
-  // ✅ Auto-submit exactly once when time expires (test mode only)
-  useEffect(() => {
-    if (!isTestMode) return;
-    if (!isStudent) return;
-    if (isSubmitted) return;
-    if (testLockState.lockedBefore) return;
-
-    // Only fire when window is over
-    if (!timeExpired) return;
-
-    // Only once
-    if (autoSubmitted) return;
-
-    (async () => {
-      try {
-        setAutoSubmitted(true);
-        await handleSubmit(false);   // uses your TEST MODE PATH
-      } catch (err) {
-        console.error('Auto-submit failed:', err);
-        // If it failed, allow manual submit button to work; don't retry in a loop
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    isTestMode,
-    isStudent,
-    isSubmitted,
-    testLockState.lockedBefore,
-    timeExpired,
-    autoSubmitted,
-    instanceId,
-  ]);
 
     const { start, end } = testWindow;
 
@@ -975,6 +943,37 @@ export default function RunActivityPage({
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
   }, [isTestMode, testWindow, activity?.submitted_at]);
+
+
+  // ✅ Auto-submit exactly once when time expires (test mode only)
+  // MUST be top-level (not nested)
+  useEffect(() => {
+    if (!isTestMode) return;
+    if (!isStudent) return;
+    if (!!activity?.submitted_at) return;        // use DB truth
+    if (testLockState.lockedBefore) return;
+    if (!timeExpired) return;
+    if (autoSubmitted) return;
+
+    (async () => {
+      try {
+        setAutoSubmitted(true);
+        await handleSubmit(false); // uses your TEST MODE PATH
+      } catch (err) {
+        console.error('Auto-submit failed:', err);
+        // don't retry in a loop
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isTestMode,
+    isStudent,
+    activity?.submitted_at,
+    testLockState.lockedBefore,
+    timeExpired,
+    autoSubmitted,
+    instanceId,
+  ]);
 
 
   if (loading) {
