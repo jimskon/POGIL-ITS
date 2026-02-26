@@ -29,6 +29,12 @@ function lensObj(obj = {}) {
   return out;
 }
 
+function extractFollowupFromFeedbackPrompt(text = "") {
+  const raw = stripHtml(text || "");
+  const m = raw.match(/^\s*FOLLOWUP\s*:\s*(.+)\s*$/im);
+  return m ? m[1].trim() : null;
+}
+
 function logReq(tag, req) {
   if (!AI_DEBUG) return;
   const b = req.body || {};
@@ -46,13 +52,13 @@ function logReq(tag, req) {
 
 function logPrompt(tag, prompt) {
   if (!AI_DEBUG) return;
-  console.log(`[AI_DEBUG] ${tag} PROMPT len=${String(prompt||"").length}`);
+  console.log(`[AI_DEBUG] ${tag} PROMPT len=${String(prompt || "").length}`);
   console.log(`[AI_DEBUG] ${tag} PROMPT preview=\n${clip(prompt, 1200)}\n---`);
 }
 
 function logModelRaw(tag, raw) {
   if (!AI_DEBUG) return;
-  console.log(`[AI_DEBUG] ${tag} MODEL_RAW len=${String(raw||"").length}`);
+  console.log(`[AI_DEBUG] ${tag} MODEL_RAW len=${String(raw || "").length}`);
   console.log(`[AI_DEBUG] ${tag} MODEL_RAW preview=\n${clip(raw, 800)}\n---`);
 }
 
@@ -329,6 +335,40 @@ async function evaluateStudentResponse(req, res) {
 
   const answerRaw = String(studentAnswer || "").trim();
 
+  const followupQ = extractFollowupFromFeedbackPrompt(feedbackPrompt) ||
+  "Please answer using one concrete detail from the code or output.";
+
+if (policy.requirementsOnly) {
+  // If gibberish → reject (allowed even in gibberish-only mode)
+  if (!answerRaw || looksGibberish(answerRaw)) {
+    return sendAI(res, { accepted: false, feedback: followupQ });
+  }
+
+  // Generic off-prompt / no-evidence check:
+  // require at least one meaningful overlap with either question or sampleResponse
+  const q = stripHtml(questionText || "").toLowerCase();
+  const s = stripHtml(answerRaw).toLowerCase();
+  const sample = stripHtml(sampleResponse || "").toLowerCase();
+
+  const words = (t) => t.split(/\W+/).filter(w => w.length >= 5);
+  const qWords = words(q);
+  const sampleWords = words(sample);
+
+  const overlaps = (arr) => arr.some(w => s.includes(w));
+
+  const hasEvidence =
+    overlaps(qWords) || overlaps(sampleWords) ||
+    /\d+\.\s+\S+/.test(answerRaw); // catches "1. Skiing" style evidence
+
+  if (!hasEvidence) {
+    // This is the key: reject garbage like "my mother's name" deterministically.
+    return sendAI(res, { accepted: false, feedback: followupQ });
+  }
+
+  // If it passes basic evidence, you can still call the model OR accept directly.
+  // I'd accept directly in requirements-only mode to keep it snappy:
+  return sendAI(res, { accepted: true, feedback: null });
+}
   // Positive-feedback directives live inside followupprompt; strip them and compute flags.
   const positiveEnabled = isPositiveFeedbackEnabled(guidance, followupPrompt);
   const fuParsed = parsePositiveFeedbackFromText(followupPrompt);
@@ -425,7 +465,11 @@ async function evaluateStudentResponse(req, res) {
     try {
       obj = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(raw);
     } catch {
-      return res.status(200).json({ accepted: true, feedback: null });
+      // TEXT answers should NOT fail-open. Ask for one concrete correction.
+      return sendAI(res, {
+        accepted: false,
+        feedback: "I couldn't interpret that response. Please answer the question with one concrete detail tied to the code or output."
+      });
     }
 
     const norm = normalizeAIResult(obj); // <-- accepts feedback/feedback/followupQuestion etc
@@ -460,10 +504,10 @@ async function evaluateStudentResponse(req, res) {
 // ---------- PYTHON CODE (LEARNING MODE) ----------
 async function evaluatePythonCode(req, res) {
   console.log("[AI_FINGERPRINT] evaluatePythonCode HIT", {
-  t: Date.now(),
-  AI_DEBUG: process.env.AI_DEBUG,
-  bodyKeys: Object.keys(req.body || {}),
-});
+    t: Date.now(),
+    AI_DEBUG: process.env.AI_DEBUG,
+    bodyKeys: Object.keys(req.body || {}),
+  });
   const {
     questionText,
     studentCode,
@@ -478,15 +522,15 @@ async function evaluatePythonCode(req, res) {
   if (!questionText || !studentCode) {
     return res.status(400).json({ error: "Missing question text or student code" });
   }
-if (process.env.AI_DEBUG === "1") {
-  console.log("[AI_DEBUG] evaluate-code body keys:", Object.keys(req.body || {}));
-  console.log("[AI_DEBUG] isCodeOnly:", req.body?.isCodeOnly, "codeVersion:", req.body?.codeVersion);
-  console.log("[AI_DEBUG] questionText (first 120):", String(req.body?.questionText || "").slice(0,120));
-  console.log("[AI_DEBUG] sampleResponse len:", String(req.body?.sampleResponse || "").length);
-  console.log("[AI_DEBUG] feedbackPrompt (first 120):", String(req.body?.feedbackPrompt || "").slice(0,120));
-  console.log("[AI_DEBUG] followupPrompt (first 120):", String(req.body?.followupPrompt || "").slice(0,120));
-  console.log("[AI_DEBUG] studentCode (first 200):\n" + String(req.body?.studentCode || "").slice(0,200));
-}
+  if (process.env.AI_DEBUG === "1") {
+    console.log("[AI_DEBUG] evaluate-code body keys:", Object.keys(req.body || {}));
+    console.log("[AI_DEBUG] isCodeOnly:", req.body?.isCodeOnly, "codeVersion:", req.body?.codeVersion);
+    console.log("[AI_DEBUG] questionText (first 120):", String(req.body?.questionText || "").slice(0, 120));
+    console.log("[AI_DEBUG] sampleResponse len:", String(req.body?.sampleResponse || "").length);
+    console.log("[AI_DEBUG] feedbackPrompt (first 120):", String(req.body?.feedbackPrompt || "").slice(0, 120));
+    console.log("[AI_DEBUG] followupPrompt (first 120):", String(req.body?.followupPrompt || "").slice(0, 120));
+    console.log("[AI_DEBUG] studentCode (first 200):\n" + String(req.body?.studentCode || "").slice(0, 200));
+  }
   const result = await evaluateCode({
     questionText,
     studentCode,
@@ -541,9 +585,9 @@ async function evaluateCode({
 
   const inferred = detectLangFromCode(studentCode);
   const effLang = String(lang || inferred || "").toLowerCase();
-if (process.env.AI_DEBUG === "1") {
-  console.log("[AI_DEBUG] effLang:", effLang, "inferred:", inferred, "lang arg:", lang);
-}
+  if (process.env.AI_DEBUG === "1") {
+    console.log("[AI_DEBUG] effLang:", effLang, "inferred:", inferred, "lang arg:", lang);
+  }
   let langLabel = "the correct language for this code";
   if (effLang === "cpp" || effLang === "c++") langLabel = "C++";
   else if (effLang === "python") langLabel = "Python";
@@ -594,10 +638,10 @@ Rules:
 ${rules ? "\n" + rules : ""}
 `.trim();
 
-if (process.env.AI_DEBUG === "1") {
-  console.log("[AI_DEBUG] PROMPT (first 800):\n" + prompt.slice(0, 800));
-  console.log("[AI_DEBUG] PROMPT len:", prompt.length);
-}
+  if (process.env.AI_DEBUG === "1") {
+    console.log("[AI_DEBUG] PROMPT (first 800):\n" + prompt.slice(0, 800));
+    console.log("[AI_DEBUG] PROMPT len:", prompt.length);
+  }
 
   let chat;
   try {

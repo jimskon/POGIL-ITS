@@ -499,7 +499,7 @@ async function setupMultipleGroupInstances(req, res) {
               .trim();
           })
           .filter(Boolean);
-
+          
         const groupCount = lines.filter(line => line.startsWith('\\questiongroup')).length;
         computedTotalGroups = groupCount > 0 ? groupCount : 1;
       }
