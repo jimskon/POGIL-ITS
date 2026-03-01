@@ -1,6 +1,6 @@
 # coLearn-AI / POGIL Markup Language Cheat Sheet
 
-Full Specification: Learning Mode + Test Mode + Scoring + Code + Turtle + Files + Tables + Images + Links
+Full Specification
 
 ---
 
