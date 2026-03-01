@@ -1,104 +1,151 @@
-# POGIL Markup Language Cheat Sheet (Updated with Test + Scoring Tags)
+# coLearn-AI / POGIL Markup Language Cheat Sheet
 
-## Document Metadata
-| Syntax             | Description                                  | Example                          |
-|--------------------|----------------------------------------------|----------------------------------|
-| `\title{...}`      | Title of the activity                         | `\title{Greedy Algorithms Quiz}` |
-| `\name{...}`       | Unique ID/name for the activity               | `\name{greedyquiz}`             |
-| `\studentlevel{...}` | Target student audience                    | `\studentlevel{Second Year}`     |
-| `\activitycontext{...}` | Intro paragraph for students           | `\activitycontext{This quiz…}`   |
-| `\aicodeguidance{...}` | Instructions for the AI scoring engine | See AI Guidance section below    |
-| `\test`            | Marks activity as an **assessment** (quiz/test — no student hints) | `\test` |
+Full Specification: Learning Mode + Test Mode + Scoring + Code + Turtle + Files + Tables + Images + Links
 
 ---
 
-## Question Groups
-| Syntax                 | Description                                     | Example                            |
-|------------------------|-------------------------------------------------|------------------------------------|
-| `\questiongroup{...}`  | Starts a group of related questions             | `\questiongroup{Greedy Algorithms}`|
-| `\endquestiongroup`    | Ends the group                                   | `\endquestiongroup`               |
+## Overview
 
-**Important:**  
-All answerable items (`\question`, `\textresponse`, code blocks) must be inside a `\questiongroup` to be editable in RunActivity.
+This markup defines how to author interactive activities for coLearn-AI.
+
+The system supports:
+
+- Collaborative learning mode (AI-guided)
+- Test / quiz mode (graded)
+- Runnable Python blocks (with optional timeout)
+- Runnable C++ blocks (with optional timeout)
+- Runnable Python Turtle blocks (with window size + timeout)
+- Editable and readonly file blocks
+- Structured AI feedback directives
+- Structured scoring rubrics
+- Tables with editable cells
+- Images (with captions and width control)
+- Hyperlinks
+
+All interactive content must appear inside a `\questiongroup`.
 
 ---
 
-## Questions and Responses
-| Syntax                      | Description                                                  | Example                                       |
-|-----------------------------|--------------------------------------------------------------|-----------------------------------------------|
-| `\question{...}`            | Start a question; ends at `\endquestion`                     | `\question{What is a greedy algorithm?}`      |
-| `\endquestion`              | Ends the question, required if additional blocks follow      | `\endquestion`                                |
-| `\textresponse{n}`          | Student response box (n lines tall)                          | `\textresponse{4}`                            |
-| `\sampleresponses{...}`     | Sample instructor solution (hidden from students)            | `\sampleresponses{It chooses a local optimum.}` |
-| `\feedbackprompt{...}`      | AI grading guidance                                          | `\feedbackprompt{Check that they describe local choice.}` |
-| `\followupprompt{...}`      | AI follow-up hint (suppressed during tests)                  | `\followupprompt{Ask why local isn't always global.}` |
+## 1. Document Metadata
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `\title{...}` | Activity display title | `\title{Greedy Algorithms Quiz}` |
+| `\name{...}` | Unique internal identifier | `\name{greedyquiz}` |
+| `\studentlevel{...}` | Target audience | `\studentlevel{Second Year}` |
+| `\activitycontext{...}` | Introductory paragraph | `\activitycontext{This activity explores...}` |
+| `\aicodeguidance{...}` | Global AI behavior rules | See AI Guidance section below |
+| `\test` | Marks activity as graded assessment | `\test` |
+| `\section{...}` | Structural heading (non-interactive) | `\section{Introduction}` |
+
+Notes:
+
+- `\test` switches the activity into grading mode.
+- `\aicodeguidance` controls follow-ups, scope restrictions, checker tolerance, etc.
+- `\section` is structural only.
 
 ---
 
-## Scoring Blocks (NEW SECTION)
+## 2. Question Groups
 
-### Purpose
-`\score` blocks define how the AI grades a question in a quiz or test.  
-They always appear **after** the question they apply to.
-
-### Syntax
-
-| Syntax                  | Description                               | Example |
-|-------------------------|-------------------------------------------|---------|
-| `\score{points,type}`   | Begins a scoring rubric                   | `\score{6,response}` |
-| `\endscore`             | Ends the scoring block                    | `\endscore` |
-
-### Meaning of `type`
-
-| Type        | Meaning                                      |
-|-------------|------------------------------------------------|
-| `response`  | Scores a written text response                |
-| `code`      | Scores a student-written code block           |
-| `output`    | Scores output from a demo/test program        |
-| Other text  | Treated as custom metadata                    |
-
-### Example Scoring Block
-
+```text
+\questiongroup{Greedy Algorithms}
+...
+\endquestiongroup
 ```
-\score{5,response}
-Grade the student’s explanation.
 
-Rubric:
-  - 5 points: Clear, correct, with example.
-  - 3–4 points: Mostly correct.
-  - 1–2 points: Some understanding but unclear.
-  - 0 points: Incorrect or missing.
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `\questiongroup{...}` | Starts a group of related questions | `\questiongroup{Greedy Algorithms}` |
+| `\endquestiongroup` | Ends the group | `\endquestiongroup` |
+
+All answerable items (`\question`, `\textresponse`, code blocks, file blocks) must be inside a `\questiongroup`.
+
+---
+
+## 3. Questions and Responses
+
+```text
+\question{What is a greedy algorithm?}
+\textresponse{4}
+\endquestion
+```
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `\question{...}` | Begins a question | `\question{Explain Dijkstra’s algorithm.}` |
+| `\endquestion` | Ends the question (required) | `\endquestion` |
+| `\textresponse{n}` | Student response box (n lines tall) | `\textresponse{5}` |
+| `\sampleresponses{...}` | Sample instructor solution (hidden) | `\sampleresponses{Chooses a local optimum.}` |
+| `\feedbackprompt{...}` | AI grading guidance | `\feedbackprompt{Encourage elaboration.}` |
+| `\followupprompt{...}` | Optional AI follow-up hint | `\followupprompt{Why might greedy fail?}` |
+
+Every `\question` must explicitly end with `\endquestion`.
+
+---
+
+## 4. Scoring Blocks (Assessment Mode)
+
+```text
+\score{6,response}
+6: Clear, correct explanation with example
+3-5: Mostly correct
+1-2: Partial understanding
+0: Incorrect or missing
 \endscore
 ```
 
----
+### Scoring Syntax
 
-## Lists
-| Syntax               | Description              |
-|----------------------|--------------------------|
-| `\begin{itemize}`    | Begin bullet list        |
-| `\item ...`          | Bullet item              |
-| `\end{itemize}`      | End bullet list          |
-| `\begin{enumerate}`  | Begin numbered list      |
-| `\end{enumerate}`    | End numbered list        |
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `\score{points,type}` | Begins grading rubric | `\score{5,response}` |
+| `\endscore` | Ends scoring block | `\endscore` |
 
----
+### Meaning of `type`
 
-## Text and Formatting
-| Syntax           | Description              |
-|------------------|--------------------------|
-| `\text{...}`     | Paragraph (supports inline formatting) |
-| `\textbf{...}`   | Bold text                |
-| `\textit{...}`   | Italic text              |
+| Type | Meaning | Example |
+|------|---------|---------|
+| `response` | Written answer | `\score{6,response}` |
+| `code` | Student-written code | `\score{10,code}` |
+| `output` | Program output | `\score{4,output}` |
+| custom | Custom metadata | `\score{5,analysis}` |
+
+Scoring is controlled only by `\score{}` blocks.
 
 ---
 
-## Tables
-A table is defined with `\table{caption}` and `\endtable`.
+## 5. Lists
 
-### Structure
+```text
+\begin{itemize}
+\item First item
+\item Second item
+\end{itemize}
 
+\begin{enumerate}
+\item Step one
+\item Step two
+\end{enumerate}
 ```
+
+Nested lists are discouraged in current sheet rendering.
+
+---
+
+## 6. Text Formatting
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `\text{...}` | Paragraph | `\text{This is a paragraph.}` |
+| `\textbf{...}` | Bold text | `\textbf{Important}` |
+| `\textit{...}` | Italic text | `\textit{Optional}` |
+
+---
+
+## 7. Tables
+
+```text
 \table{Example Table}
 \row Name & Age & Major
 \row Alice & 20 & \tresponse
@@ -106,245 +153,91 @@ A table is defined with `\table{caption}` and `\endtable`.
 \endtable
 ```
 
-Notes:
-- Each `\row` defines a row.
-- Cells are separated with `&`.
-- All rows should have the same number of cells.
-- You may use `\tresponse` inside any cell.
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `\table{caption}` | Begins table | `\table{Student Data}` |
+| `\row ...` | Defines row (cells separated by `&`) | `\row Alice & 20 & CS` |
+| `\endtable` | Ends table | `\endtable` |
+| `\tresponse` | Editable cell marker | `\row Alice & 20 & \tresponse` |
 
 ---
 
-## Code Blocks
+## 8. Code Blocks
 
 ### Python
+
 Supports optional timeout: `\python{50000}`
-```
+
+```text
 \python
 # code here
 \endpython
 ```
 
-### C++  
+### C++
+
 Supports optional timeout: `\cpp{50000}`
 
-```
+```text
 \cpp
 #include <iostream>
 int main() { }
 \endcpp
 ```
 
-### File Blocks
+---
 
-```
-\file{utils.hpp,readonly}
-// contents here
-\endfile
+## 9. Python Turtle
+
+Supports window size + timeout:
+
+```text
+\pythonturtle{900x600,50000}
+# turtle code here
+\endpythonturtle
 ```
 
-Flags:
-- `readonly` prevents editing.
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `\pythonturtle{WxH,timeout}` | Turtle window size + timeout | `\pythonturtle{900x600,50000}` |
+| `\endpythonturtle` | Ends turtle block | `\endpythonturtle` |
 
 ---
 
-## Images
-```
+## 10. Images
+
+```text
 \image{URL}
 \image{URL}{Caption}
 \image{URL}{Caption}{50%}
 ```
 
-- Width can be a percentage or pixel value.
-- Google Drive links are auto-coerced.
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `\image{URL}` | Image only | `\image{https://...}` |
+| `\image{URL}{Caption}` | Image with caption | `\image{...}{Example}` |
+| `\image{URL}{Caption}{Width}` | Image with width | `\image{...}{Example}{50%}` |
 
 ---
 
-## Hyperlinks
-```
+## 11. Hyperlinks
+
+```text
 \link{URL}{Text}
 ```
 
----
-
-## AI Guidance (Server Behavior Settings)
-
-Place these inside:
-
-```
-\aicodeguidance{
-   ...
-}
-```
-
-### Follow-up Behavior
-
-| Directive                         | Effect |
-|----------------------------------|--------|
-| `Follow-ups: none`               | No follow-up questions ever. |
-| `Follow-ups: gibberish-only`     | Follow-ups only for empty/off-track answers. |
-| `Follow-ups: default`            | AI may ask follow-up questions. |
-
-### Other AI Flags
-
-| Directive                                   | Effect |
-|----------------------------------------------|--------|
-| `Requirements-only`                          | Score only stated requirements; no scope creep. |
-| `Ignore spacing.`                            | Ignore whitespace differences. |
-| `Checker errors should not block progress.`  | Fail-open mode. |
-| `Do not require extra features.`             | Prevents feature creep. |
-| `f-strings are unavailable; do not recommend them.` | Blocks f-string suggestions. |
-
-### Example AI Guidance Block
-
-```
-\aicodeguidance{
-    Follow-ups: gibberish-only
-    Requirements-only
-    Ignore spacing.
-    Do not require extra features.
-    f-strings are unavailable; do not recommend them.
-    Checker errors should not block progress.
-}
-```
-
-## Question-Level AI Semantics (Learning Mode)
-
-coLearn-AI distinguishes **learning-oriented feedback** from **grading**.
-
-The following question-level tags are used **only for ungraded, collaborative learning activities**.
-
-Grading behavior is controlled *exclusively* by the `\score{}` tag and related test / quiz logic.
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `\link{URL}{Text}` | Hyperlink | `\link{https://...}{Read more}` |
 
 ---
 
-## Overview
+## Core Design Principles
 
-Each question may optionally define:
-
-- `\sampleresponses{...}` — what acceptable answers look like
-- `\feedbackprompt{...}` — how and when to respond during learning
-- `\followupprompt{...}` — how to extend thinking after an initial response
-
-These tags **do not assign correctness or scores**.  
-They guide *interpretation, encouragement, and interaction*.
-
----
-
-## `\sampleresponses{...}` — Acceptance Envelope
-
-Defines examples and constraints for what counts as an acceptable response.
-
-### Purpose
-
-- Describe *likely or representative answers*
-- Define acceptable ranges, equivalences, or conceptual targets
-- Help the AI judge whether a response is “on track”
-
-### May include
-
-- Concrete example answers
-- Conceptual descriptions of what a good answer involves
-- Ranges or tolerances (e.g. “Any rotation roughly between 40–50 degrees”)
-- Multiple acceptable approaches
-
-### Rules
-
-- Never quoted verbatim to students
-- Used only as internal guidance for evaluating *plausibility and relevance*
-- Does **not** imply a single correct answer
-
-### Example
-```
-\sampleresponses{
-Any solution that rotates the square before drawing.
-Angles roughly between 40–50 degrees are acceptable.
-Equivalent approaches that produce a rotated square are fine.
-}
-```
-
----
-
-## `\feedbackprompt{...}` — Learning Feedback Policy
-
-Describes **how and when** feedback should be given during the activity.
-
-This is **meta-guidance**, not a hint script.
-
-### Purpose
-
-- Specify what to encourage or reinforce
-- Describe how to respond to vague, partial, or near-miss answers
-- Clarify whether approximation is acceptable
-- Indicate when *no feedback* is needed
-
-### May include
-
-- “Any coherent response is fine”
-- “Encourage elaboration if under 5–6 words”
-- “If stuck, suggest experimenting rather than giving the answer”
-- “Focus on conceptual understanding, not syntax”
-
-### Rules
-
-- Never quoted verbatim to students
-- Treated as *policy*, not content
-- Must not override what is actually present in the student’s response or code
-
-### Example
-```
-\feedbackprompt{
-Any coherent attempt is acceptable.
-If the answer is vague, encourage one more concrete observation.
-If groups are stuck, suggest experimenting with one number at a time.
-}
-```
-
----
-
-## `\followupprompt{...}` — Optional Engagement Extension
-
-Defines an optional follow-up question to **extend thinking**, even after an acceptable response.
-
-### Purpose
-
-- Promote reflection, prediction, or transfer
-- Encourage discussion beyond the minimum required answer
-- Support exploration rather than correction
-
-### Used when
-
-- The initial response is acceptable
-- The activity benefits from deeper engagement
-- Additional interaction is pedagogically valuable
-
-### Rules
-
-- Optional — may be omitted entirely
-- Should be short and open-ended
-- Should not imply the original answer was wrong
-
-### Example
-```
-\followupprompt{
-Why does rotating before drawing change the shape’s orientation?
-}
-```
-
----
-
-## Design Principles
-
-- These tags support **learning**, not grading
-- They guide *interpretation and interaction*, not correctness
-- Instructor scaffolding must never replace reading the student’s actual work
-- AI feedback must always be grounded in what the student submitted
-
----
-
-## Relationship to Grading
-
-- **Grading is controlled only by `\score{}` and test / quiz logic**
-- Learning activities using these tags are **never graded**
-- No scoring language (“correct”, “wrong”, points) should appear in learning feedback
-
-
+1. All interactive content must be inside `\questiongroup`.
+2. Every `\question` must end with `\endquestion`.
+3. Learning tags never grade.
+4. Grading is controlled only by `\score{}`.
+5. AI must respond only to what students actually submit.
+6. No scope creep beyond stated requirements.
+7. Python Turtle is a first-class execution environment.
