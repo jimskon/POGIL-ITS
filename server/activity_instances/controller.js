@@ -430,9 +430,32 @@ async function setupMultipleGroupInstances(req, res) {
     return res.status(400).json({ error: 'ZZZ_NEW_GUARD activityId and courseId are required' });
   }
 
+  const lockName = `setupGroups:${courseId}:${activityId}`;
   const conn = await db.getConnection();
+
   try {
+    // ✅ serialize setup for this course+activity
+    const [[lockRow]] = await conn.query(`SELECT GET_LOCK(?, 10) AS got`, [lockName]);
+    if (!lockRow?.got) {
+      return res.status(409).json({ error: 'Someone else is setting up groups right now.' });
+    }
+
     await conn.beginTransaction();
+
+    // ✅ GUARD: if group 1 exists, do NOT create a second set
+    // Put this BEFORE any deletes/inserts.
+    const [[g1]] = await conn.query(
+      `SELECT id
+       FROM activity_instances
+       WHERE course_id = ? AND activity_id = ? AND group_number = 1
+       LIMIT 1`,
+      [courseId, activityId]
+    );
+
+    if (g1) {
+      await conn.rollback();
+      return res.status(409).json({ error: 'Groups already exist for this activity.' });
+    }
 
     // Look up DB truth
     const [[activityRow]] = await conn.query(
@@ -448,14 +471,17 @@ async function setupMultipleGroupInstances(req, res) {
     // For NON-tests, we require groups[]
     if (!isTest) {
       if (!Array.isArray(groups) || groups.length === 0) {
+        await conn.rollback();
         return res.status(400).json({ error: 'groups are required for non-test activities' });
       }
     } else {
       // For TESTS, we require selectedStudentIds[]
       if (!Array.isArray(selectedStudentIds) || selectedStudentIds.length === 0) {
+        await conn.rollback();
         return res.status(400).json({ error: 'selectedStudentIds are required for tests' });
       }
       if (!testStartAt || !(Number(testDurationMinutes) > 0)) {
+        await conn.rollback();
         return res.status(400).json({ error: 'testStartAt and positive testDurationMinutes are required for tests' });
       }
     }
@@ -471,13 +497,6 @@ async function setupMultipleGroupInstances(req, res) {
         effectiveDuration = Number(testDurationMinutes);
       }
     }
-
-    // IMPORTANT: do NOT auto-flip pogil_activities.is_test here based on timing.
-    // DB is source-of-truth. If you want \test tag to set it, do that in refreshTotalGroups().
-    // But if you insist on syncing here, only do it when dbIsTest already true OR you explicitly want timing to imply test.
-    // For now: leave as-is, or keep your existing behavior. I'd recommend NOT mutating it.
-    // ---- If you want your previous behavior, keep this line: ----
-    // await conn.query(`UPDATE pogil_activities SET is_test = ? WHERE id = ?`, [isTest ? 1 : 0, activityId]);
 
     // ✅ Compute total_groups from doc (used by BOTH tests and non-tests)
     let computedTotalGroups = 1;
@@ -499,7 +518,7 @@ async function setupMultipleGroupInstances(req, res) {
               .trim();
           })
           .filter(Boolean);
-          
+
         const groupCount = lines.filter(line => line.startsWith('\\questiongroup')).length;
         computedTotalGroups = groupCount > 0 ? groupCount : 1;
       }
@@ -508,28 +527,23 @@ async function setupMultipleGroupInstances(req, res) {
       computedTotalGroups = 1;
     }
 
+    // 🔥 IMPORTANT: you said you want to back out if group 1 exists.
+    // That means you should NOT be deleting old instances anymore.
+    // You can either delete this whole block, or keep it as dead code.
+    // I'd remove it to avoid accidental overwrites.
+
     // Remove existing instances + members for this course+activity
-    const [oldInstances] = await conn.query(
-      `SELECT id FROM activity_instances WHERE course_id = ? AND activity_id = ?`,
-      [courseId, activityId]
-    );
+    // const [oldInstances] = await conn.query(
+    //   `SELECT id FROM activity_instances WHERE course_id = ? AND activity_id = ?`,
+    //   [courseId, activityId]
+    // );
+    // const instanceIds = oldInstances.map(r => r.id);
+    // if (instanceIds.length > 0) {
+    //   await conn.query(`DELETE FROM group_members WHERE activity_instance_id IN (?)`, [instanceIds]);
+    //   await conn.query(`DELETE FROM activity_instances WHERE id IN (?)`, [instanceIds]);
+    // }
 
-    const instanceIds = oldInstances.map(r => r.id);
-    if (instanceIds.length > 0) {
-      await conn.query(
-        `DELETE FROM group_members WHERE activity_instance_id IN (?)`,
-        [instanceIds]
-      );
-      await conn.query(
-        `DELETE FROM activity_instances WHERE id IN (?)`,
-        [instanceIds]
-      );
-    }
-
-    // Helper: insert instance row (keeps defaults consistent)
     async function insertInstance({ group_number }) {
-      // NOTE: this assumes these columns exist in activity_instances:
-      // test_start_at, test_duration_minutes, locked_before_start, locked_after_end
       const [instanceResult] = await conn.query(
         `INSERT INTO activity_instances
            (course_id, activity_id, status, group_number, total_groups, completed_groups, progress_status,
@@ -551,28 +565,24 @@ async function setupMultipleGroupInstances(req, res) {
 
     // ===== CREATE INSTANCES =====
     if (isTest) {
-      // One activity_instance per selected student, group_number 1..N
       for (let i = 0; i < selectedStudentIds.length; i++) {
         const student_id = Number(selectedStudentIds[i]);
         if (!student_id) continue;
 
         const instanceId = await insertInstance({ group_number: i + 1 });
 
-        // Exactly one member per instance (no roles)
         await conn.query(
           `INSERT INTO group_members (activity_instance_id, student_id, role)
            VALUES (?, ?, NULL)`,
           [instanceId, student_id]
         );
 
-        // Make that student active (optional but sensible)
         await conn.query(
           `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
           [student_id, instanceId]
         );
       }
     } else {
-      // One activity_instance per group, then insert members (existing behavior)
       for (let i = 0; i < groups.length; i++) {
         const group = groups[i];
         const group_number = i + 1;
@@ -584,8 +594,7 @@ async function setupMultipleGroupInstances(req, res) {
             if (!member.student_id) continue;
 
             const cleanRole =
-              member.role &&
-                ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
+              member.role && ['facilitator', 'analyst', 'qc', 'spokesperson'].includes(member.role)
                 ? member.role
                 : null;
 
@@ -606,19 +615,20 @@ async function setupMultipleGroupInstances(req, res) {
       total_groups: computedTotalGroups,
       instance_count: isTest ? selectedStudentIds.length : groups.length,
     });
-} catch (err) {
-  try { await conn.rollback(); } catch {}
-  console.error('❌ Error setting up groups/tests:', err);
+  } catch (err) {
+    try { await conn.rollback(); } catch { }
+    console.error('❌ Error setting up groups/tests:', err);
 
-  return res.status(500).json({
-    error: 'Failed to setup instances',
-    details: err?.sqlMessage || err?.message || String(err),
-    code: err?.code,
-  });
-} finally {
-  conn.release();
-}
-
+    return res.status(500).json({
+      error: 'Failed to setup instances',
+      details: err?.sqlMessage || err?.message || String(err),
+      code: err?.code,
+    });
+  } finally {
+    // ✅ always release lock + connection
+    try { await conn.query(`SELECT RELEASE_LOCK(?)`, [lockName]); } catch { }
+    conn.release();
+  }
 }
 
 
