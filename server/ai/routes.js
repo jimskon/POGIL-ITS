@@ -9,6 +9,8 @@ const {
   evaluateCppCode,
 } = require('./controller');
 
+const code = require('./code');
+
 console.log('AI handlers typeof:', {
   evaluateStudentResponse: typeof evaluateStudentResponse,
   evaluatePythonCode: typeof evaluatePythonCode,
@@ -40,5 +42,7 @@ router.post('/evaluate-cpp-code', evaluateCppCode);
 
 // ✅ Test-mode grading – calls into controller.js
 router.post('/grade-test-question', gradeTestQuestionHttp);
+
+router.post('/code/repair-markup', code.repairMarkup);
 
 module.exports = router;

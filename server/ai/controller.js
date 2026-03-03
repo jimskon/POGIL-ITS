@@ -336,39 +336,39 @@ async function evaluateStudentResponse(req, res) {
   const answerRaw = String(studentAnswer || "").trim();
 
   const followupQ = extractFollowupFromFeedbackPrompt(feedbackPrompt) ||
-  "Please answer using one concrete detail from the code or output.";
+    "Please answer using one concrete detail from the code or output.";
 
-if (policy.requirementsOnly) {
-  // If gibberish → reject (allowed even in gibberish-only mode)
-  if (!answerRaw || looksGibberish(answerRaw)) {
-    return sendAI(res, { accepted: false, feedback: followupQ });
+  if (policy.requirementsOnly) {
+    // If gibberish → reject (allowed even in gibberish-only mode)
+    if (!answerRaw || looksGibberish(answerRaw)) {
+      return sendAI(res, { accepted: false, feedback: followupQ });
+    }
+
+    // Generic off-prompt / no-evidence check:
+    // require at least one meaningful overlap with either question or sampleResponse
+    const q = stripHtml(questionText || "").toLowerCase();
+    const s = stripHtml(answerRaw).toLowerCase();
+    const sample = stripHtml(sampleResponse || "").toLowerCase();
+
+    const words = (t) => t.split(/\W+/).filter(w => w.length >= 5);
+    const qWords = words(q);
+    const sampleWords = words(sample);
+
+    const overlaps = (arr) => arr.some(w => s.includes(w));
+
+    const hasEvidence =
+      overlaps(qWords) || overlaps(sampleWords) ||
+      /\d+\.\s+\S+/.test(answerRaw); // catches "1. Skiing" style evidence
+
+    if (!hasEvidence) {
+      // This is the key: reject garbage like "my mother's name" deterministically.
+      return sendAI(res, { accepted: false, feedback: followupQ });
+    }
+
+    // If it passes basic evidence, you can still call the model OR accept directly.
+    // I'd accept directly in requirements-only mode to keep it snappy:
+    return sendAI(res, { accepted: true, feedback: null });
   }
-
-  // Generic off-prompt / no-evidence check:
-  // require at least one meaningful overlap with either question or sampleResponse
-  const q = stripHtml(questionText || "").toLowerCase();
-  const s = stripHtml(answerRaw).toLowerCase();
-  const sample = stripHtml(sampleResponse || "").toLowerCase();
-
-  const words = (t) => t.split(/\W+/).filter(w => w.length >= 5);
-  const qWords = words(q);
-  const sampleWords = words(sample);
-
-  const overlaps = (arr) => arr.some(w => s.includes(w));
-
-  const hasEvidence =
-    overlaps(qWords) || overlaps(sampleWords) ||
-    /\d+\.\s+\S+/.test(answerRaw); // catches "1. Skiing" style evidence
-
-  if (!hasEvidence) {
-    // This is the key: reject garbage like "my mother's name" deterministically.
-    return sendAI(res, { accepted: false, feedback: followupQ });
-  }
-
-  // If it passes basic evidence, you can still call the model OR accept directly.
-  // I'd accept directly in requirements-only mode to keep it snappy:
-  return sendAI(res, { accepted: true, feedback: null });
-}
   // Positive-feedback directives live inside followupprompt; strip them and compute flags.
   const positiveEnabled = isPositiveFeedbackEnabled(guidance, followupPrompt);
   const fuParsed = parsePositiveFeedbackFromText(followupPrompt);
@@ -547,16 +547,122 @@ async function evaluatePythonCode(req, res) {
 }
 
 
+function extractFirstJsonObject(text = "") {
+  const s = String(text || "");
+  const start = s.indexOf("{");
+  if (start < 0) return null;
+
+  let depth = 0;
+  let inStr = false;
+  let escape = false;
+
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i];
+
+    if (inStr) {
+      if (escape) {
+        escape = false;
+      } else if (ch === "\\") {
+        escape = true;
+      } else if (ch === '"') {
+        inStr = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inStr = true;
+      continue;
+    }
+
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        return s.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null; // no balanced object found
+}
+
 function safeJsonObject(raw = "") {
-  const s = String(raw || "").trim();
-  const match = s.match(/\{[\s\S]*\}/);
-  const candidate = match ? match[0] : s;
+  const candidate = extractFirstJsonObject(raw);
+  if (!candidate) return null;
   try {
     const obj = JSON.parse(candidate);
-    return obj && typeof obj === "object" ? obj : null;
+    return obj && typeof obj === "object" && !Array.isArray(obj) ? obj : null;
   } catch {
     return null;
   }
+}
+
+// ---------- JSON-only LLM helper (STRICT) ----------
+function enforceOnlyKeys(obj, allowedKeys) {
+  if (!obj || typeof obj !== "object") throw new Error("LLM returned non-object JSON");
+  const keys = Object.keys(obj);
+  const extra = keys.filter((k) => !allowedKeys.includes(k));
+  if (extra.length) throw new Error(`LLM returned extra keys: ${extra.join(", ")}`);
+  for (const k of allowedKeys) {
+    if (!(k in obj)) throw new Error(`LLM missing required key: ${k}`);
+  }
+  return obj;
+}
+
+/**
+ * Call OpenAI and parse JSON STRICTLY.
+ * - messages: [{role, content}, ...]
+ * - allowedKeys: enforce exact key set (no extras, no missing)
+ * Throws on any contract violation.
+ */
+async function callLLMJsonStrict({
+  messages,
+  allowedKeys,
+  temperature = 0.2,
+  max_tokens = 800,
+}) {
+  async function doCall(extraMsg) {
+    const msgs = extraMsg ? [...messages, extraMsg] : messages;
+
+    return await openai.chat.completions.create({
+      model: MODEL,
+      messages: msgs,
+      temperature,
+      max_tokens,
+      response_format: { type: "json_object" }, // ✅ force JSON output
+    });
+  }
+
+  // Try #1
+  let chat = await doCall(null);
+  let raw = (chat.choices?.[0]?.message?.content ?? "").trim();
+
+  if (AI_DEBUG) logModelRaw("[callLLMJsonStrict#1]", raw);
+
+  let obj = safeJsonObject(raw);
+
+  // Retry once if parse fails anyway
+  if (!obj) {
+    chat = await doCall({
+      role: "user",
+      content:
+        'Your previous reply was not valid JSON. Reply again with ONLY a JSON object. No markdown, no commentary.',
+    });
+
+    raw = (chat.choices?.[0]?.message?.content ?? "").trim();
+    if (AI_DEBUG) logModelRaw("[callLLMJsonStrict#2]", raw);
+
+    obj = safeJsonObject(raw);
+  }
+
+  if (!obj) throw new Error("LLM returned non-JSON (or JSON parse failed).");
+
+  if (Array.isArray(allowedKeys) && allowedKeys.length) {
+    enforceOnlyKeys(obj, allowedKeys);
+  }
+
+  return obj;
 }
 
 async function evaluateCode({
@@ -733,4 +839,5 @@ module.exports = {
   evaluateCppCode,
   gradeTestQuestion,
   gradeTestQuestionHttp,
+  callLLMJsonStrict,
 };

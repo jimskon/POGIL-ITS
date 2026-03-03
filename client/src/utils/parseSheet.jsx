@@ -273,6 +273,15 @@ export default function FileBlock({
 export function parseSheetToBlocks(lines, options = {}) {
   //console.log("🧑‍💻 parseSheetToBlocks invoked");
   lines = collapseBracedCommands(lines);
+  const issues = [];
+  const pushIssue = (severity, line, message, context) => {
+    issues.push({
+      severity,               // 'error' | 'warn' | 'info'
+      line,                   // 1-based line number (best-effort)
+      message,
+      context: context || null
+    });
+  };
   let isTest = false;
   const legacyTestNumbering = options.legacyTestNumbering === true;
   // default true unless explicitly set to false
@@ -293,10 +302,16 @@ export function parseSheetToBlocks(lines, options = {}) {
   let currentFile = null;
   let inScoreBlock = false;
   let currentScore = null;
-  let openHeaderTag = null;
-  let openHeaderBuf = [];
   let inGroup = false;
   let pendingIncludeFiles = null;
+
+  // track some structural state to report missing closures
+  let openGroupLine = null;
+  let openQuestionLine = null;
+  let openFileLine = null;
+  let openScoreLine = null;
+  let openListLine = null;
+
 
   const flushCurrentBlock = () => {
     if (currentBlock.length > 0) {
@@ -384,7 +399,9 @@ export function parseSheetToBlocks(lines, options = {}) {
   };
 
 
-  for (let line of lines) {
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx];
+    const lineNo = idx + 1;
     const trimmed = line.trim();
     // mark this activity as a test
     if (trimmed === '\\test') {
@@ -430,23 +447,6 @@ export function parseSheetToBlocks(lines, options = {}) {
     }
 
     // If we're currently inside a multi-line header, keep collecting lines
-    if (openHeaderTag) {
-      const endIdx = trimmed.lastIndexOf('}');
-      if (endIdx !== -1) {
-        // close header
-        const piece = trimmed.slice(0, endIdx);
-        if (piece) openHeaderBuf.push(piece);
-        const content = format(openHeaderBuf.join('\n'));
-        blocks.push({ type: 'header', tag: openHeaderTag, content });
-        openHeaderTag = null;
-        openHeaderBuf = [];
-        // anything after '}' on the same line is ignored by design
-        continue;
-      } else {
-        openHeaderBuf.push(trimmed);
-        continue;
-      }
-    }
     const linkMatch = trimmed.match(/^\\link\{([\s\S]+?)\}\{([\s\S]+?)\}$/);
     if (linkMatch) {
       flushCurrentBlock();
@@ -492,15 +492,22 @@ export function parseSheetToBlocks(lines, options = {}) {
     }
 
     if (trimmed === '\\begin{itemize}' || trimmed === '\\begin{enumerate}') {
+      if (inList) {
+        pushIssue('warn', lineNo, 'Nested list detected. Nested lists are not supported.', line);
+      }
       inList = true;
+      openListLine = lineNo;
       listType = trimmed.includes('itemize') ? 'ul' : 'ol';
       listItems = [];
-      // if we’re inside a question, this list should be part of that question
       listBelongsToQuestion = !!currentQuestion;
       continue;
     }
 
     if (trimmed === '\\end{itemize}' || trimmed === '\\end{enumerate}') {
+      if (!inList) {
+        pushIssue('error', lineNo, 'List end found without a matching \\begin{itemize}/\\begin{enumerate}.', line);
+        continue;
+      }
       if (listBelongsToQuestion && currentQuestion) {
         // list lives inside the current question: append HTML directly
         const itemsHtml = listItems
@@ -518,7 +525,7 @@ export function parseSheetToBlocks(lines, options = {}) {
           items: listItems.map(format),
         });
       }
-
+      openListLine = null;
       inList = false;
       listType = null;
       listItems = [];
@@ -780,33 +787,48 @@ export function parseSheetToBlocks(lines, options = {}) {
     }
 
     // questiongroup: \questiongroup{...}
-    // questiongroup: \questiongroup{...}
     if (trimmed.startsWith('\\questiongroup{')) {
       flushCurrentBlock();
+
+      if (inGroup) {
+        pushIssue('warn', lineNo, 'Nested \\questiongroup encountered. Did you forget \\endquestiongroup?', line);
+      }
 
       const m = trimmed.match(/\\questiongroup\{([\s\S]+?)\}/);
       const contentRaw = m ? m[1] : '';
       const content = format(contentRaw.trimStart());
 
-      // Always create a group intro (tests and non-tests)
       groupNumber++;
       inGroup = true;
-      questionLetterCode = 97;  // reset per group if you want a,b,c,...
-      blocks.push({ type: 'groupIntro', groupId: groupNumber, content });
+      openGroupLine = lineNo;
 
+      questionLetterCode = 97;
+      blocks.push({ type: 'groupIntro', groupId: groupNumber, content });
       continue;
     }
 
     if (trimmed === '\\endquestiongroup') {
-      // Always close the group (tests and non-tests)
+      if (!inGroup) {
+        pushIssue('error', lineNo, '\\endquestiongroup without a matching \\questiongroup', line);
+      }
+      if (currentQuestion) {
+        pushIssue('error', lineNo, 'Closing group while a \\question is still open. Missing \\endquestion before \\endquestiongroup.', line);
+      }
       blocks.push({ type: 'endGroup' });
       inGroup = false;
+      openGroupLine = null;
       continue;
     }
 
 
     if (trimmed.startsWith('\\question{')) {
-      // grab everything between the first '{' and the LAST '}' on this line
+      if (!inGroup) {
+        pushIssue('error', lineNo, '\\question found outside of any \\questiongroup. (All interactive content must be inside a group.)', line);
+      }
+      if (currentQuestion) {
+        pushIssue('error', lineNo, 'New \\question started before previous \\question was closed. Missing \\endquestion.', line);
+      }
+
       const open = trimmed.indexOf('{');
       const close = trimmed.lastIndexOf('}');
       const raw = (open >= 0 && close > open)
@@ -815,12 +837,12 @@ export function parseSheetToBlocks(lines, options = {}) {
 
       const id = String.fromCharCode(questionLetterCode++);
       const rawClean = raw.trimStart();
+
       currentQuestion = {
         type: 'question',
         id,
         groupId: groupNumber,
-        label: `${id}.`,   // display: a., b., c. (all modes)
-
+        label: `${id}.`,
         responseId: responseId++,
         prompt: format(rawClean),
         responseLines: 1,
@@ -828,36 +850,39 @@ export function parseSheetToBlocks(lines, options = {}) {
         feedback: [],
         followups: [],
         codeBlocks: [],
-        // per-question scoring metadata
-        scores: {},   // e.g. { response: {points, instructionsHtml, instructionsRaw}, ... }
+        scores: {},
       };
+
+      openQuestionLine = lineNo;
       continue;
     }
-
 
     if (trimmed === '\\endquestion') {
-      if (currentQuestion !== null) {
-        const hasAnyCode =
-          (currentQuestion.codeBlocks?.length || 0) > 0 ||
-          (currentQuestion.pythonBlocks?.length || 0) > 0 ||
-          (currentQuestion.cppBlocks?.length || 0) > 0;
-        const hasTable = !!currentQuestion.hasTableResponse;
-
-        currentQuestion.hasPython = !!(currentQuestion.pythonBlocks && currentQuestion.pythonBlocks.length);
-        currentQuestion.hasCpp = !!(currentQuestion.cppBlocks && currentQuestion.cppBlocks.length);
-        currentQuestion.hasPythonOnly = currentQuestion.hasPython && !currentQuestion.hasTextResponse;
-        currentQuestion.hasCodeOnly = hasAnyCode && !currentQuestion.hasTextResponse && !hasTable;
-
-        // convenience: starter templates in order
-        currentQuestion._initialCode =
-          (currentQuestion.codeBlocks?.map(cb => cb.content || '') || [])
-            .filter(x => x !== undefined);
-        blocks.push(currentQuestion);
+      if (!currentQuestion) {
+        pushIssue('error', lineNo, '\\endquestion without a matching \\question{...}', line);
+        continue;
       }
+
+      // finalize as you already do
+      const hasAnyCode =
+        (currentQuestion.codeBlocks?.length || 0) > 0 ||
+        (currentQuestion.pythonBlocks?.length || 0) > 0 ||
+        (currentQuestion.cppBlocks?.length || 0) > 0;
+      const hasTable = !!currentQuestion.hasTableResponse;
+
+      currentQuestion.hasPython = !!(currentQuestion.pythonBlocks && currentQuestion.pythonBlocks.length);
+      currentQuestion.hasCpp = !!(currentQuestion.cppBlocks && currentQuestion.cppBlocks.length);
+      currentQuestion.hasPythonOnly = currentQuestion.hasPython && !currentQuestion.hasTextResponse;
+      currentQuestion.hasCodeOnly = hasAnyCode && !currentQuestion.hasTextResponse && !hasTable;
+
+      currentQuestion._initialCode =
+        (currentQuestion.codeBlocks?.map(cb => cb.content || '') || []).filter(x => x !== undefined);
+
+      blocks.push(currentQuestion);
       currentQuestion = null;
+      openQuestionLine = null;
       continue;
     }
-
 
     // --- scoring blocks: \score{n,type} ... \endscore ---
     // type is one of: response, code, output
@@ -867,12 +892,22 @@ export function parseSheetToBlocks(lines, options = {}) {
       const scoreType = scoreMatch[2].toLowerCase();
 
       inScoreBlock = true;
-      currentScore = {
-        type: scoreType,
-        points,
-        lines: [],
-      };
+      openScoreLine = lineNo;
+      currentScore = { type: scoreType, points, lines: [] };
       continue;
+    }
+
+    if (inScoreBlock && currentScore && currentQuestion) {
+      if (trimmed === '\\endscore') {
+        // existing finalize logic...
+        inScoreBlock = false;
+        currentScore = null;
+        openScoreLine = null;
+        continue;
+      } else {
+        currentScore.lines.push(line);
+        continue;
+      }
     }
 
     if (trimmed.startsWith('\\textresponse')) {
@@ -962,41 +997,39 @@ export function parseSheetToBlocks(lines, options = {}) {
 
     if (trimmed.startsWith('\\file{')) {
       flushCurrentBlock();
+
+      if (inFileBlock) {
+        pushIssue('error', lineNo, 'Nested \\file encountered. Missing \\endfile for previous file block.', line);
+      }
+
       inFileBlock = true;
+      openFileLine = lineNo;
 
       const m = trimmed.match(/\\file\{([\s\S]+?)\}/);
       const inner = m?.[1]?.trim() || '';
 
-      // Support: \file{test.cpp} and \file{test.cpp,readonly}
-      const parts = inner
-        .split(',')
-        .map(s => s.trim())
-        .filter(Boolean);
-
+      const parts = inner.split(',').map(s => s.trim()).filter(Boolean);
       const filename = parts[0] || '';
       const readonly = (parts[1]?.toLowerCase() === 'readonly');
 
-      //console.log("📂 Starting file block for:", filename, "readonly:", readonly);
+      if (!filename) {
+        pushIssue('error', lineNo, '\\file{...} is missing a filename.', line);
+      }
 
-      currentFile = {
-        type: 'file',
-        filename,
-        readonly,      // 👈 carry this through to the block
-        lines: [],
-      };
+      currentFile = { type: 'file', filename, readonly, lines: [] };
       continue;
     }
 
-
     if (trimmed === '\\endfile') {
-      if (currentFile) {
-        blocks.push({
-          ...currentFile,
-          content: currentFile.lines.join('\n'),
-        });
-        currentFile = null;
+      if (!inFileBlock || !currentFile) {
+        pushIssue('error', lineNo, '\\endfile without a matching \\file{...}', line);
+        continue;
       }
+
+      blocks.push({ ...currentFile, content: currentFile.lines.join('\n') });
+      currentFile = null;
       inFileBlock = false;
+      openFileLine = null;
       continue;
     }
 
@@ -1014,6 +1047,23 @@ export function parseSheetToBlocks(lines, options = {}) {
 
   flushCurrentBlock();
 
+  // ✅ report any unclosed structures
+  if (currentQuestion) {
+    pushIssue('error', openQuestionLine ?? null, 'Unclosed \\question: missing \\endquestion at end of document.', null);
+  }
+  if (inGroup) {
+    pushIssue('error', openGroupLine ?? null, 'Unclosed \\questiongroup: missing \\endquestiongroup at end of document.', null);
+  }
+  if (inFileBlock) {
+    pushIssue('error', openFileLine ?? null, 'Unclosed \\file block: missing \\endfile at end of document.', null);
+  }
+  if (inScoreBlock) {
+    pushIssue('error', openScoreLine ?? null, 'Unclosed \\score block: missing \\endscore at end of document.', null);
+  }
+  if (inList) {
+    pushIssue('error', openListLine ?? null, 'Unclosed list: missing \\end{itemize} or \\end{enumerate}.', null);
+  }
+
   // Legacy tests only: renumber all questions sequentially: 1., 2., 3., ...
   if (isTest && legacyTestNumbering) {
     let q = 0;
@@ -1026,6 +1076,10 @@ export function parseSheetToBlocks(lines, options = {}) {
   }
 
 
+  // ✅ backward compatible return
+  if (options.returnIssues) {
+    return { blocks, issues, meta: { isTest } };
+  }
   return blocks;
 }
 
