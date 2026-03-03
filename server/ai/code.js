@@ -183,6 +183,137 @@ function issuesToWarnings(issues) {
     return issues.map((it) => `[${it.code}] line ${it.line ?? "?"}: ${it.message}`);
 }
 
+const BOUNDARY_TAGS = new Set([
+    "title", "name", "studentlevel", "activitycontext", "aicodeguidance", "section",
+    "questiongroup", "endquestiongroup",
+    "question", "endquestion",
+    "textresponse", "sampleresponses", "feedbackprompt", "followupprompt",
+    "score",
+    "python", "endpython",
+    "cpp", "endcpp",
+    "file", "endfile",
+    "block", "endblock",
+    "table", "endtable", "row",
+    "image", "link",
+]);
+
+function braceFixPass(docText) {
+    const lines = String(docText || "").split(/\r?\n/);
+    const out = [...lines];
+    const summary = [];
+    const warnings = [];
+
+    // We only enforce: a \tag{ opener must be closed before the next \tag... line.
+    // But ignore inside "protected blocks" where braces are normal code/data.
+    let protectedStack = []; // values: 'python'|'cpp'|'file'|'block'
+
+    const isProtected = () => protectedStack.length > 0;
+
+    const pushProtIfStart = (t, lineNum) => {
+        if (/^\\python\b/i.test(t)) protectedStack.push({ type: "python", line: lineNum });
+        else if (/^\\cpp\b/i.test(t)) protectedStack.push({ type: "cpp", line: lineNum });
+        else if (/^\\file\{/.test(t)) protectedStack.push({ type: "file", line: lineNum });
+        else if (/^\\block\{/.test(t)) protectedStack.push({ type: "block", line: lineNum });
+    };
+
+    const popProtIfEnd = (t) => {
+        if (/^\\endpython\b/i.test(t) && protectedStack.at(-1)?.type === "python") protectedStack.pop();
+        else if (/^\\endcpp\b/i.test(t) && protectedStack.at(-1)?.type === "cpp") protectedStack.pop();
+        else if (/^\\endfile\b/i.test(t) && protectedStack.at(-1)?.type === "file") protectedStack.pop();
+        else if (/^\\endblock\b/i.test(t) && protectedStack.at(-1)?.type === "block") protectedStack.pop();
+    };
+
+    const getTagName = (t) => {
+        const m = t.match(/^\\([A-Za-z]+)\b/);
+        return m ? m[1] : null;
+    };
+
+    const isBoundaryTagLine = (t) => {
+        const name = getTagName(t);
+        return name && BOUNDARY_TAGS.has(name);
+    };
+
+    const isTagWithBraceOpen = (t) => /^\\[A-Za-z]+(?:\*?)\{/.test(t);
+
+    // One outstanding “brace-opened tag” at a time, per your rule.
+    let pending = null; // { lineNum, tagName }
+
+    const closePendingBefore = (beforeLineNum) => {
+        if (!pending) return;
+
+        // Insert '}' at end of the line right before beforeLineNum (or at pending line if needed)
+        const insertAt = pending.lineNum; // always close on opener line
+        out[insertAt - 1] = (out[insertAt - 1] ?? "") + "}";
+
+        summary.push(`Inserted missing "}" to close \\${pending.tagName}{...} (opened line ${pending.lineNum}) before line ${beforeLineNum}.`);
+        warnings.push(`Auto-closed missing "}" for \\${pending.tagName}{ opened at line ${pending.lineNum} before line ${beforeLineNum}.`);
+        pending = null;
+    };
+
+    const braceBalanceFromFirstOpen = (t) => {
+        const idx = t.indexOf("{");
+        if (idx < 0) return 0;
+        const rest = t.slice(idx);
+        let bal = 0;
+        for (const ch of rest) {
+            if (ch === "{") bal++;
+            else if (ch === "}") bal--;
+            if (bal === 0) break; // closed within the line
+        }
+        return bal; // >0 means missing at least one }
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+        const lineNum = i + 1;
+        const t = String(lines[i] ?? "").trim();
+
+        // maintain protected stack first
+        pushProtIfStart(t, lineNum);
+        if (isProtected()) {
+            popProtIfEnd(t);
+            continue;
+        }
+
+        // If we hit ANY new tag line and we have a pending brace-open, close it first.
+        if (pending && isBoundaryTagLine(t)) {
+            closePendingBefore(lineNum);
+        }
+
+        // If this line starts a \tag{, check if it closes on the same line.
+        if (isTagWithBraceOpen(t)) {
+            const m = t.match(/^\\([A-Za-z]+(?:\*?))\{/);
+            const tagName = m ? m[1] : "tag";
+            const bal = braceBalanceFromFirstOpen(t);
+
+            if (bal > 0) {
+                // missing closing } somewhere before next tag line
+                pending = { lineNum, tagName };
+            } else {
+                pending = null;
+            }
+        }
+
+        // End protected block if on this line (rare because we continue above, but safe)
+        popProtIfEnd(t);
+    }
+
+    // If doc ends with a pending open brace tag, close at EOF.
+    if (pending) {
+        const lastLineNum = lines.length;
+        out[lastLineNum - 1] = (out[lastLineNum - 1] ?? "") + "}";
+        summary.push(`Inserted missing "}" to close \\${pending.tagName}{...} at EOF (opened line ${pending.lineNum}).`);
+        warnings.push(`Auto-closed missing "}" for \\${pending.tagName}{ opened at line ${pending.lineNum} at EOF.`);
+        pending = null;
+    }
+
+    return {
+        text: out.join("\n"),
+        summary,
+        warnings,
+        changed: summary.length > 0,
+    };
+}
+
 function repairPass(docText) {
     const lines = String(docText || "").split(/\r?\n/);
     const out = [];
@@ -329,9 +460,13 @@ async function repairMarkup(req, res) {
             return badRequest(res, "rules must be an array of strings if provided.");
         }
 
-        // Pass 1: deterministic structural repair
-        const pass1 = repairPass(docText);
-        const repaired = pass1.changed ? pass1.text : docText;
+        // Pass 0: brace repair (must happen before structural repair)
+        const pass0 = braceFixPass(docText);
+        const afterBraces = pass0.changed ? pass0.text : docText;
+
+        // Pass 1: structural repair (end tags, nesting, etc)
+        const pass1 = repairPass(afterBraces);
+        const repaired = pass1.changed ? pass1.text : afterBraces;
 
         // Preflight after repair
         const issues = preflightValidateMarkup(repaired);
@@ -340,16 +475,19 @@ async function repairMarkup(req, res) {
         const structural = issues.filter(i => STRUCTURAL_CODES.has(i.code));
         const policyOnly = issues.filter(i => !STRUCTURAL_CODES.has(i.code));
 
+        // Merge everything deterministically
+        const summary = [
+            ...(pass0.summary || []),
+            ...(pass1.summary || []),
+        ];
+
         const warnings = [
-            ...pass1.warnings,
+            ...(pass0.warnings || []),
+            ...(pass1.warnings || []),
             ...issuesToWarnings(structural),
             ...issuesToWarnings(policyOnly),
         ];
 
-        const summary = [...pass1.summary];
-
-        // Reliability contract: always return 200 with proposedDocText
-        // If we still have structural issues, we return best-effort text + warnings.
         return res.json(contract(repaired, summary, warnings));
 
     } catch (err) {

@@ -1,12 +1,12 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { Container, Row, Col, Button, Form, Alert } from 'react-bootstrap';
+import { Container, Row, Col, Button, Form, Alert, Modal, Spinner, Tabs, Tab } from 'react-bootstrap';
 import { parseSheetToBlocks, renderBlocks } from '../utils/parseSheet';
 import { API_BASE_URL } from '../config';
-import { Modal, Spinner, Tabs, Tab } from 'react-bootstrap';
 
 export default function ActivityEditor() {
   const { activityId } = useParams();
+
   const [activity, setActivity] = useState(null);
   const [rawText, setRawText] = useState('');
   const [elements, setElements] = useState([]);
@@ -14,12 +14,13 @@ export default function ActivityEditor() {
   const [copySuccess, setCopySuccess] = useState('');
   const [previewKey, setPreviewKey] = useState(Date.now());
   const [autoCompileEnabled, setAutoCompileEnabled] = useState(true);
-  // NEW: right-side display mode + parse issues
+
+  // Right-side display mode + parse issues
   const [rightPaneMode, setRightPaneMode] = useState('preview'); // 'preview' | 'errors'
   const [parseIssues, setParseIssues] = useState([]);
   const compileReasonRef = useRef('auto'); // 'auto' | 'manual'
 
-  // 🔁 New states and ref for file contents (for Python blocks)
+  // File contents (for Python blocks)
   const [fileContents, setFileContents] = useState({});
   const fileContentsRef = useRef({});
 
@@ -38,6 +39,8 @@ export default function ActivityEditor() {
   const [autofixElements, setAutofixElements] = useState([]);
   const [autofixIssuesAfter, setAutofixIssuesAfter] = useState([]);
 
+  const busy = autofixBusy;
+
   const handleUpdateFileContents = (updaterFn) => {
     setFileContents((prev) => {
       const updated = updaterFn(prev);
@@ -45,8 +48,9 @@ export default function ActivityEditor() {
       return updated;
     });
   };
+
   function toGoogleDocEditUrl(url) {
-    const s = String(url || "").trim();
+    const s = String(url || '').trim();
     if (!s) return null;
 
     const m = s.match(/\/document\/d\/([a-zA-Z0-9_-]+)/);
@@ -57,6 +61,89 @@ export default function ActivityEditor() {
 
     return s; // fallback
   }
+
+  // ---- Frontend "missing }" checker (before parser runs) ----
+  function findUnclosedTagBraces(text) {
+    const lines = String(text || '').split(/\r?\n/);
+
+    // ignore braces inside these blocks
+    const protectedStack = [];
+    const isProtected = () => protectedStack.length > 0;
+
+    const startProt = (t) => {
+      if (/^\\python\b/i.test(t)) protectedStack.push('python');
+      else if (/^\\cpp\b/i.test(t)) protectedStack.push('cpp');
+      else if (/^\\file\{/.test(t)) protectedStack.push('file');
+      else if (/^\\block\{/.test(t)) protectedStack.push('block');
+    };
+
+    const endProt = (t) => {
+      if (/^\\endpython\b/i.test(t) && protectedStack.at(-1) === 'python') protectedStack.pop();
+      else if (/^\\endcpp\b/i.test(t) && protectedStack.at(-1) === 'cpp') protectedStack.pop();
+      else if (/^\\endfile\b/i.test(t) && protectedStack.at(-1) === 'file') protectedStack.pop();
+      else if (/^\\endblock\b/i.test(t) && protectedStack.at(-1) === 'block') protectedStack.pop();
+    };
+
+    const isTagLine = (t) => /^\\[A-Za-z]+(?:\*?)\b/.test(t);
+    const isBraceTag = (t) => /^\\[A-Za-z]+(?:\*?)\{/.test(t);
+
+    let pending = null; // { line, tag }
+
+    const braceBalanceFromFirstOpen = (t) => {
+      const idx = t.indexOf('{');
+      if (idx < 0) return 0;
+      const rest = t.slice(idx);
+      let bal = 0;
+      for (const ch of rest) {
+        if (ch === '{') bal++;
+        else if (ch === '}') bal--;
+        if (bal === 0) break;
+      }
+      return bal; // >0 => missing }
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+      const lineNum = i + 1;
+      const t = lines[i].trim();
+
+      startProt(t);
+      if (isProtected()) {
+        endProt(t);
+        continue;
+      }
+
+      // new tag while previous \tag{ is still unclosed => report missing brace
+      if (pending && isTagLine(t)) {
+        return {
+          line: pending.line,
+          tag: pending.tag,
+          message: `Unclosed \\${pending.tag}{...} (missing "}") before next tag at line ${lineNum}.`,
+          context: lines[pending.line - 1] ?? '',
+        };
+      }
+
+      if (isBraceTag(t)) {
+        const m = t.match(/^\\([A-Za-z]+(?:\*?))\{/);
+        const tag = m ? m[1] : 'tag';
+        const bal = braceBalanceFromFirstOpen(t);
+        pending = bal > 0 ? { line: lineNum, tag } : null;
+      }
+
+      endProt(t);
+    }
+
+    if (pending) {
+      return {
+        line: pending.line,
+        tag: pending.tag,
+        message: `Unclosed \\${pending.tag}{...} (missing "}") at end of document.`,
+        context: lines[pending.line - 1] ?? '',
+      };
+    }
+
+    return null;
+  }
+
   // Load Skulpt
   useEffect(() => {
     const loadScript = (src) =>
@@ -76,12 +163,68 @@ export default function ActivityEditor() {
         await loadScript('https://cdn.jsdelivr.net/npm/skulpt@1.2.0/dist/skulpt-stdlib.js');
         setSkulptLoaded(true);
       } catch (err) {
-        console.error("Skulpt failed to load", err);
+        console.error('Skulpt failed to load', err);
       }
     };
 
     loadSkulpt();
   }, []);
+
+  // Compile handler
+  const handleCompile = (sourceText = rawText, reason = 'auto') => {
+    compileReasonRef.current = reason;
+
+    // 0) brace sanity check first (prevents misleading "unclosed questiongroup")
+    const braceIssue = findUnclosedTagBraces(sourceText);
+    if (braceIssue) {
+      setParseIssues([
+        {
+          severity: 'error',
+          line: braceIssue.line,
+          message: braceIssue.message,
+          context: braceIssue.context,
+        },
+      ]);
+      setElements([]);
+      setPreviewKey(Date.now());
+      localStorage.setItem(`activity-${activityId}`, sourceText);
+      if (reason === 'manual') setRightPaneMode('errors');
+      return;
+    }
+
+    const lines = sourceText.split('\n');
+
+    const parsed = parseSheetToBlocks(lines, { returnIssues: true });
+    const blocks = parsed?.blocks ?? parsed;
+    const issues = parsed?.issues ?? [];
+
+    setParseIssues(issues);
+
+    // Extract files for Python execution
+    const files = {};
+    for (const block of blocks) {
+      if (block.type === 'file' && block.filename) {
+        files[block.filename] = block.content ?? '';
+      }
+    }
+    setFileContents(files);
+    fileContentsRef.current = files;
+
+    const rendered = renderBlocks(blocks, {
+      mode: 'preview',
+      editable: true,
+      fileContents: files,
+      setFileContents: handleUpdateFileContents,
+    });
+
+    setElements(rendered);
+    setPreviewKey(Date.now());
+    localStorage.setItem(`activity-${activityId}`, sourceText);
+
+    if (reason === 'manual' && issues.some((i) => i.severity === 'error')) {
+      setRightPaneMode('errors');
+    }
+  };
 
   // Fetch activity and saved text
   useEffect(() => {
@@ -96,7 +239,9 @@ export default function ActivityEditor() {
           setRawText(cached);
           setTimeout(() => handleCompile(cached), 0);
         } else {
-          const docRes = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activityData.sheet_url)}`);
+          const docRes = await fetch(
+            `${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activityData.sheet_url)}`
+          );
           const { lines } = await docRes.json();
           const text = lines.join('\n');
           setRawText(text);
@@ -104,60 +249,27 @@ export default function ActivityEditor() {
           setTimeout(() => handleCompile(text), 0);
         }
       } catch (err) {
-        console.error("Failed to fetch activity", err);
+        console.error('Failed to fetch activity', err);
       }
     };
 
     if (skulptLoaded) fetchActivity();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activityId, skulptLoaded]);
 
-  // 🔁 Compile handler
-  // 🔁 Compile handler
-  const handleCompile = (sourceText = rawText, reason = 'auto') => {
-    compileReasonRef.current = reason;
-
-    const lines = sourceText.split('\n');
-
-    // ✅ request issues
-    const parsed = parseSheetToBlocks(lines, { returnIssues: true });
-    const blocks = parsed?.blocks ?? parsed; // backward-safe
-    const issues = parsed?.issues ?? [];
-
-    setParseIssues(issues);
-
-    // ✅ Extract files for Python execution
-    const files = {};
-    for (const block of blocks) {
-      if (block.type === 'file' && block.filename) {
-        files[block.filename] = block.content ?? '';
-      }
-    }
-    setFileContents(files);
-    fileContentsRef.current = files;
-
-    // ✅ IMPORTANT: pass fileContents (not fileContentsRef) into renderBlocks
-    const rendered = renderBlocks(blocks, {
-      mode: 'preview',
-      editable: true,
-      fileContents: files,
-      setFileContents: handleUpdateFileContents,
-    });
-
-    setElements(rendered);
-    setPreviewKey(Date.now());
-    localStorage.setItem(`activity-${activityId}`, sourceText);
-
-    // ✅ only auto-switch to errors on MANUAL compile
-    if (reason === 'manual' && issues.some(i => i.severity === 'error')) {
-      setRightPaneMode('errors');
-    }
-  };
   // Auto-compile on change
   useEffect(() => {
     if (autoCompileEnabled && rawText.trim()) {
-      handleCompile();
+      handleCompile(rawText, 'auto');
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawText, autoCompileEnabled]);
+
+  // "Check" button (manual parse + show errors pane)
+  const handleCheck = () => {
+    handleCompile(rawText, 'manual');
+    setRightPaneMode('errors');
+  };
 
   // Copy handler
   const handleCopy = async () => {
@@ -186,30 +298,33 @@ export default function ActivityEditor() {
   const handleRecover = async () => {
     if (!activity?.sheet_url) return;
 
-    const confirmed = window.confirm("This will discard all unsaved changes and recover the original text from the source document. Are you sure?");
+    const confirmed = window.confirm(
+      'This will discard all unsaved changes and recover the original text from the source document. Are you sure?'
+    );
     if (!confirmed) return;
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activity.sheet_url)}`);
+      const res = await fetch(
+        `${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activity.sheet_url)}`
+      );
       const { lines } = await res.json();
       const recoveredText = lines.join('\n');
       setRawText(recoveredText);
       localStorage.setItem(`activity-${activityId}`, recoveredText);
-      handleCompile(recoveredText);
+      handleCompile(recoveredText, 'manual');
     } catch (err) {
-      console.error("Failed to recover original text", err);
+      console.error('Failed to recover original text', err);
     }
   };
 
   const runAutofix = async () => {
     setAutofixError('');
 
-    // Always parse locally first; if no issues, you can still allow it, but I'd block by default.
     const parsed = parseSheetToBlocks(rawText.split('\n'), { returnIssues: true });
     const issuesNow = parsed?.issues ?? [];
 
     if (!issuesNow.length) {
-      setAutofixError("No parser issues found — nothing to auto-correct.");
+      setAutofixError('No parser issues found — nothing to auto-correct.');
       setAutofixOpen(true);
       return;
     }
@@ -219,14 +334,10 @@ export default function ActivityEditor() {
     setAutofixOpen(true);
 
     try {
-      // Load markup spec from public
       const specRes = await fetch('/MarkUp.md', { cache: 'no-store' });
-      if (!specRes.ok) {
-        throw new Error(`Failed to load MarkUp.md (${specRes.status})`);
-      }
+      if (!specRes.ok) throw new Error(`Failed to load MarkUp.md (${specRes.status})`);
       const markupSpec = await specRes.text();
 
-      // Call server (server only does AI; parser remains frontend authority)
       const res = await fetch(`${API_BASE_URL}/api/ai/code/repair-markup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -234,10 +345,7 @@ export default function ActivityEditor() {
           docText: rawText,
           issues: issuesNow,
           markupSpec,
-          options: {
-            // if you want to pass mode or other hints
-            mode: 'authoring',
-          },
+          options: { mode: 'authoring' },
         }),
       });
 
@@ -248,16 +356,12 @@ export default function ActivityEditor() {
 
       const data = await res.json();
       const proposed = data.proposedDocText || data.proposed || '';
-
-      if (!proposed.trim()) {
-        throw new Error('AI returned an empty proposed document.');
-      }
+      if (!proposed.trim()) throw new Error('Repair returned an empty proposed document.');
 
       setAutofixProposedText(proposed);
       setAutofixSummary(Array.isArray(data.summary) ? data.summary : []);
       setAutofixWarnings(Array.isArray(data.warnings) ? data.warnings : []);
 
-      // Re-parse proposed locally
       const parsed2 = parseSheetToBlocks(proposed.split('\n'), { returnIssues: true });
       const blocks2 = parsed2?.blocks ?? parsed2;
       const issuesAfter = parsed2?.issues ?? [];
@@ -265,12 +369,9 @@ export default function ActivityEditor() {
       setAutofixBlocks(blocks2);
       setAutofixIssuesAfter(issuesAfter);
 
-      // Build fileContents for preview (same as compile logic)
       const files2 = {};
       for (const b of blocks2) {
-        if (b.type === 'file' && b.filename) {
-          files2[b.filename] = b.content ?? '';
-        }
+        if (b.type === 'file' && b.filename) files2[b.filename] = b.content ?? '';
       }
 
       const rendered2 = renderBlocks(blocks2, {
@@ -294,10 +395,8 @@ export default function ActivityEditor() {
     setRawText(autofixProposedText);
     localStorage.setItem(`activity-${activityId}`, autofixProposedText);
 
-    // compile it immediately (manual reason so it can flip to errors if still bad)
     handleCompile(autofixProposedText, 'manual');
 
-    // close modal + clear proposal
     setAutofixOpen(false);
     setAutofixProposedText('');
     setAutofixSummary([]);
@@ -309,7 +408,6 @@ export default function ActivityEditor() {
   };
 
   const closeAutofix = () => {
-    // We never mutated rawText unless Accept, so closing is safe.
     setAutofixOpen(false);
   };
 
@@ -368,21 +466,54 @@ export default function ActivityEditor() {
             id="auto-compile-switch"
             label="Auto Compile"
             checked={autoCompileEnabled}
-            onChange={() => setAutoCompileEnabled(prev => !prev)}
+            onChange={() => setAutoCompileEnabled((prev) => !prev)}
             className="ms-3"
           />
-          <Button variant="success" onClick={runAutofix} className="me-2">
+
+          <Button
+            variant="outline-secondary"
+            className="me-2"
+            onClick={handleCheck}
+            disabled={busy}
+          >
+            Check
+          </Button>
+
+          <Button
+            variant="primary"
+            className="me-2"
+            onClick={runAutofix}
+            disabled={busy}
+          >
             Auto Correct
           </Button>
-          <Button variant="primary" onClick={() => handleCompile(rawText, 'manual')}>Compile</Button>          <Button variant="secondary" onClick={handleCopy}>Copy</Button>{' '}
-          <Button variant="warning" onClick={handleRecover}>Reread</Button>
+
+          <Button
+            variant="secondary"
+            className="me-2"
+            onClick={handleCopy}
+            disabled={busy}
+          >
+            Copy
+          </Button>
+
+          <Button
+            variant="warning"
+            className="me-2"
+            onClick={handleRecover}
+            disabled={busy}
+          >
+            Reread
+          </Button>
+
           {activity?.sheet_url && (
             <Button
               variant="outline-primary"
               onClick={() => {
                 const url = toGoogleDocEditUrl(activity.sheet_url);
-                if (url) window.open(url, "_blank", "noopener,noreferrer");
+                if (url) window.open(url, '_blank', 'noopener,noreferrer');
               }}
+              disabled={busy}
             >
               Open Doc
             </Button>
@@ -402,13 +533,12 @@ export default function ActivityEditor() {
               const textarea = e.target;
               const scrollTop = textarea.scrollTop;
               setRawText(textarea.value);
-              setTimeout(() => {
-                textarea.scrollTop = scrollTop;
-              }, 0);
+              setTimeout(() => { textarea.scrollTop = scrollTop; }, 0);
             }}
             spellCheck={false}
           />
         </Col>
+
         <Col md={6} className="scrollable-pane" key={previewKey}>
           <div className="right-pane-header d-flex justify-content-between align-items-center">
             <div className="text-muted small">
@@ -421,7 +551,7 @@ export default function ActivityEditor() {
               id="preview-errors-switch"
               label={rightPaneMode === 'preview' ? 'Preview' : 'Errors'}
               checked={rightPaneMode === 'errors'}
-              onChange={() => setRightPaneMode(m => (m === 'preview' ? 'errors' : 'preview'))}
+              onChange={() => setRightPaneMode((m) => (m === 'preview' ? 'errors' : 'preview'))}
             />
           </div>
 
@@ -446,7 +576,7 @@ export default function ActivityEditor() {
                       className="py-2 mb-2"
                     >
                       <div className="d-flex justify-content-between">
-                        <strong>{iss.severity.toUpperCase()}</strong>
+                        <strong>{String(iss.severity || '').toUpperCase()}</strong>
                         <span className="text-muted">
                           {typeof iss.line === 'number' ? `Line ${iss.line}` : ''}
                         </span>
@@ -465,6 +595,7 @@ export default function ActivityEditor() {
           )}
         </Col>
       </Row>
+
       <Modal
         show={autofixOpen}
         onHide={closeAutofix}
@@ -511,7 +642,10 @@ export default function ActivityEditor() {
               ) : null}
 
               {autofixIssuesAfter?.length ? (
-                <Alert variant={autofixIssuesAfter.some(x => x.severity === 'error') ? 'danger' : 'warning'} className="mt-2">
+                <Alert
+                  variant={autofixIssuesAfter.some((x) => x.severity === 'error') ? 'danger' : 'warning'}
+                  className="mt-2"
+                >
                   Remaining issues after fix: <strong>{autofixIssuesAfter.length}</strong>
                 </Alert>
               ) : (
@@ -562,7 +696,7 @@ export default function ActivityEditor() {
                           className="py-2 mb-2"
                         >
                           <div className="d-flex justify-content-between">
-                            <strong>{iss.severity.toUpperCase()}</strong>
+                            <strong>{String(iss.severity || '').toUpperCase()}</strong>
                             <span className="text-muted">
                               {typeof iss.line === 'number' ? `Line ${iss.line}` : ''}
                             </span>
