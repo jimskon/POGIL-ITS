@@ -14,6 +14,33 @@ This guide assumes:
 - Backend runs locally on port 4000
 
 ---
+# 0. Domain Name and DNS Setup
+
+Before deploying the server, obtain a domain name and configure DNS so that it points to your server.
+
+Example domain:
+
+```
+csits.kenyon.edu
+```
+
+Create a DNS record:
+
+Type: A  
+Name: csits.kenyon.edu  
+Value: <your server public IP>
+
+Verify DNS resolution:
+
+```bash
+dig +short csits.kenyon.edu
+```
+
+The command should return the public IP of your server.
+
+Do not continue until DNS resolves correctly.
+
+---
 
 # 1. Remove Apache (if installed)
 
@@ -46,7 +73,161 @@ Verify:
 node -v
 npm -v
 ```
+---
+# 2.5 Install MariaDB
 
+Install the MariaDB database server.
+
+```bash
+sudo apt update
+sudo apt install -y mariadb-server mariadb-client
+```
+
+Enable and start the service:
+
+```bash
+sudo systemctl enable mariadb
+sudo systemctl start mariadb
+```
+
+Verify:
+
+```bash
+sudo systemctl status mariadb
+```
+
+---
+
+# 2.6 Secure MariaDB Installation
+
+Run the security configuration script:
+
+```bash
+sudo mariadb-secure-installation
+```
+
+Recommended responses:
+
+Set root password: **Yes**  
+Remove anonymous users: **Yes**  
+Disallow root login remotely: **Yes**  
+Remove test database: **Yes**  
+Reload privilege tables: **Yes**
+
+---
+
+# 2.7 Create POGIL-ITS Database and User
+
+Login to MariaDB as root:
+
+```bash
+sudo mariadb
+```
+
+Create the database:
+
+```sql
+CREATE DATABASE pogil_db
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+```
+
+Create an application user:
+
+```sql
+CREATE USER 'pogil_user'@'localhost'
+IDENTIFIED BY 'STRONG_PASSWORD_HERE';
+```
+
+Grant privileges:
+
+```sql
+GRANT ALL PRIVILEGES ON pogil_db.* 
+TO 'pogil_user'@'localhost';
+
+FLUSH PRIVILEGES;
+```
+
+Verify:
+
+```sql
+SHOW DATABASES;
+SELECT user,host FROM mysql.user;
+```
+
+Exit:
+
+```sql
+exit;
+```
+
+---
+
+# 2.8 Import the Database Schema
+
+Import the schema used by the application.
+
+Example:
+
+```bash
+mariadb -u pogil_user -p pogil_db < server/sql/schema.sql
+```
+
+If you exported the schema from an existing system:
+
+```bash
+mariadb -u pogil_user -p pogil_db < schema.sql
+```
+
+Verify tables:
+
+```bash
+mariadb -u pogil_user -p pogil_db
+```
+
+Then:
+
+```sql
+SHOW TABLES;
+```
+
+---
+
+# 2.9 Configure Firewall (UFW)
+
+Enable the firewall and allow only required ports.
+
+Allow SSH:
+
+```bash
+sudo ufw allow OpenSSH
+```
+
+Allow HTTP and HTTPS:
+
+```bash
+sudo ufw allow 'Nginx Full'
+```
+
+Enable firewall:
+
+```bash
+sudo ufw enable
+```
+
+Check status:
+
+```bash
+sudo ufw status
+```
+
+Only the following ports should be open:
+
+- 22 (SSH)
+- 80 (HTTP)
+- 443 (HTTPS)
+
+The Node backend on port 4000 remains private.
 ---
 
 # 3. Clone Repository
