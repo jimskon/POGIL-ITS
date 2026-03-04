@@ -298,6 +298,95 @@ This keeps API calls same-origin behind nginx.
 
 ---
 
+---
+
+# 6. Install PM2 (Node Process Manager)
+
+PM2 keeps the backend server running in the background and automatically restarts it if it crashes or the server reboots.
+
+Install PM2 globally using npm:
+
+```bash
+sudo npm install -g pm2
+```
+
+Verify installation:
+
+```bash
+pm2 -v
+```
+
+---
+
+# 7. Start Backend with PM2
+
+From the project root directory:
+
+```bash
+PORT=4000 NODE_ENV=production pm2 start server/index.js --name pogil-its
+```
+
+Check status:
+
+```bash
+pm2 status
+```
+
+View logs:
+
+```bash
+pm2 logs pogil-its
+```
+
+---
+
+# 7.1 Configure PM2 to Start on Boot
+
+Save the current process list:
+
+```bash
+pm2 save
+```
+
+Enable PM2 startup:
+
+```bash
+pm2 startup
+```
+
+PM2 will print a command that must be run with `sudo`.  
+Run the command exactly as shown.
+
+Example:
+
+```bash
+sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u ubuntu --hp /home/ubuntu
+```
+
+After running the command, save again:
+
+```bash
+pm2 save
+```
+
+This ensures the POGIL-ITS backend automatically starts when the server reboots.
+
+---
+
+# 7.2 Restarting the Backend After Updates
+
+After updating the code or rebuilding the frontend:
+
+```bash
+pm2 restart pogil-its
+```
+
+To reload without downtime:
+
+```bash
+pm2 reload pogil-its
+```
+
 # 6. Start Backend with PM2
 
 From project root:
