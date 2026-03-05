@@ -27,6 +27,8 @@ export default function ActivityEditor() {
   // ---- Auto-fix state ----
   const docBeforeAutofixRef = useRef('');
 
+  const autoTimerRef = useRef(null);
+
   const [autofixOpen, setAutofixOpen] = useState(false);
   const [autofixBusy, setAutofixBusy] = useState(false);
   const [autofixError, setAutofixError] = useState('');
@@ -209,10 +211,15 @@ export default function ActivityEditor() {
         message: braceIssue.message,
         context: braceIssue.context,
       }]);
-      setElements([]);
-      setPreviewKey(Date.now());
+
+      // DO NOT blank the preview; keep last good render so it doesn't look dead.
+      // If you prefer blanking, fine — but then ALWAYS switch to errors.
+      // setElements([]);
+
       localStorage.setItem(`activity-${activityId}`, sourceText);
-      if (reason === 'manual') setRightPaneMode('errors');
+
+      // Always show errors (auto or manual) when we *know* it's broken
+      setRightPaneMode('errors');
       return;
     }
 
@@ -289,8 +296,7 @@ export default function ActivityEditor() {
 
         const cached = localStorage.getItem(`activity-${activityId}`);
         if (cached) {
-          setRawText(cached);
-          setTimeout(() => handleCompile(cached), 0);
+          setRawText(cached); // auto compile will handle it
         } else {
           const docRes = await fetch(
             `${API_BASE_URL}/api/activities/preview-doc?docUrl=${encodeURIComponent(activityData.sheet_url)}`
@@ -312,9 +318,15 @@ export default function ActivityEditor() {
 
   // Auto-compile on change
   useEffect(() => {
-    if (autoCompileEnabled && rawText.trim()) {
+    if (!autoCompileEnabled) return;
+    if (!rawText.trim()) return;
+
+    clearTimeout(autoTimerRef.current);
+    autoTimerRef.current = setTimeout(() => {
       handleCompile(rawText, 'auto');
-    }
+    }, 200);
+
+    return () => clearTimeout(autoTimerRef.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawText, autoCompileEnabled]);
 
@@ -488,19 +500,19 @@ export default function ActivityEditor() {
           border: 1px solid #ccc;
           border-radius: 4px;
         }
-        .code-editor {
-          height: 90vh;
-          width: 100%;
-          border: none;
-          resize: none;
-          overflow-y: auto;
-          font-family: monospace;
-          font-size: 0.9rem;
-          background: white;
-          padding: 0.5rem;
-          box-sizing: border-box;
-          line-height: 1.4;
-        }
+.code-editor {
+  height: 100%;
+  width: 100%;
+  border: none;
+  resize: none;
+  overflow: auto;
+  font-family: monospace;
+  font-size: 0.9rem;
+  background: white;
+  padding: 0.5rem;
+  box-sizing: border-box;
+  line-height: 1.4;
+}
         .right-pane-header {
           position: sticky;
           top: 0;
@@ -537,19 +549,6 @@ export default function ActivityEditor() {
   height: 1.4em; /* matches textarea line-height */
 }
 
-.code-editor {
-  height: 100%;
-  width: 100%;
-  border: none;
-  resize: none;
-  overflow: auto;
-  font-family: monospace;
-  font-size: 0.9rem;
-  background: white;
-  padding: 0.5rem;
-  box-sizing: border-box;
-  line-height: 1.4;
-}
       `}</style>
 
       <div className="editor-header d-flex justify-content-between align-items-center mb-2">
@@ -644,7 +643,7 @@ export default function ActivityEditor() {
         </Col>
 
         {/* RIGHT: preview/errors */}
-        <Col md={6} className="scrollable-pane" key={previewKey}>
+        <Col md={6} className="scrollable-pane">
           <div className="right-pane-header d-flex justify-content-between align-items-center">
             <div className="text-muted small">
               {rightPaneMode === 'preview' ? 'Preview' : 'Parser issues'}
@@ -654,7 +653,7 @@ export default function ActivityEditor() {
             <Form.Check
               type="switch"
               id="preview-errors-switch"
-              label={rightPaneMode === 'preview' ? 'Preview' : 'Errors'}
+              label={rightPaneMode === 'preview' ? 'Showing Preview' : 'Showing Errors'}
               checked={rightPaneMode === 'errors'}
               onChange={() => setRightPaneMode((m) => (m === 'preview' ? 'errors' : 'preview'))}
             />
