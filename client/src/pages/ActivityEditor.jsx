@@ -39,6 +39,11 @@ export default function ActivityEditor() {
   const [autofixElements, setAutofixElements] = useState([]);
   const [autofixIssuesAfter, setAutofixIssuesAfter] = useState([]);
 
+  const textareaRef = useRef(null);
+  const gutterRef = useRef(null);
+
+  const lineCount = Math.max(1, rawText.split('\n').length);
+
   const busy = autofixBusy;
 
   const handleUpdateFileContents = (updaterFn) => {
@@ -87,24 +92,21 @@ export default function ActivityEditor() {
     const isTagLine = (t) => /^\\[A-Za-z]+(?:\*?)\b/.test(t);
     const isBraceTag = (t) => /^\\[A-Za-z]+(?:\*?)\{/.test(t);
 
-    let pending = null; // { line, tag }
+    let pending = null; // { line, tag, depth }
 
-    const braceBalanceFromFirstOpen = (t) => {
-      const idx = t.indexOf('{');
-      if (idx < 0) return 0;
-      const rest = t.slice(idx);
-      let bal = 0;
-      for (const ch of rest) {
-        if (ch === '{') bal++;
-        else if (ch === '}') bal--;
-        if (bal === 0) break;
+    const countBraces = (s) => {
+      let d = 0;
+      for (const ch of s) {
+        if (ch === '{') d++;
+        else if (ch === '}') d--;
       }
-      return bal; // >0 => missing }
+      return d;
     };
 
     for (let i = 0; i < lines.length; i++) {
       const lineNum = i + 1;
-      const t = lines[i].trim();
+      const raw = lines[i];
+      const t = raw.trim();
 
       startProt(t);
       if (isProtected()) {
@@ -112,21 +114,41 @@ export default function ActivityEditor() {
         continue;
       }
 
-      // new tag while previous \tag{ is still unclosed => report missing brace
-      if (pending && isTagLine(t)) {
-        return {
-          line: pending.line,
-          tag: pending.tag,
-          message: `Unclosed \\${pending.tag}{...} (missing "}") before next tag at line ${lineNum}.`,
-          context: lines[pending.line - 1] ?? '',
-        };
+      // If we are inside a pending \tag{... across lines, update depth using THIS line.
+      if (pending) {
+        pending.depth += countBraces(raw);
+
+        if (pending.depth <= 0) {
+          pending = null; // closed
+        } else {
+          // still open; if a NEW tag starts while still pending, that's an error
+          if (isTagLine(t)) {
+            return {
+              line: pending.line,
+              tag: pending.tag,
+              message: `Unclosed \\${pending.tag}{...} (missing "}") before next tag at line ${lineNum}.`,
+              context: lines[pending.line - 1] ?? '',
+            };
+          }
+        }
+
+        endProt(t);
+        continue;
       }
 
+      // Start pending if we see a \tag{ that does not close on the same line
       if (isBraceTag(t)) {
         const m = t.match(/^\\([A-Za-z]+(?:\*?))\{/);
         const tag = m ? m[1] : 'tag';
-        const bal = braceBalanceFromFirstOpen(t);
-        pending = bal > 0 ? { line: lineNum, tag } : null;
+
+        // depth from the FIRST '{' onward on this line
+        const idx = raw.indexOf('{');
+        const rest = idx >= 0 ? raw.slice(idx) : raw;
+        const depth = countBraces(rest);
+
+        if (depth > 0) {
+          pending = { line: lineNum, tag, depth };
+        }
       }
 
       endProt(t);
@@ -143,7 +165,11 @@ export default function ActivityEditor() {
 
     return null;
   }
-
+  useEffect(() => {
+    if (gutterRef.current && textareaRef.current) {
+      gutterRef.current.scrollTop = textareaRef.current.scrollTop;
+    }
+  }, [rawText]);
   // Load Skulpt
   useEffect(() => {
     const loadScript = (src) =>
@@ -174,17 +200,15 @@ export default function ActivityEditor() {
   const handleCompile = (sourceText = rawText, reason = 'auto') => {
     compileReasonRef.current = reason;
 
-    // 0) brace sanity check first (prevents misleading "unclosed questiongroup")
+    // 0) brace sanity check first
     const braceIssue = findUnclosedTagBraces(sourceText);
     if (braceIssue) {
-      setParseIssues([
-        {
-          severity: 'error',
-          line: braceIssue.line,
-          message: braceIssue.message,
-          context: braceIssue.context,
-        },
-      ]);
+      setParseIssues([{
+        severity: 'error',
+        line: braceIssue.line,
+        message: braceIssue.message,
+        context: braceIssue.context,
+      }]);
       setElements([]);
       setPreviewKey(Date.now());
       localStorage.setItem(`activity-${activityId}`, sourceText);
@@ -192,36 +216,65 @@ export default function ActivityEditor() {
       return;
     }
 
-    const lines = sourceText.split('\n');
+    try {
+      const lines = sourceText.split('\n');
 
-    const parsed = parseSheetToBlocks(lines, { returnIssues: true });
-    const blocks = parsed?.blocks ?? parsed;
-    const issues = parsed?.issues ?? [];
+      const parsed = parseSheetToBlocks(lines, { returnIssues: true });
 
-    setParseIssues(issues);
+      // ✅ robust: blocks must be an array
+      const blocks =
+        Array.isArray(parsed?.blocks) ? parsed.blocks :
+          Array.isArray(parsed) ? parsed :
+            [];
 
-    // Extract files for Python execution
-    const files = {};
-    for (const block of blocks) {
-      if (block.type === 'file' && block.filename) {
-        files[block.filename] = block.content ?? '';
+      // ✅ robust: issues must be an array
+      const issues =
+        Array.isArray(parsed?.issues) ? parsed.issues :
+          [];
+
+      setParseIssues(issues);
+      if (reason === 'auto' && issues.some(i => i.severity === 'error')) {
+        setRightPaneMode('errors');
       }
-    }
-    setFileContents(files);
-    fileContentsRef.current = files;
+      // Extract files for Python execution
+      const files = {};
+      for (const block of blocks) {
+        if (block?.type === 'file' && block?.filename) {
+          files[block.filename] = block.content ?? '';
+        }
+      }
+      setFileContents(files);
+      fileContentsRef.current = files;
 
-    const rendered = renderBlocks(blocks, {
-      mode: 'preview',
-      editable: true,
-      fileContents: files,
-      setFileContents: handleUpdateFileContents,
-    });
+      const rendered = renderBlocks(blocks, {
+        mode: 'preview',
+        editable: true,
+        fileContents: files,
+        setFileContents: handleUpdateFileContents,
+      });
 
-    setElements(rendered);
-    setPreviewKey(Date.now());
-    localStorage.setItem(`activity-${activityId}`, sourceText);
+      setElements(rendered);
+      setPreviewKey(Date.now());
+      localStorage.setItem(`activity-${activityId}`, sourceText);
 
-    if (reason === 'manual' && issues.some((i) => i.severity === 'error')) {
+      // If manual and there are parser errors, show errors pane
+      if (reason === 'manual' && issues.some((i) => i.severity === 'error')) {
+        setRightPaneMode('errors');
+      }
+
+    } catch (e) {
+      console.error('[ActivityEditor] handleCompile failed:', e);
+
+      // ✅ show something even if it’s a runtime bug, not a parse issue
+      setElements([]);
+      setParseIssues([{
+        severity: 'error',
+        message: `Editor compile crashed: ${e?.message ?? String(e)}`,
+        context: '',
+      }]);
+      setPreviewKey(Date.now());
+
+      // I’d flip to errors even on auto; otherwise it looks “blank and dead”
       setRightPaneMode('errors');
     }
   };
@@ -456,6 +509,47 @@ export default function ActivityEditor() {
           padding: 0.25rem 0.25rem 0.5rem 0.25rem;
           border-bottom: 1px solid #ddd;
         }
+          .editor-wrap {
+  display: flex;
+  height: 90vh;
+  width: 100%;
+  background: white;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  overflow: hidden;
+}
+
+.line-gutter {
+  user-select: none;
+  flex: 0 0 auto;
+  padding: 0.5rem 0.5rem;
+  background: #f3f3f3;
+  border-right: 1px solid #ddd;
+  color: #666;
+  font-family: monospace;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  text-align: right;
+  overflow: hidden;
+}
+
+.line-gutter div {
+  height: 1.4em; /* matches textarea line-height */
+}
+
+.code-editor {
+  height: 100%;
+  width: 100%;
+  border: none;
+  resize: none;
+  overflow: auto;
+  font-family: monospace;
+  font-size: 0.9rem;
+  background: white;
+  padding: 0.5rem;
+  box-sizing: border-box;
+  line-height: 1.4;
+}
       `}</style>
 
       <div className="editor-header d-flex justify-content-between align-items-center mb-2">
@@ -524,21 +618,32 @@ export default function ActivityEditor() {
       {copySuccess && <Alert variant="info" className="py-1">{copySuccess}</Alert>}
 
       <Row className="editor-body">
+        {/* LEFT: editor + gutter */}
         <Col md={6} className="scrollable-pane">
-          <Form.Control
-            as="textarea"
-            className="code-editor"
-            value={rawText}
-            onChange={(e) => {
-              const textarea = e.target;
-              const scrollTop = textarea.scrollTop;
-              setRawText(textarea.value);
-              setTimeout(() => { textarea.scrollTop = scrollTop; }, 0);
-            }}
-            spellCheck={false}
-          />
+          <div className="editor-wrap">
+            <div className="line-gutter" ref={gutterRef} aria-hidden="true">
+              {Array.from({ length: lineCount }, (_, i) => (
+                <div key={i}>{i + 1}</div>
+              ))}
+            </div>
+
+            <Form.Control
+              as="textarea"
+              className="code-editor"
+              value={rawText}
+              ref={textareaRef}
+              onScroll={() => {
+                if (gutterRef.current && textareaRef.current) {
+                  gutterRef.current.scrollTop = textareaRef.current.scrollTop;
+                }
+              }}
+              onChange={(e) => setRawText(e.target.value)}
+              spellCheck={false}
+            />
+          </div>
         </Col>
 
+        {/* RIGHT: preview/errors */}
         <Col md={6} className="scrollable-pane" key={previewKey}>
           <div className="right-pane-header d-flex justify-content-between align-items-center">
             <div className="text-muted small">
@@ -595,7 +700,6 @@ export default function ActivityEditor() {
           )}
         </Col>
       </Row>
-
       <Modal
         show={autofixOpen}
         onHide={closeAutofix}
