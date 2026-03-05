@@ -29,6 +29,8 @@ function RUNTRACE(tag, obj) {
 const DEBUG_FILES = false;
 const PAGE_TAG = 'RUN';
 
+let globalRetriesRequired = 0;
+
 
 // Map short role keys to full names
 const roleLabels = {
@@ -83,6 +85,50 @@ function dbg(label, obj) {
   } catch {
     console.log(`[RUNDBG] ${label}`, obj);
   }
+}
+
+function buildGroupSubmissionString({ groupNum, blocks, container, existingAnswers }) {
+  const parts = [];
+
+  for (const block of (blocks || [])) {
+    if (block?.type !== 'question') continue;
+
+    const qid = `${block.groupId}${block.id}`;
+
+    const textEl = container?.querySelector(`textarea[data-response-key="${qid}"]`);
+    const textVal =
+      String(textEl?.value ?? existingAnswers?.[qid]?.response ?? '').trim();
+
+    const codeTAs = Array.from(
+      container?.querySelectorAll(`textarea[data-response-key^="${qid}code"]`) || []
+    ).sort((a, b) => {
+      const ka = a.getAttribute('data-response-key') || '';
+      const kb = b.getAttribute('data-response-key') || '';
+      return ka.localeCompare(kb);
+    });
+
+    const codeVals = codeTAs.map((ta) => [
+      ta.getAttribute('data-response-key'),
+      String(ta.value ?? '').trim(),
+    ]);
+
+    const tableEls = Array.from(
+      container?.querySelectorAll(`[data-response-key^="${qid}table"]`) || []
+    ).sort((a, b) => {
+      const ka = a.getAttribute('data-response-key') || '';
+      const kb = b.getAttribute('data-response-key') || '';
+      return ka.localeCompare(kb);
+    });
+
+    const tableVals = tableEls.map((el) => [
+      el.getAttribute('data-response-key'),
+      String(el.value ?? '').trim(),
+    ]);
+
+    parts.push([qid, { textVal, codeVals, tableVals }]);
+  }
+
+  return JSON.stringify({ groupNum, parts });
 }
 
 function getQuestionText(block, qid) {
@@ -321,6 +367,8 @@ export default function RunActivityPage({
 
   // per-group “ignore AI, let me continue” overrides
   const [overrideGroups, setOverrideGroups] = useState({});
+  const [canBypassGroups, setCanBypassGroups] = useState({});
+  // { [groupIndex]: true }
 
   const [testLockState, setTestLockState] = useState({
     lockedBefore: false,
@@ -656,8 +704,9 @@ export default function RunActivityPage({
     if (isTestMode) return;
     const interval = setInterval(async () => {
       try {
-        const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`);
-        const data = await res.json();
+        const res = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`, {
+          credentials: 'include',
+        }); const data = await res.json();
 
         const nextId = Number(data?.activeStudentId);
 
@@ -1015,8 +1064,9 @@ export default function RunActivityPage({
     console.log('[RUNDBG] loadActivity ENTER', { t: Date.now() });
 
     try {
-      const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
-      const instanceData = await instanceRes.json();
+      const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`, {
+        credentials: 'include',
+      }); const instanceData = await instanceRes.json();
 
       console.log('[RUNDBG] loadActivity fetched completed_groups', {
         completed_groups: instanceData?.completed_groups,
@@ -1028,18 +1078,28 @@ export default function RunActivityPage({
       let effective = instanceData;
 
       if (!effective.total_groups) {
-        await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/refresh-groups`);
-        const updatedRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`);
-        const updatedData = await updatedRes.json();
-
-        console.log('[RUNDBG] loadActivity after refresh-groups', {
-          completed_groups: updatedData?.completed_groups,
-          total_groups: updatedData?.total_groups,
+        await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/refresh-groups`, {
+          credentials: 'include',
         });
+
+        const updatedRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`, {
+          credentials: 'include',
+        });
+        const updatedData = await updatedRes.json();
 
         setActivity(updatedData);
         effective = updatedData;
       }
+
+      // ✅ compute retries_required from FINAL effective
+      const rr =
+        Number(effective?.retries_required ?? effective?.retriesRequired ?? 0) || 0;
+
+      globalRetriesRequired = rr;
+      console.log('[RUN] retries_required from instance (FINAL effective):', rr, {
+        retries_required: effective?.retries_required,
+        retriesRequired: effective?.retriesRequired,
+      });
 
       const activeRes = await fetch(
         `${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`,
@@ -1050,9 +1110,9 @@ export default function RunActivityPage({
       const activeData = await activeRes.json();
       setActiveStudentId(activeData.activeStudentId);
 
-      const groupRes = await fetch(
-        `${API_BASE_URL}/api/groups/instance/${instanceId}`
-      );
+      const groupRes = await fetch(`${API_BASE_URL}/api/groups/instance/${instanceId}`, {
+        credentials: 'include',
+      });
       const groupData = await groupRes.json();
       let userGroup = null;
       if (user?.id) {
@@ -1080,9 +1140,9 @@ export default function RunActivityPage({
         }
       }
 
-      const answersRes = await fetch(
-        `${API_BASE_URL}/api/activity-instances/${instanceId}/responses`
-      );
+      const answersRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}/responses`, {
+        credentials: 'include',
+      });
       const answersData = await answersRes.json();
 
       setExistingAnswers((prev) => {
@@ -1297,7 +1357,13 @@ export default function RunActivityPage({
   async function evaluateResponseWithAI(
     questionBlock,
     studentAnswer,
-    { forceFollowup = false } = {}
+    {
+      forceFollowup = false,
+      groupNum,                 // REQUIRED: runtime group number (completed_groups+1)
+      retriesRequired = 0,      // OPTIONAL: global retry count
+      submissionString = "",    // REQUIRED: stable per-click fingerprint
+      answeredByUserId,         // OPTIONAL: user.id
+    } = {}
   ) {
     // ✅ TEST MODE: no AI feedback at all
     if (isTestMode) return { accepted: true, feedback: null, skipped: true };
@@ -1324,6 +1390,9 @@ export default function RunActivityPage({
       .filter(Boolean)
       .join('\n\n');
 
+    const instanceIdNum = Number(instanceId);          // from useParams
+
+
     const body = {
       questionText: qText,
       studentAnswer,
@@ -1337,6 +1406,13 @@ export default function RunActivityPage({
       },
       guidance: activity?.aicodeguidance || '',
       codeContext,
+
+      // ✅ retry gate inputs
+      instanceId: instanceIdNum,
+      groupNum: Number(groupNum),
+      answeredByUserId: Number(answeredByUserId ?? user?.id),
+      retriesRequired: Number(retriesRequired) || 0,
+      submissionString: String(submissionString || ""),
     };
 
     try {
@@ -1375,10 +1451,22 @@ export default function RunActivityPage({
       }
 
       const accepted = data?.accepted !== false; // default true
+
       const feedback =
         typeof data?.feedback === 'string' && data.feedback.trim()
           ? data.feedback.trim()
           : null;
+
+      // ✅ NEW: retry gate outputs (all optional)
+      const canContinue = data?.canContinue === true;
+
+      const retryCount = Number.isFinite(Number(data?.retryCount))
+        ? Number(data.retryCount)
+        : null;
+
+      const retriesRequiredOut = Number.isFinite(Number(data?.retriesRequired))
+        ? Number(data.retriesRequired)
+        : null;
 
       console.log('[EVAL RECV response normalized]', {
         qid,
@@ -1386,11 +1474,22 @@ export default function RunActivityPage({
         ok: res.ok,
         ms: Math.round(performance.now() - t0),
         accepted,
+        canContinue,
+        retryCount,
+        retriesRequired: retriesRequiredOut,
         feedbackLen: (feedback || '').length,
       });
 
       // ✅ IMPORTANT: this function MUST NOT write to `answers` here.
-      return { accepted, feedback, skipped: false };
+      return {
+        accepted,
+        feedback,
+        canContinue,
+        retryCount,
+        retriesRequired: retriesRequiredOut,
+        skipped: false,
+      };
+
     } catch (err) {
       console.error('[EVAL ERROR response]', {
         qid,
@@ -1398,11 +1497,17 @@ export default function RunActivityPage({
         msg: err?.message,
       });
 
-      // For now you’re choosing to NOT deadlock on AI failure:
-      return { accepted: true, feedback: '(AI unavailable; continuing)', skipped: false };
+      // Policy: don't deadlock on AI failure
+      return {
+        accepted: true,
+        feedback: '(AI unavailable; continuing)',
+        canContinue: false,
+        retryCount: null,
+        retriesRequired: null,
+        skipped: false,
+      };
     }
-  }
-
+  } // <-- closes evaluateResponseWithAI
 
 
   function buildMarkdownTableFromBlock(block, container) {
@@ -1651,9 +1756,12 @@ export default function RunActivityPage({
 
 
   async function handleSubmit(forceOverride = false) {
+    let groupNum;
+    let retriesRequired = Number(globalRetriesRequired || 0);
     if (isSubmitting) return;
     setIsSubmitting(true);
 
+    let groupSubmissionString = null;
     let container = null;
     let blocks = null;
     function clearCodeFeedbackForQid(qid, codeCells) {
@@ -1715,7 +1823,34 @@ export default function RunActivityPage({
       }
 
       const currentGroup = groups[currentGroupIndex];
+      const attemptParts = [];
+      // ✅ backend groupNum must be derived from instance progress (NOT block.groupId)
+      const completedCount = Number(activity?.completed_groups ?? 0);
+      groupNum = completedCount + 1; // ✅ 1-based, ALWAYS
+
+      // ✅ retriesRequired for this submit (global or per-group)
+      // If you intend global, set it once on activity load.
+      // For now, pull it from currentGroup intro if present.
+      //const retriesRequired =
+      //  Number(currentGroup?.intro?.retriesRequired ?? activity?.retriesRequired ?? 0) || 0;
+
+      // ✅ Create a stable "attempt fingerprint" for THIS submit.
+      // It MUST be identical for every AI request triggered by this button press.
+
       blocks = [currentGroup.intro, ...currentGroup.content];
+
+      groupSubmissionString = buildGroupSubmissionString({
+        groupNum,
+        blocks,
+        container,
+        existingAnswers,
+      });
+      console.log('[RETRY_FINGERPRINT]', {
+        groupNum,
+        retriesRequired,
+        len: groupSubmissionString.length,
+      });
+
       dbg('handleSubmit blocks', {
         blocksLen: blocks?.length,
         qids: (blocks || [])
@@ -1935,11 +2070,20 @@ export default function RunActivityPage({
           .map((c) => c.code || '')
           .join('\n\n')
           .trim();*/
-
         // ✅ AI should evaluate ONLY the most recent code block (last one)
         const lastCell = codeCells[codeCells.length - 1];
         const studentCode = String(lastCell?.code ?? '').trim();
 
+        const lang =
+          pickLangForBlock(block, studentCode) ||
+          detectLanguageFromCode(studentCode) ||
+          'python';
+        attemptParts.push({
+          qid,
+          type: 'code',
+          lang,
+          v: studentCode, // you said eval only the last cell — fine
+        });
 
         if (!studentCode) {
           const msg =
@@ -1951,9 +2095,6 @@ export default function RunActivityPage({
           continue;
         }
 
-        const lang =
-          detectLanguageFromCode(studentCode) ||
-          pickLangForBlock(block, studentCode);
 
         try {
           console.log('[EVAL1] BEFORE FETCH', {
@@ -1979,6 +2120,11 @@ export default function RunActivityPage({
 
             // activity-level policy only
             guidance: activity?.aicodeguidance || '',
+            instanceId: Number(instanceId),
+            groupNum,
+            answeredByUserId: Number(user?.id),
+            retriesRequired,
+            submissionString: groupSubmissionString,
           };
           const t0 = performance.now();
           console.log('[EVAL1] FETCH start', {
@@ -2230,6 +2376,11 @@ export default function RunActivityPage({
 
       // Determine what gets evaluated as the "answer"
       let aiInput = baseAnswer;
+      attemptParts.push({
+        qid,
+        type: 'text',
+        v: aiInput, // includes table markdown snapshot if used
+      });
       if (block.hasTableResponse && tableHasInput) {
         aiInput = tableMarkdown;
       }
@@ -2291,7 +2442,16 @@ export default function RunActivityPage({
             .filter(k => k.toLowerCase().includes(String(qid).toLowerCase()))
             .slice(0, 20),
         });
-        const ai = await evaluateResponseWithAI(block, aiInput);
+        const ai = await evaluateResponseWithAI(block, aiInput, {
+          submissionString: groupSubmissionString,
+          groupNum,                 // runtime group number you already computed
+          retriesRequired,          // global retries (3)
+          answeredByUserId: user.id,
+        });
+        // If backend says retries threshold reached for this group, enable bypass button
+        if (ai?.canContinue === true) {
+          setCanBypassGroups((prev) => ({ ...prev, [currentGroupIndex]: true }));
+        }
 
         // ✅ Default accept unless AI explicitly rejects
         accepted = ai.accepted !== false;
@@ -2339,6 +2499,7 @@ export default function RunActivityPage({
     } // END for each block
 
 
+
     // ---- completion logic ----
     const qBlocks = blocks.filter((b) => b.type === 'question');
 
@@ -2356,7 +2517,7 @@ export default function RunActivityPage({
 
     // ✅ Group number is derived only from instance progress
     const completedCount = Number(activity?.completed_groups ?? 0);
-    const groupNum = completedCount + 1; // 1-based for backend
+    //const groupNum = completedCount + 1; // 1-based for backend
 
     // ✅ Only acceptance matters: if any question isn't complete, group is inprogress
     const pendingByStatus = qBlocks.some((b) => {
@@ -2370,6 +2531,7 @@ export default function RunActivityPage({
 
     const overrideThisGroup =
       forceOverride || !!overrideGroups[currentGroupIndex];
+
 
     const computedState =
       overrideThisGroup || (!pendingBase && !pendingByStatus)
@@ -2584,8 +2746,6 @@ export default function RunActivityPage({
       });
       await loadActivity();
 
-
-      await loadActivity();
       alert('Regrade complete.');
     } catch (e) {
       console.error('[REGRD] error', e);
@@ -3066,7 +3226,7 @@ export default function RunActivityPage({
                   </Button>
 
                   {/* Let students bypass AI gating in learning mode */}
-                  {hasAIGuidanceForGroup && (
+                  {hasAIGuidanceForGroup && canBypassGroups[index] === true && (
                     <Button
                       variant="outline-secondary"
                       size="sm"

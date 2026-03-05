@@ -290,6 +290,8 @@ export function parseSheetToBlocks(lines, options = {}) {
   let groupNumber = 0;
   let questionLetterCode = 97;
   let responseId = 1;
+  let globalRetriesRequired = 0;          // ✅ sheet default
+  let currentGroupRetriesRequired = 0;    // ✅ current group effective value
 
   let currentQuestion = null;
   let currentField = 'prompt';
@@ -803,7 +805,16 @@ export function parseSheetToBlocks(lines, options = {}) {
       openGroupLine = lineNo;
 
       questionLetterCode = 97;
-      blocks.push({ type: 'groupIntro', groupId: groupNumber, content });
+
+      // ✅ reset per group
+      currentGroupRetriesRequired = globalRetriesRequired;
+
+      blocks.push({
+        type: 'groupIntro',
+        groupId: groupNumber,
+        content,
+        retriesRequired: currentGroupRetriesRequired, // ✅ include it
+      });
       continue;
     }
 
@@ -820,7 +831,38 @@ export function parseSheetToBlocks(lines, options = {}) {
       continue;
     }
 
+    if (trimmed.startsWith('\\retries')) {
+      const match = trimmed.match(/^\\retries\{(\d+)\}\s*$/);
 
+      if (!match) {
+        pushIssue('error', lineNo, 'Malformed \\retries{n}. Expected \\retries{<nonnegative integer>}.', line);
+        continue;
+      }
+
+      const n = Math.max(0, parseInt(match[1], 10) || 0);
+
+      // ✅ If not in a group, this is the sheet-global default
+      if (!inGroup) {
+        globalRetriesRequired = n;
+        // also update currentGroupRetriesRequired only if we haven't started a group yet (optional)
+        continue;
+      }
+
+      // ✅ If in a group but inside a question, ignore (keep your rule)
+      if (currentQuestion) {
+        pushIssue('warn', lineNo, '\\retries{n} found inside a \\question. Put it before questions. Ignoring.', line);
+        continue;
+      }
+
+      // ✅ Group-level override
+      currentGroupRetriesRequired = n;
+
+      // patch groupIntro so render/run can see it
+      const gi = [...blocks].reverse().find(b => b.type === 'groupIntro' && b.groupId === groupNumber);
+      if (gi) gi.retriesRequired = n;
+
+      continue;
+    }
     if (trimmed.startsWith('\\question{')) {
       if (!inGroup) {
         pushIssue('error', lineNo, '\\question found outside of any \\questiongroup. (All interactive content must be inside a group.)', line);
@@ -851,6 +893,7 @@ export function parseSheetToBlocks(lines, options = {}) {
         followups: [],
         codeBlocks: [],
         scores: {},
+        retriesRequired: currentGroupRetriesRequired,
       };
 
       openQuestionLine = lineNo;
@@ -1458,6 +1501,7 @@ export function renderBlocks(blocks, options = {}) {
         hasTextResponse: !!block.hasTextResponse,
         hasTableResponse: !!block.hasTableResponse,
         lang: 'python',
+        retriesRequired: block.retriesRequired ?? 0,
       };
 
       const tl = block.timeLimit ?? 50000;
@@ -1767,6 +1811,7 @@ export function renderBlocks(blocks, options = {}) {
               hasTextResponse: !!block.hasTextResponse,
               hasTableResponse: !!block.hasTableResponse,
               lang: 'python',
+              retriesRequired: block.retriesRequired ?? 0,
             };
 
             const tl = py.timeLimit ?? block.timeLimit ?? 50000;
@@ -1887,6 +1932,7 @@ export function renderBlocks(blocks, options = {}) {
                         hasTextResponse: !!block.hasTextResponse,
                         hasTableResponse: !!block.hasTableResponse,
                         lang: 'cpp',
+                        retriesRequired: block.retriesRequired ?? 0,
                       });
                   }}
                   timeLimit={cpp.timeLimit ?? 5000}
@@ -1949,6 +1995,7 @@ export function renderBlocks(blocks, options = {}) {
                 feedbackPrompt: stripHtml(block.feedback?.[0] || ''),
                 hasTextResponse: !!block.hasTextResponse,
                 hasTableResponse: !!block.hasTableResponse,
+                retriesRequired: block.retriesRequired ?? 0,
               };
 
               const guidance = textFeedbackShown?.[responseKey];

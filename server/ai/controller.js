@@ -2,6 +2,13 @@
 const OpenAI = require("openai");
 require("dotenv").config();
 
+const db = require("../db");
+const crypto = require("crypto");
+
+function sha256Hex(s) {
+  return crypto.createHash("sha256").update(String(s ?? ""), "utf8").digest("hex");
+}
+
 const { gradeTestQuestionHttp, gradeTestQuestion } = require("./grading");
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -95,13 +102,141 @@ function normalizeAIResult(obj) {
 }
 
 function sendAI(res, payload, status = 200) {
-  // Always enforce the contract at the boundary
   const accepted = payload?.accepted === true;
   const feedback =
     payload?.feedback == null ? null : String(payload.feedback).trim() || null;
-  return res.status(status).json({ accepted, feedback });
+
+  const canContinue = payload?.canContinue === true;
+
+  const retryCount =
+    Number.isFinite(Number(payload?.retryCount)) ? Number(payload.retryCount) : null;
+  const retriesRequired =
+    Number.isFinite(Number(payload?.retriesRequired)) ? Number(payload.retriesRequired) : null;
+
+  return res.status(status).json({ accepted, feedback, canContinue, retryCount, retriesRequired });
 }
 
+
+function retryKeys(groupNum) {
+  const g = Number(groupNum);
+  return {
+    maxKey: `Rmax:${g}`,
+    cntKey: `Rcnt:${g}`,
+    hashKey: `Rhash:${g}`,
+  };
+}
+
+async function upsertResp(conn, instanceId, qid, value, answeredByUserId) {
+  await conn.query(
+    `INSERT INTO responses (activity_instance_id, question_id, response_type, response, answered_by_user_id)
+     VALUES (?, ?, 'text', ?, ?)
+     ON DUPLICATE KEY UPDATE response = VALUES(response), updated_at = CURRENT_TIMESTAMP`,
+    [instanceId, qid, String(value ?? ""), answeredByUserId]
+  );
+}
+
+/**
+ * Group-level retry gate.
+ * - initializes max+count+hash on first rejected submit
+ * - increments count ONLY if submission hash changed
+ * - returns { canContinue: boolean, retryCount, retriesRequired }
+ */
+async function applyGroupRetryGate({
+  instanceId,
+  groupNum,
+  answeredByUserId,
+  retriesRequired,
+  accepted,
+  submissionString,
+}) {
+  console.log("[RETRIES]", retriesRequired, accepted, "hash:", sha256Hex(String(submissionString ?? "")));
+  const max = Number(retriesRequired) || 0;
+
+  // If no retry policy, never block progression
+  if (max <= 0) {
+    return { canContinue: true, retryCount: 0, retriesRequired: 0 };
+  }
+
+  // If accepted, always allow progression
+  if (accepted === true) {
+    return { canContinue: true, retryCount: 0, retriesRequired: max };
+  }
+
+  const s = String(submissionString ?? "").trim();
+
+  const { maxKey, cntKey, hashKey } = retryKeys(groupNum);
+
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [rows] = await conn.query(
+      `SELECT question_id, response
+       FROM responses
+       WHERE activity_instance_id = ?
+         AND question_id IN (?, ?, ?)`,
+      [instanceId, maxKey, cntKey, hashKey]
+    );
+
+    const map = new Map(rows.map(r => [String(r.question_id), r.response]));
+
+    const storedMax = Number(map.get(maxKey));
+    let retryCount = Number(map.get(cntKey));
+    let storedHash = String(map.get(hashKey) ?? "");
+
+    // initialize max/count if missing
+    if (!Number.isFinite(storedMax)) {
+      await upsertResp(conn, instanceId, maxKey, max, answeredByUserId);
+    }
+    if (!Number.isFinite(retryCount)) {
+      retryCount = 0;
+      await upsertResp(conn, instanceId, cntKey, retryCount, answeredByUserId);
+    }
+
+    // ✅ “valid try” gate #1: blank doesn't count (but we still return real retryCount)
+    if (!s) {
+      await conn.commit();
+      return {
+        canContinue: retryCount >= max,
+        retryCount,
+        retriesRequired: max,
+      };
+    }
+
+    const newHash = sha256Hex(s);
+
+    // ✅ baseline hash on first counted failure (no increment)
+    if (!storedHash) {
+      storedHash = newHash;
+      retryCount += 1;
+      await upsertResp(conn, instanceId, cntKey, retryCount, answeredByUserId);
+      await upsertResp(conn, instanceId, hashKey, storedHash, answeredByUserId);
+      await conn.commit();
+      return { canContinue: retryCount >= max, retryCount, retriesRequired: max };
+    }
+
+    // ✅ “valid try” gate #2: only count if changed since last counted try
+    if (newHash !== storedHash) {
+      retryCount += 1;
+      storedHash = newHash;
+      await upsertResp(conn, instanceId, cntKey, retryCount, answeredByUserId);
+      await upsertResp(conn, instanceId, hashKey, storedHash, answeredByUserId);
+    }
+
+    await conn.commit();
+
+    return {
+      canContinue: retryCount >= max,
+      retryCount,
+      retriesRequired: max,
+    };
+  } catch (e) {
+    try { await conn.rollback(); } catch { }
+    return { canContinue: false, retryCount: 0, retriesRequired: max };
+  } finally {
+    conn.release();
+  }
+}
 // ---------- Positive feedback toggles ----------
 // Activity-level default: Positive feedback ON.
 // Per-question override: put "No-Positive-feedback" anywhere in \followupprompt{...}
@@ -493,7 +628,24 @@ async function evaluateStudentResponse(req, res) {
       feedback = followupRaw;
     }
 
-    return sendAI(res, { accepted, feedback });
+    const { instanceId, groupNum, answeredByUserId, retriesRequired } = req.body || {};
+    console.log("[RETRY_IN]", {
+      instanceId,
+      groupNum,
+      answeredByUserId,
+      retriesRequired,
+      accepted,
+    });
+    const gate = await applyGroupRetryGate({
+      instanceId: Number(instanceId),
+      groupNum: Number(groupNum),
+      answeredByUserId: Number(answeredByUserId),
+      retriesRequired: Number(retriesRequired),
+      accepted,
+      submissionString: studentAnswer,
+    });
+
+    return sendAI(res, { accepted, feedback, ...gate });
 
   } catch (err) {
     console.error("❌ OpenAI evaluateStudentResponse failed:", err);
@@ -543,7 +695,17 @@ async function evaluatePythonCode(req, res) {
     lang: "python",
   });
 
-  return sendAI(res, result);
+  const { instanceId, groupNum, answeredByUserId, retriesRequired } = req.body || {};
+  const gate = await applyGroupRetryGate({
+    instanceId: Number(instanceId),
+    groupNum: Number(groupNum),
+    answeredByUserId: Number(answeredByUserId),
+    retriesRequired: Number(retriesRequired),
+    accepted: result.accepted === true,
+    submissionString: groupSubmissionString ?? studentAnswer,
+  });
+
+  return sendAI(res, { ...result, ...gate });
 }
 
 
@@ -825,7 +987,18 @@ async function evaluateCppCode(req, res) {
     lang: "cpp",
   });
 
-  return sendAI(res, result);
+  const { instanceId, groupNum, answeredByUserId, retriesRequired } = req.body || {};
+  const groupSubmissionString = req.body?.groupSubmissionString ?? null;
+  const gate = await applyGroupRetryGate({
+    instanceId: Number(instanceId),
+    groupNum: Number(groupNum),
+    answeredByUserId: Number(answeredByUserId),
+    retriesRequired: Number(retriesRequired),
+    accepted: result.accepted === true,
+    submissionString: groupSubmissionString ?? studentCode,
+  });
+
+  return sendAI(res, { ...result, ...gate });
 }
 
 
