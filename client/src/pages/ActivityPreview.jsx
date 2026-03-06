@@ -13,6 +13,7 @@ export default function ActivityPreview() {
   const { activityId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const [parseMeta, setParseMeta] = useState(null);
 
   const params = new URLSearchParams(location.search);
   const returnTo = params.get('returnTo'); // null if missing
@@ -174,7 +175,9 @@ export default function ActivityPreview() {
 
         console.log("[ActivityPreview] preview-doc lines", { count: lines.length });
 
-        const parsed = parseSheetToBlocks(lines);
+        const parsedRes = parseSheetToBlocks(lines, { returnIssues: true });
+        const parsed = parsedRes.blocks;
+        setParseMeta(parsedRes.meta);
 
         const files = {};
         for (const block of parsed) {
@@ -221,6 +224,23 @@ export default function ActivityPreview() {
     <Container>
       <div className="d-flex justify-content-between align-items-center mt-2 mb-2">
         <h2 className="mb-0">Preview: {activity?.title}</h2>
+        {parseMeta && (
+          <div className="alert alert-secondary py-2 my-2">
+            <div>
+              <strong>Retries:</strong> sheet default = {parseMeta.retriesDefault}
+            </div>
+
+            <div className="small mt-1">
+              Per-group effective:{' '}
+              {Object.keys(parseMeta.groupRetries).length
+                ? Object.entries(parseMeta.groupRetries)
+                  .sort((a, b) => Number(a[0]) - Number(b[0]))
+                  .map(([gid, v]) => `G${gid}=${v}`)
+                  .join(' · ')
+                : 'none'}
+            </div>
+          </div>
+        )}
         <Button
           variant="secondary"
           onClick={() => {

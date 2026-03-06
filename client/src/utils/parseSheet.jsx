@@ -292,7 +292,11 @@ export function parseSheetToBlocks(lines, options = {}) {
   let responseId = 1;
   let globalRetriesRequired = 0;          // ✅ sheet default
   let currentGroupRetriesRequired = 0;    // ✅ current group effective value
-
+  const meta = {
+    isTest: false,
+    retriesDefault: 0,
+    groupRetries: {}
+  };
   let currentQuestion = null;
   let currentField = 'prompt';
   let currentBlock = [];
@@ -408,7 +412,7 @@ export function parseSheetToBlocks(lines, options = {}) {
     // mark this activity as a test
     if (trimmed === '\\test') {
       isTest = true;
-
+      meta.isTest = true;
       continue;
     }
     // --- inside a \score ... \endscore block ---
@@ -815,6 +819,7 @@ export function parseSheetToBlocks(lines, options = {}) {
         content,
         retriesRequired: currentGroupRetriesRequired, // ✅ include it
       });
+      meta.groupRetries[groupNumber] = currentGroupRetriesRequired;
       continue;
     }
 
@@ -844,6 +849,7 @@ export function parseSheetToBlocks(lines, options = {}) {
       // ✅ If not in a group, this is the sheet-global default
       if (!inGroup) {
         globalRetriesRequired = n;
+        meta.retriesDefault = n;
         // also update currentGroupRetriesRequired only if we haven't started a group yet (optional)
         continue;
       }
@@ -856,6 +862,7 @@ export function parseSheetToBlocks(lines, options = {}) {
 
       // ✅ Group-level override
       currentGroupRetriesRequired = n;
+      meta.groupRetries[groupNumber] = n;
 
       // patch groupIntro so render/run can see it
       const gi = [...blocks].reverse().find(b => b.type === 'groupIntro' && b.groupId === groupNumber);
@@ -1120,9 +1127,13 @@ export function parseSheetToBlocks(lines, options = {}) {
 
 
   // ✅ backward compatible return
+  meta.isTest = !!isTest;
+  meta.retriesDefault = globalRetriesRequired;
+
   if (options.returnIssues) {
-    return { blocks, issues, meta: { isTest } };
+    return { blocks, issues, meta };
   }
+
   return blocks;
 }
 

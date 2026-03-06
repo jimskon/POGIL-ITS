@@ -79,13 +79,13 @@ function getLangForResponseKey(responseKey, groups) {
   return 'python';
 }
 
-function dbg(label, obj) {
+/*function dbg(label, obj) {
   try {
     console.log(`[RUNDBG] ${label}`, JSON.parse(JSON.stringify(obj)));
   } catch {
     console.log(`[RUNDBG] ${label}`, obj);
   }
-}
+}*/
 
 function buildGroupSubmissionString({ groupNum, blocks, container, existingAnswers }) {
   const parts = [];
@@ -1056,22 +1056,22 @@ export default function RunActivityPage({
 
   async function loadActivity() {
     if (loadingRef.current) {
-      console.log('[RUNDBG] loadActivity SKIP (already loading)', { t: Date.now() });
+      //console.log('[RUNDBG] loadActivity SKIP (already loading)', { t: Date.now() });
       return;
     }
 
     loadingRef.current = true;
-    console.log('[RUNDBG] loadActivity ENTER', { t: Date.now() });
+    //console.log('[RUNDBG] loadActivity ENTER', { t: Date.now() });
 
     try {
       const instanceRes = await fetch(`${API_BASE_URL}/api/activity-instances/${instanceId}`, {
         credentials: 'include',
       }); const instanceData = await instanceRes.json();
 
-      console.log('[RUNDBG] loadActivity fetched completed_groups', {
+      /*console.log('[RUNDBG] loadActivity fetched completed_groups', {
         completed_groups: instanceData?.completed_groups,
         total_groups: instanceData?.total_groups,
-      });
+      });*/
 
       setActivity(instanceData);
 
@@ -1090,16 +1090,6 @@ export default function RunActivityPage({
         setActivity(updatedData);
         effective = updatedData;
       }
-
-      // ✅ compute retries_required from FINAL effective
-      const rr =
-        Number(effective?.retries_required ?? effective?.retriesRequired ?? 0) || 0;
-
-      globalRetriesRequired = rr;
-      console.log('[RUN] retries_required from instance (FINAL effective):', rr, {
-        retries_required: effective?.retries_required,
-        retriesRequired: effective?.retriesRequired,
-      });
 
       const activeRes = await fetch(
         `${API_BASE_URL}/api/activity-instances/${instanceId}/active-student`,
@@ -1350,7 +1340,7 @@ export default function RunActivityPage({
       console.error('Failed to load activity data', err);
     } finally {
       loadingRef.current = false;
-      console.log('[RUNDBG] loadActivity EXIT', { t: Date.now() });
+      //console.log('[RUNDBG] loadActivity EXIT', { t: Date.now() });
     }
   }
 
@@ -1366,7 +1356,7 @@ export default function RunActivityPage({
     } = {}
   ) {
     // ✅ TEST MODE: no AI feedback at all
-    if (isTestMode) return { accepted: true, feedback: null, skipped: true };
+    if (isTestMode) return { accepted: true, feedback: null };
 
     const qid = `${questionBlock.groupId}${questionBlock.id}`;
     const qText = getQuestionText(questionBlock, qid);
@@ -1378,7 +1368,7 @@ export default function RunActivityPage({
       isNoAI(questionBlock?.feedback?.[0])
     ) {
       console.log('[EVAL SKIP] AI disabled for question', { qid });
-      return { accepted: true, feedback: null, skipped: true };
+      return { accepted: true, feedback: null };
     }
 
     const codeContext = [
@@ -1426,7 +1416,11 @@ export default function RunActivityPage({
         body: JSON.stringify(body),
       });
 
+
       const raw = await res.text();
+
+      // (1) Remove this block entirely (it’s wrong position)
+      // if (data?.accepted === true || data?.canContinue === true) { ... }
 
       // ✅ if backend returns an error, treat as failure
       if (!res.ok) {
@@ -1450,14 +1444,13 @@ export default function RunActivityPage({
         throw e;
       }
 
-      const accepted = data?.accepted !== false; // default true
+      const accepted = data?.accepted !== false;
 
       const feedback =
         typeof data?.feedback === 'string' && data.feedback.trim()
           ? data.feedback.trim()
           : null;
 
-      // ✅ NEW: retry gate outputs (all optional)
       const canContinue = data?.canContinue === true;
 
       const retryCount = Number.isFinite(Number(data?.retryCount))
@@ -1468,26 +1461,21 @@ export default function RunActivityPage({
         ? Number(data.retriesRequired)
         : null;
 
-      console.log('[EVAL RECV response normalized]', {
-        qid,
-        status: res.status,
-        ok: res.ok,
-        ms: Math.round(performance.now() - t0),
-        accepted,
-        canContinue,
-        retryCount,
-        retriesRequired: retriesRequiredOut,
-        feedbackLen: (feedback || '').length,
-      });
-
-      // ✅ IMPORTANT: this function MUST NOT write to `answers` here.
       return {
         accepted,
         feedback,
         canContinue,
         retryCount,
         retriesRequired: retriesRequiredOut,
-        skipped: false,
+      };
+
+      // ✅ IMPORTANT: this function MUST NOT write to `answers` here.
+      return {
+        accepted: true,
+        feedback: '(AI unavailable; continuing)',
+        canContinue: false,
+        retryCount: null,
+        retriesRequired: null,
       };
 
     } catch (err) {
@@ -1502,6 +1490,7 @@ export default function RunActivityPage({
         accepted: true,
         feedback: '(AI unavailable; continuing)',
         canContinue: false,
+        done: true,
         retryCount: null,
         retriesRequired: null,
         skipped: false,
@@ -1756,8 +1745,9 @@ export default function RunActivityPage({
 
 
   async function handleSubmit(forceOverride = false) {
+    const attemptParts = [];
+    let retriesRequired = 0;
     let groupNum;
-    let retriesRequired = Number(globalRetriesRequired || 0);
     if (isSubmitting) return;
     setIsSubmitting(true);
 
@@ -1809,13 +1799,13 @@ export default function RunActivityPage({
         return;
       }
 
-      dbg('handleSubmit start', {
+      /*dbg('handleSubmit start', {
         isTestMode,
         currentGroupIndex,
         groupCount: groups.length,
         editableContainerFound: !!container,
         editableContainerAttr: container?.getAttribute('data-current-group'),
-      });
+      });*/
 
       if (currentGroupIndex >= groups.length) {
         setIsSubmitting(false);
@@ -1823,19 +1813,13 @@ export default function RunActivityPage({
       }
 
       const currentGroup = groups[currentGroupIndex];
-      const attemptParts = [];
+
       // ✅ backend groupNum must be derived from instance progress (NOT block.groupId)
       const completedCount = Number(activity?.completed_groups ?? 0);
       groupNum = completedCount + 1; // ✅ 1-based, ALWAYS
 
-      // ✅ retriesRequired for this submit (global or per-group)
-      // If you intend global, set it once on activity load.
-      // For now, pull it from currentGroup intro if present.
-      //const retriesRequired =
-      //  Number(currentGroup?.intro?.retriesRequired ?? activity?.retriesRequired ?? 0) || 0;
-
-      // ✅ Create a stable "attempt fingerprint" for THIS submit.
-      // It MUST be identical for every AI request triggered by this button press.
+      retriesRequired =
+        Number(currentGroup?.intro?.retriesRequired ?? 0) || 0;
 
       blocks = [currentGroup.intro, ...currentGroup.content];
 
@@ -1845,18 +1829,18 @@ export default function RunActivityPage({
         container,
         existingAnswers,
       });
-      console.log('[RETRY_FINGERPRINT]', {
+      /*console.log('[RETRY_FINGERPRINT]', {
         groupNum,
         retriesRequired,
         len: groupSubmissionString.length,
-      });
+      });*/
 
-      dbg('handleSubmit blocks', {
+      /*dbg('handleSubmit blocks', {
         blocksLen: blocks?.length,
         qids: (blocks || [])
           .filter(b => b?.type === 'question')
           .map(b => `${b.groupId}${b.id}`),
-      });
+      });*/
     }
 
 
@@ -1896,9 +1880,9 @@ export default function RunActivityPage({
           return;
         }
 
-        console.log('[RUNDBG] after submit, about to reload', { loading: loadingRef.current, t: Date.now() });
+        // console.log('[RUNDBG] after submit, about to reload', { loading: loadingRef.current, t: Date.now() });
         await loadActivity();
-        console.log('[RUNDBG] after submit, reload done');
+        //console.log('[RUNDBG] after submit, reload done');
         alert('Test submitted. Your answers have been recorded.');
       } catch (err) {
         console.error('❌ Test submission failed:', err);
@@ -1943,7 +1927,7 @@ export default function RunActivityPage({
         `textarea[data-response-key^="${qid}code"]`
       );
 
-      console.log('[RUNDBG] codeOnly verdict', {
+      /*console.log('[RUNDBG] codeOnly verdict', {
         qid,
         codeOnly,
         blockFlags: {
@@ -1960,7 +1944,7 @@ export default function RunActivityPage({
           codeTAcount: dbgCodeTAs?.length || 0,
           codeLens: dbgCodeTAs ? Array.from(dbgCodeTAs).map((t) => (t.value || '').length) : [],
         },
-      });
+      });*/
 
 
 
@@ -1981,7 +1965,7 @@ export default function RunActivityPage({
         k.startsWith(`${qid}code`)
       );
 
-      dbg(`Q ${qid} presence`, {
+      /*dbg(`Q ${qid} presence`, {
         hasTextEl: !!textEl,
         textLen: textEl?.value?.trim()?.length || 0,
         codeTAcount: codeTAs.length,
@@ -1999,18 +1983,18 @@ export default function RunActivityPage({
           pythonBlocks: block?.pythonBlocks?.length || 0,
           turtleBlocks: block?.turtleBlocks?.length || 0,
         },
-      });
+      });*/
       const textAnswer = (textEl?.value ?? '').trim();
       const shouldEvalText = !isTestMode && !codeOnly && !!textEl;  // code+text AND text-only both land here
 
-      console.log('[RUNDBG] eval gate', {
+      /*console.log('[RUNDBG] eval gate', {
         qid,
         isTestMode,
         codeOnly,
         hasTextEl: !!textEl,
         textLen: textAnswer.length,
         shouldEvalText,
-      });
+      });*/
 
       // ---------- CODE-ONLY PATH ----------
       if (codeOnly) {
@@ -2433,7 +2417,7 @@ export default function RunActivityPage({
       emitTextAIState(qid, { f1: '', fm: 'accepted', af: 'resolved' });
       if (!looksCodeOnlyNow && !isTestMode) {
         const dbgInput = String(aiInput ?? '').trim();
-        console.log('[EVALDBG]', {
+        /*console.log('[EVALDBG]', {
           qid,
           hasText: dbgInput.length > 0,
           py: block?.pythonBlocks?.length || 0,
@@ -2441,13 +2425,36 @@ export default function RunActivityPage({
           keys: Object.keys(existingAnswers || {})
             .filter(k => k.toLowerCase().includes(String(qid).toLowerCase()))
             .slice(0, 20),
-        });
+        });*/
         const ai = await evaluateResponseWithAI(block, aiInput, {
           submissionString: groupSubmissionString,
           groupNum,                 // runtime group number you already computed
           retriesRequired,          // global retries (3)
           answeredByUserId: user.id,
         });
+
+        const progressAllowed = (ai.accepted === true);
+
+        answers[`${qid}S`] = progressAllowed ? 'complete' : 'inprogress';
+
+        if (!progressAllowed) {
+          unanswered.push(`${qid} (AI)`);
+        }
+
+        // If backend says retries threshold reached for this group, enable bypass button
+        if (ai?.canContinue === true) {
+          setCanBypassGroups((prev) => ({ ...prev, [currentGroupIndex]: true }));
+        }
+        /*console.log('[RETRY GATE]', {
+          qid,
+          accepted: ai.accepted,
+          canContinue: ai.canContinue,
+          progressAllowed,
+        });*/
+
+        if (!progressAllowed) {
+          unanswered.push(`${qid} (AI)`);
+        }
         // If backend says retries threshold reached for this group, enable bypass button
         if (ai?.canContinue === true) {
           setCanBypassGroups((prev) => ({ ...prev, [currentGroupIndex]: true }));
@@ -2490,12 +2497,6 @@ export default function RunActivityPage({
       }
 
 
-      // Completion gate for this question depends ONLY on accepted
-      answers[`${qid}S`] = accepted ? 'complete' : 'inprogress';
-      if (!accepted) unanswered.push(`${qid} (AI)`);
-
-
-
     } // END for each block
 
 
@@ -2529,9 +2530,7 @@ export default function RunActivityPage({
     });
 
 
-    const overrideThisGroup =
-      forceOverride || !!overrideGroups[currentGroupIndex];
-
+    const overrideThisGroup = forceOverride;
 
     const computedState =
       overrideThisGroup || (!pendingBase && !pendingByStatus)
@@ -2543,7 +2542,7 @@ export default function RunActivityPage({
     const stateKey = `${groupNum}state`;
     answers[stateKey] = computedState;
 
-    console.log('[RUNDBG] gate vars', {
+    /*console.log('[RUNDBG] gate vars', {
       pendingBase,
       unanswered,
       pendingByStatus,
@@ -2553,11 +2552,11 @@ export default function RunActivityPage({
         const qid = `${b.groupId}${b.id}`;
         return [qid, answers[`${qid}S`], existingAnswers[`${qid}S`]?.response];
       }),
-    });
+    });*/
 
     setUnansweredShown(unansweredMap);
     if (computedState === 'inprogress') {
-      console.warn('[RUNDBG] BLOCKING GROUP ADVANCE', {
+      /*console.warn('[RUNDBG] BLOCKING GROUP ADVANCE', {
         pendingBase,
         pendingByStatus,
         unanswered,
@@ -2571,7 +2570,7 @@ export default function RunActivityPage({
             hasAnswer: String(answers[qid] ?? '').trim().length > 0,
           };
         }),
-      });
+      });*/
 
       setIsSubmitting(false);
       return;
@@ -2588,13 +2587,15 @@ export default function RunActivityPage({
 
 
     try {
+      //console.log('[RUNDBG] retries for group', { groupNum, retriesRequired });
 
-      // ✅ Group number is derived only from instance progress
-      //const completedCount = Number(activity?.completed_groups ?? 0);
-      const groupNum = completedCount + 1; // 1-based for backend
-
-      console.log('[RUNDBG] ABOUT TO SUBMIT-GROUP', { groupNum, computedState, stateKey, stateVal: answers[stateKey] });
-
+      /*console.log('[RUNDBG] ABOUT TO SUBMIT-GROUP', {
+        groupNum,
+        retriesRequired,
+        computedState,
+        stateKey,
+        stateVal: answers[stateKey]
+      });*/
       const response = await fetch(
         `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`,
         {
@@ -2603,21 +2604,22 @@ export default function RunActivityPage({
           credentials: 'include',
           body: JSON.stringify({
             studentId: user.id,
-            groupNum,          // ✅ NEW: 1-based group number
-            answers,           // ✅ send answers exactly as before
-          }),
+            groupNum,
+            retriesRequired,
+            answers,
+          })
         }
       );
-      console.log('[RUNDBG] submit-group response', { ok: response.ok, status: response.status });
+      //console.log('[RUNDBG] submit-group response', { ok: response.ok, status: response.status });
 
 
       if (!response.ok) {
         const errorData = await response.json();
         alert(`Submission failed: ${errorData.error || 'Unknown error'}`);
       } else {
-        console.log('[RUNDBG] after submit, about to reload', { loading: loadingRef.current, t: Date.now() });
+        //console.log('[RUNDBG] after submit, about to reload', { loading: loadingRef.current, t: Date.now() });
         await loadActivity();
-        console.log('[RUNDBG] after submit, reload done');
+        //console.log('[RUNDBG] after submit, reload done');
         if (!isTestMode && overrideThisGroup) {
           // Clear any lingering AI suggestions for this group on the client side
           const qBlocksForGroup = blocks.filter((b) => b.type === 'question');
@@ -3231,10 +3233,7 @@ export default function RunActivityPage({
                       variant="outline-secondary"
                       size="sm"
                       className="ms-2"
-                      onClick={() => {
-                        setOverrideGroups((prev) => ({ ...prev, [index]: true }));
-                        handleSubmit(true);
-                      }}
+                      onClick={() => handleSubmit(true)}
                     >
                       Continue without addressing AI feedback
                     </Button>
