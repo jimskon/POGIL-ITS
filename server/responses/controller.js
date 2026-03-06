@@ -91,23 +91,19 @@ exports.getResponsesByInstanceId = async (req, res) => {
   const { instanceId } = req.params;
 
   try {
-    // Get the active student ID
-    // ✅ Fetch all responses from all group members
     const [rows] = await db.query(
-      `SELECT r.question_id, r.response, r.response_type, f.feedback_text AS python_feedback
-   FROM responses r
-   LEFT JOIN feedback f ON f.response_id = r.id
-   WHERE r.activity_instance_id = ?`,
+      `SELECT question_id, response, response_type
+       FROM responses
+       WHERE activity_instance_id = ?`,
       [instanceId]
     );
-
 
     const result = {};
     for (const row of rows) {
       result[row.question_id] = {
         response: row.response,
         type: row.response_type,
-        python_feedback: row.python_feedback || null,
+        python_feedback: null,
       };
     }
 
@@ -118,22 +114,6 @@ exports.getResponsesByInstanceId = async (req, res) => {
   }
 };
 
-
-exports.getResponsesByQuestionId = async (req, res) => {
-  const { instanceId, questionId } = req.params;
-
-  try {
-    const [rows] = await db.query(
-      `SELECT * FROM responses WHERE activity_instance_id = ? AND question_id = ?`,
-      [instanceId, questionId]
-    );
-
-    res.json(rows);
-  } catch (err) {
-    console.error("❌ Error fetching responses:", err);
-    res.status(500).json({ error: "Failed to fetch responses" });
-  }
-};
 
 exports.getResponsesByAnsweredBy = async (req, res) => {
   const { instanceId, answeredBy } = req.params;
@@ -157,10 +137,9 @@ exports.getGroupResponses = async (req, res) => {
 
   try {
     const [rows] = await db.query(
-      `SELECT question_id, response, response_type FROM responses
-       WHERE activity_instance_id = ? AND answered_by_user_id IN (
-         SELECT student_id FROM group_members WHERE activity_instance_id = ?
-       )`,
+      `SELECT question_id, response, response_type
+           FROM responses
+           WHERE activity_instance_id = ?`,
       [instanceId, instanceId]
     );
 
@@ -268,7 +247,8 @@ exports.saveFeedback = async (req, res) => {
   try {
     // Step 1: Find the response ID to attach feedback to
     const [rows] = await db.query(
-      `SELECT id FROM responses WHERE activity_instance_id = ? AND question_id = ? AND answered_by_user_id = ?`,
+      `SELECT id FROM responses
+            WHERE activity_instance_id = ? AND question_id = ?`,
       [activity_instance_id, question_id, user_id]
     );
 
