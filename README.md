@@ -1,6 +1,6 @@
-# POGIL-ITS Production Deployment Guide
+# coLearn-AI Production Deployment Guide
 
-This document describes how to deploy POGIL-ITS in **production** on Ubuntu 24.04 using:
+This document describes how to deploy colearn-its in **production** on Ubuntu 24.04 using:
 
 - Node.js (Express backend)
 - Vite (React frontend build)
@@ -323,7 +323,7 @@ pm2 -v
 From the project root directory:
 
 ```bash
-PORT=4000 NODE_ENV=production pm2 start server/index.js --name pogil-its
+PORT=4000 NODE_ENV=production pm2 start server/index.js --name colearn-ai
 ```
 
 Check status:
