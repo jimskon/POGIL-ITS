@@ -170,7 +170,7 @@ Import the schema used by the application.
 Example:
 
 ```bash
-mariadb -u colearnai_user -p colearnai_db < server/sql/schema.sql
+mariadb -u colearnai_user -p colearnai_db < server/schema.sql
 ```
 
 If you exported the schema from an existing system:
