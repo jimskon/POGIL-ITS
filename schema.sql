@@ -60,50 +60,7 @@ CREATE TABLE `activity_instances` (
   CONSTRAINT `activity_instances_ibfk_3` FOREIGN KEY (`active_student_id`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=1927 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `activity_instances_backup`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `activity_instances_backup` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `activity_id` int(11) NOT NULL,
-  `is_test` tinyint(1) NOT NULL DEFAULT 0,
-  `course_id` int(11) NOT NULL,
-  `status` enum('in_progress','completed') DEFAULT 'in_progress',
-  `active_student_id` int(11) DEFAULT NULL,
-  `group_number` int(11) DEFAULT NULL,
-  `start_time` timestamp NULL DEFAULT current_timestamp(),
-  `total_groups` int(11) DEFAULT NULL,
-  `completed_groups` int(11) NOT NULL DEFAULT 0,
-  `progress_status` enum('not_started','in_progress','completed') NOT NULL DEFAULT 'not_started',
-  `points_earned` int(11) DEFAULT NULL,
-  `points_possible` int(11) DEFAULT NULL,
-  `test_start_at` datetime DEFAULT NULL COMMENT 'Scheduled start time for timed tests',
-  `test_duration_minutes` int(10) unsigned NOT NULL DEFAULT 0 COMMENT 'Time limit in minutes (0 = no limit)',
-  `test_reopen_until` datetime DEFAULT NULL COMMENT 'Optional reopen-until time for this instance',
-  `submitted_at` datetime DEFAULT NULL COMMENT 'When the instance was finally submitted',
-  `graded_at` datetime DEFAULT NULL,
-  `review_complete` tinyint(1) NOT NULL DEFAULT 0,
-  `reviewed_at` datetime DEFAULT NULL,
-  `hidden` tinyint(1) NOT NULL DEFAULT 0 COMMENT 'If 1, students cannot Start or Review this activity instance',
-  PRIMARY KEY (`id`),
-  KEY `activity_id` (`activity_id`),
-  KEY `active_student_id` (`active_student_id`),
-  KEY `idx_activity_instances_test_start` (`test_start_at`),
-  KEY `idx_ai_course_activity_test` (`course_id`,`activity_id`,`is_test`),
-  KEY `idx_ai_progress_status` (`progress_status`)
-) ENGINE=InnoDB AUTO_INCREMENT=1642 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `code_alias_backup_1622_1626`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `code_alias_backup_1622_1626` (
-  `id` int(11) NOT NULL DEFAULT 0,
-  `activity_instance_id` int(11) NOT NULL,
-  `question_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
-  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
-  `response` text NOT NULL,
-  `answered_by_user_id` int(11) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `course_enrollments`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -139,14 +96,6 @@ CREATE TABLE `courses` (
   CONSTRAINT `courses_ibfk_1` FOREIGN KEY (`instructor_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
   CONSTRAINT `courses_ibfk_2` FOREIGN KEY (`class_id`) REFERENCES `pogil_classes` (`id`) ON DELETE SET NULL
 ) ENGINE=InnoDB AUTO_INCREMENT=65 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `dash_state_backup`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `dash_state_backup` (
-  `id` int(11) NOT NULL DEFAULT 0,
-  `question_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `event_log`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -311,143 +260,7 @@ CREATE TABLE `responses` (
   KEY `answered_by_user_id` (`answered_by_user_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=43232785 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `responses_backup`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `responses_backup` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `activity_instance_id` int(11) NOT NULL,
-  `question_id` varchar(255) NOT NULL,
-  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
-  `response` text NOT NULL,
-  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `answered_by_user_id` int(11) NOT NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_responses_instance_question` (`activity_instance_id`,`question_id`),
-  KEY `answered_by_user_id` (`answered_by_user_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=32187126 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `responses_backup_1377`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `responses_backup_1377` (
-  `id` int(11) NOT NULL DEFAULT 0,
-  `activity_instance_id` int(11) NOT NULL,
-  `question_id` varchar(255) NOT NULL,
-  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
-  `response` text NOT NULL,
-  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `answered_by_user_id` int(11) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `responses_backup_1626`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `responses_backup_1626` (
-  `id` int(11) NOT NULL DEFAULT 0,
-  `activity_instance_id` int(11) NOT NULL,
-  `question_id` varchar(255) NOT NULL,
-  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
-  `response` text NOT NULL,
-  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `answered_by_user_id` int(11) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `responses_backup_1636`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `responses_backup_1636` (
-  `id` int(11) NOT NULL DEFAULT 0,
-  `activity_instance_id` int(11) NOT NULL,
-  `question_id` varchar(255) NOT NULL,
-  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
-  `response` text NOT NULL,
-  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `answered_by_user_id` int(11) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `responses_backup_2025_12_18`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `responses_backup_2025_12_18` (
-  `id` int(11) NOT NULL DEFAULT 0,
-  `activity_instance_id` int(11) NOT NULL,
-  `question_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
-  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
-  `response` text NOT NULL,
-  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `answered_by_user_id` int(11) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `responses_backup_c52_a264`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `responses_backup_c52_a264` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `activity_instance_id` int(11) NOT NULL,
-  `question_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
-  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
-  `response` text NOT NULL,
-  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `answered_by_user_id` int(11) NOT NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_responses_instance_question` (`activity_instance_id`,`question_id`),
-  UNIQUE KEY `uniq_resp` (`activity_instance_id`,`question_id`,`response_type`),
-  KEY `answered_by_user_id` (`answered_by_user_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=34702835 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `responses_bak_008`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `responses_bak_008` (
-  `id` int(11) NOT NULL AUTO_INCREMENT,
-  `activity_instance_id` int(11) NOT NULL,
-  `question_id` text NOT NULL,
-  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
-  `response` text NOT NULL,
-  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `answered_by_user_id` int(11) NOT NULL,
-  PRIMARY KEY (`id`),
-  UNIQUE KEY `uniq_instance_question` (`activity_instance_id`,`question_id`) USING HASH,
-  KEY `activity_instance_id` (`activity_instance_id`),
-  KEY `answered_by_user_id` (`answered_by_user_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=30727889 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `responses_bak_1635`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `responses_bak_1635` (
-  `id` int(11) NOT NULL DEFAULT 0,
-  `activity_instance_id` int(11) NOT NULL,
-  `question_id` text NOT NULL,
-  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
-  `response` text NOT NULL,
-  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `answered_by_user_id` int(11) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
-DROP TABLE IF EXISTS `responses_bak_20251218_134431`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!40101 SET character_set_client = utf8mb4 */;
-CREATE TABLE `responses_bak_20251218_134431` (
-  `id` int(11) NOT NULL DEFAULT 0,
-  `activity_instance_id` int(11) NOT NULL,
-  `question_id` text NOT NULL,
-  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
-  `response` text NOT NULL,
-  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
-  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
-  `answered_by_user_id` int(11) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-/*!40101 SET character_set_client = @saved_cs_client */;
+
 DROP TABLE IF EXISTS `responses_legacy_backup`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8mb4 */;
