@@ -116,7 +116,7 @@ Reload privilege tables: **Yes**
 
 ---
 
-# 2.7 Create POGIL-ITS Database and User
+# 2.7 Create coLearn-AI Database and User
 
 Login to MariaDB as root:
 
@@ -127,7 +127,7 @@ sudo mariadb
 Create the database:
 
 ```sql
-CREATE DATABASE pogil_db
+CREATE DATABASE colearnai_db
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;
 ```
@@ -135,15 +135,15 @@ CREATE DATABASE pogil_db
 Create an application user:
 
 ```sql
-CREATE USER 'pogil_user'@'localhost'
+CREATE USER 'colearnai_user'@'localhost'
 IDENTIFIED BY 'STRONG_PASSWORD_HERE';
 ```
 
 Grant privileges:
 
 ```sql
-GRANT ALL PRIVILEGES ON pogil_db.* 
-TO 'pogil_user'@'localhost';
+GRANT ALL PRIVILEGES ON colearnai_db.* 
+TO 'colearnai_user'@'localhost';
 
 FLUSH PRIVILEGES;
 ```
@@ -170,19 +170,19 @@ Import the schema used by the application.
 Example:
 
 ```bash
-mariadb -u pogil_user -p pogil_db < server/sql/schema.sql
+mariadb -u colearnai_user -p colearnai_db < schema.sql
 ```
 
 If you exported the schema from an existing system:
 
 ```bash
-mariadb -u pogil_user -p pogil_db < schema.sql
+mariadb -u colearnai_user -p colearnai_db < schema.sql
 ```
 
 Verify tables:
 
 ```bash
-mariadb -u pogil_user -p pogil_db
+mariadb -u colearnai_user -p colearnai_db
 ```
 
 Then:
