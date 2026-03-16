@@ -11,7 +11,7 @@ const readline = require('readline');
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
 const BASE_URL = 'http://localhost:4000/api';
-const PASSWORD = 'KenyonAI';   // Shared demo password
+const PASSWORD = 'LearnKi';   // Shared demo password
 
 function prompt(q) {
   return new Promise(resolve => rl.question(q, resolve));
@@ -34,6 +34,25 @@ function getRandomName() {
     "Walker","Young","Allen","King","Wright","Scott","Torres","Nguyen","Hill","Flores",
     "Green","Adams","Nelson","Baker","Hall","Rivera","Campbell","Mitchell","Carter","Roberts"
   ];
+  return `${first[Math.floor(Math.random() * first.length)]} ${last[Math.floor(Math.random() * last.length)]}`;
+}
+function getRandomSwedishName() {
+  const first = [
+    "Lars","Karl","Erik","Anders","Per","Johan","Nils","Gunnar","Mikael","Jan",
+    "Peter","Hans","Bo","Fredrik","Henrik","Magnus","Olof","Daniel","Stefan","Martin",
+    "Anna","Maria","Eva","Karin","Lena","Kristina","Birgitta","Ingrid","Margareta","Elisabeth",
+    "Ulla","Gunilla","Monica","Yvonne","Helena","Sofia","Emma","Sara","Linda","Malin",
+    "Johanna","Camilla","Therese","Annika","Frida","Amanda","Ida","Elin","Maja","Ebba"
+  ];
+
+  const last = [
+    "Andersson","Johansson","Karlsson","Nilsson","Eriksson","Larsson","Olsson","Persson","Svensson","Gustafsson",
+    "Pettersson","Jonsson","Jansson","Hansson","Bengtsson","Jönsson","Lindberg","Jakobsson","Magnusson","Olofsson",
+    "Lindström","Lindgren","Axelsson","Bergström","Berg","Sandberg","Holm","Lundberg","Lind","Berglund",
+    "Nyström","Eklund","Lund","Wallin","Norberg","Sundberg","Ström","Blom","Dahlberg","Ekström",
+    "Lundgren","Björk","Holmberg","Sjöberg","Engström","Bergman","Hedlund","Forsberg","Lindholm","Sjöström"
+  ];
+
   return `${first[Math.floor(Math.random() * first.length)]} ${last[Math.floor(Math.random() * last.length)]}`;
 }
 
@@ -272,7 +291,7 @@ async function main() {
     const students = [];
     for (let i = 1; i <= numStudents; i++) {
       const email = studentTemplate.replace('@', `${i}@`); // demo-student1@..., demo-student2@...
-      const student = await registerOrReuseUser(email, getRandomName(), 'student');
+      const student = await registerOrReuseUser(email, getRandomSwedishName(), 'student');
       if (student) students.push(student);
     }
 
