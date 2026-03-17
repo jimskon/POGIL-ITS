@@ -435,34 +435,65 @@ async function evaluateStudentResponse(req, res) {
   const qidHint =
     req.body?.qid ||
     req.body?.questionId ||
-    (req.body?.questionText ? stripHtml(req.body.questionText).slice(0, 30) : '(no qid)');
+    (req.body?.questionText
+      ? stripHtml(req.body.questionText).slice(0, 30)
+      : "(no qid)");
 
-  console.log('AI eval START', { qidHint });
+  console.log("AI eval START", { qidHint });
 
-  res.on('finish', () => {
-    console.log('AI eval FINISH', {
+  res.on("finish", () => {
+    console.log("AI eval FINISH", {
       qidHint,
       status: res.statusCode,
       ms: Date.now() - t0,
     });
   });
+
   const {
     questionText,
     studentAnswer,
-    sampleResponse = "", // \sampleresponses
-    feedbackPrompt = "", // \feedbackprompt  (meta policy; do not quote)
-    followupPrompt = "", // \followupprompt  (optional planned engagement)
+    sampleResponse = "",
+    feedbackPrompt = "",
+    followupPrompt = "",
     forceFollowup = false,
-    guidance = "",       // \aicodeguidance  (activity-level)
+    guidance = "",
     codeContext = "",
+    instanceId,
+    groupNum,
+    answeredByUserId,
+    retriesRequired,
+    submissionString = "",
   } = req.body || {};
 
-  // Hard “no feedback at all” switch (rare, but keep it)
-  if (isNone(feedbackPrompt) || !questionText || studentAnswer == null) {
-    return sendAI(res, { accepted: false, feedback: "I couldn't interpret that response—please add one concrete sentence answering the question." });
+  let accepted = false;
+  let feedback =
+    "I couldn't interpret that response—please add one concrete sentence answering the question.";
 
+  const applyGateAndSend = async () => {
+    console.log("[RETRY_IN]", {
+      instanceId,
+      groupNum,
+      answeredByUserId,
+      retriesRequired,
+      accepted,
+      submissionHash: sha256Hex(String(submissionString ?? "")),
+    });
+
+    const gate = await applyGroupRetryGate({
+      instanceId: Number(instanceId),
+      groupNum: Number(groupNum),
+      answeredByUserId: Number(answeredByUserId),
+      retriesRequired: Number(retriesRequired),
+      accepted,
+      submissionString: String(submissionString ?? ""),
+    });
+
+    return sendAI(res, { accepted, feedback, ...gate });
+  };
+
+  if (!questionText || studentAnswer == null) {
+    return await applyGateAndSend();
   }
-
 
   const activityGuide = stripHtml(guidance || "");
   const questionGuide = stripHtml(feedbackPrompt || "");
@@ -470,82 +501,49 @@ async function evaluateStudentResponse(req, res) {
 
   const answerRaw = String(studentAnswer || "").trim();
 
-  const followupQ = extractFollowupFromFeedbackPrompt(feedbackPrompt) ||
+  const followupQ =
+    extractFollowupFromFeedbackPrompt(feedbackPrompt) ||
     "Please answer using one concrete detail from the code or output.";
 
-  if (policy.requirementsOnly) {
-    // If gibberish → reject (allowed even in gibberish-only mode)
-    if (!answerRaw || looksGibberish(answerRaw)) {
-      return sendAI(res, { accepted: false, feedback: followupQ });
-    }
-
-    // Generic off-prompt / no-evidence check:
-    // require at least one meaningful overlap with either question or sampleResponse
-    const q = stripHtml(questionText || "").toLowerCase();
-    const s = stripHtml(answerRaw).toLowerCase();
-    const sample = stripHtml(sampleResponse || "").toLowerCase();
-
-    const words = (t) => t.split(/\W+/).filter(w => w.length >= 5);
-    const qWords = words(q);
-    const sampleWords = words(sample);
-
-    const overlaps = (arr) => arr.some(w => s.includes(w));
-
-    const hasEvidence =
-      overlaps(qWords) || overlaps(sampleWords) ||
-      /\d+\.\s+\S+/.test(answerRaw); // catches "1. Skiing" style evidence
-
-    if (!hasEvidence) {
-      // This is the key: reject garbage like "my mother's name" deterministically.
-      return sendAI(res, { accepted: false, feedback: followupQ });
-    }
-
-    // If it passes basic evidence, you can still call the model OR accept directly.
-    // I'd accept directly in requirements-only mode to keep it snappy:
-    return sendAI(res, { accepted: true, feedback: null });
-  }
-  // Positive-feedback directives live inside followupprompt; strip them and compute flags.
   const positiveEnabled = isPositiveFeedbackEnabled(guidance, followupPrompt);
   const fuParsed = parsePositiveFeedbackFromText(followupPrompt);
   const followupRaw = fuParsed.cleaned;
   const followupIsNone = /^(none|no\s*follow-?ups?)$/i.test(followupRaw);
 
-
-  // Quick accept path for requirements-only + non-gibberish
-  // (Still allows planned followups via followupprompt)
-  if (policy.requirementsOnly && !forceFollowup) {
+  if (policy.requirementsOnly) {
     if (!answerRaw || looksGibberish(answerRaw)) {
-      // fall through to AI
-    } else {
-      // cheap relevance check
-      const q = stripHtml(questionText || "").toLowerCase();
-      const s = stripHtml(answerRaw).toLowerCase();
-      const sample = stripHtml(sampleResponse || "").toLowerCase();
-
-      const extractWords = (text) =>
-        text.split(/\W+/).filter((w) => w.length > 4);
-
-      const qWords = extractWords(q);
-      const sampleWords = extractWords(sample);
-      const containsAny = (words, haystack) => words.some((w) => haystack.includes(w));
-
-      const relevant =
-        (qWords.length && containsAny(qWords, s)) ||
-        (sampleWords.length && containsAny(sampleWords, s));
-
-      if (relevant) {
-        // On-track: optionally use author follow-up (unless policy forbids)
-        return sendAI(res, { accepted: true, feedback: null });
-
-
-      }
+      accepted = false;
+      feedback = followupQ;
+      return await applyGateAndSend();
     }
+
+    const q = stripHtml(questionText || "").toLowerCase();
+    const s = stripHtml(answerRaw).toLowerCase();
+    const sample = stripHtml(sampleResponse || "").toLowerCase();
+
+    const words = (t) => t.split(/\W+/).filter((w) => w.length >= 5);
+    const qWords = words(q);
+    const sampleWords = words(sample);
+    const overlaps = (arr) => arr.some((w) => s.includes(w));
+
+    const hasEvidence =
+      overlaps(qWords) ||
+      overlaps(sampleWords) ||
+      /\d+\.\s+\S+/.test(answerRaw);
+
+    if (!hasEvidence) {
+      accepted = false;
+      feedback = followupQ;
+      return await applyGateAndSend();
+    }
+
+    accepted = true;
+    feedback = null;
+    return await applyGateAndSend();
   }
 
-  // If answer is obviously empty/gibberish, we can force a follow-up regardless of author followupPrompt.
   const obviouslyBad = !answerRaw || looksGibberish(answerRaw);
 
-  // Build prompt
   const sys = [
     "You are a concise, supportive learning facilitator for an ungraded collaborative activity.",
     "Decide whether the submission is sufficient to proceed.",
@@ -567,7 +565,9 @@ async function evaluateStudentResponse(req, res) {
     sampleResponse
       ? `Sample / acceptance envelope (do not quote):\n${stripHtml(sampleResponse)}`
       : "",
-    questionGuide ? `Instructor feedbackprompt (meta; do not quote):\n${questionGuide}` : "",
+    questionGuide
+      ? `Instructor feedbackprompt (meta; do not quote):\n${questionGuide}`
+      : "",
     followupRaw && !followupIsNone
       ? `Instructor followupprompt (optional; prefer this wording if you choose to ask a follow-up):\n${followupRaw}`
       : "",
@@ -575,9 +575,8 @@ async function evaluateStudentResponse(req, res) {
     "",
     schema,
     forceFollowup || obviouslyBad
-      ? "If uncertain, prefer {\"accepted\":false}"
-      : "If reasonable, prefer {\"accepted\":true}",
-
+      ? 'If uncertain, prefer {"accepted":false}'
+      : 'If reasonable, prefer {"accepted":true}',
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -600,58 +599,47 @@ async function evaluateStudentResponse(req, res) {
     try {
       obj = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(raw);
     } catch {
-      // TEXT answers should NOT fail-open. Ask for one concrete correction.
-      return sendAI(res, {
-        accepted: false,
-        feedback: "I couldn't interpret that response. Please answer the question with one concrete detail tied to the code or output."
-      });
+      accepted = false;
+      feedback =
+        "I couldn't interpret that response. Please answer the question with one concrete detail tied to the code or output.";
+      return await applyGateAndSend();
     }
 
-    const norm = normalizeAIResult(obj); // <-- accepts feedback/feedback/followupQuestion etc
+    const norm = normalizeAIResult(obj);
+    accepted = norm.accepted;
+    feedback = norm.feedback;
 
-    let { accepted } = norm;
-    let feedback = norm.feedback; // string|null
+    if (isSoftNitpick(feedback) && !isFatal(feedback)) {
+      feedback = null;
+    }
 
-    // preserve your soft-nitpick filter
-    if (isSoftNitpick(feedback) && !isFatal(feedback)) feedback = null;
-
-    // If NOT accepted, require feedback
     if (!accepted && !feedback) {
-      feedback = "Add one more concrete detail that directly answers the prompt.";
+      feedback =
+        "Add one more concrete detail that directly answers the prompt.";
     }
 
-    // If accepted and positive feedback disabled, feedback must be null
-    if (accepted && !positiveEnabled) feedback = null;
+    if (accepted && !positiveEnabled) {
+      feedback = null;
+    }
 
-    // If accepted and positive enabled but model gave nothing, optionally use author followupprompt as praise/nudge
     if (accepted && positiveEnabled && !feedback && followupRaw && !followupIsNone) {
       feedback = followupRaw;
     }
 
-    const { instanceId, groupNum, answeredByUserId, retriesRequired } = req.body || {};
-    console.log("[RETRY_IN]", {
-      instanceId,
-      groupNum,
-      answeredByUserId,
-      retriesRequired,
-      accepted,
-    });
-    const gate = await applyGroupRetryGate({
-      instanceId: Number(instanceId),
-      groupNum: Number(groupNum),
-      answeredByUserId: Number(answeredByUserId),
-      retriesRequired: Number(retriesRequired),
-      accepted,
-      submissionString: studentAnswer,
-    });
+    if (isNone(feedbackPrompt)) {
+      feedback = null;
+    }
 
-    return sendAI(res, { accepted, feedback, ...gate });
-
+    return await applyGateAndSend();
   } catch (err) {
     console.error("❌ OpenAI evaluateStudentResponse failed:", err);
-    return res.status(200).json({ accepted: true, feedback: null });
+
+    accepted = false;
+    feedback =
+      "I couldn't interpret that response. Please answer the question with one concrete detail tied to the code or output.";
+    return await applyGateAndSend();
   }
-} // <-- closes evaluateStudentResponse
+}// <-- closes evaluateStudentResponse
 
 // ---------- PYTHON CODE (LEARNING MODE) ----------
 async function evaluatePythonCode(req, res) {
@@ -669,6 +657,7 @@ async function evaluatePythonCode(req, res) {
     feedbackPrompt = "",
     sampleResponse = "",
     followupPrompt = "",
+    outputText = "",
   } = req.body || {};
 
   if (!questionText || !studentCode) {
@@ -693,6 +682,7 @@ async function evaluatePythonCode(req, res) {
     sampleResponse,
     followupPrompt,
     lang: "python",
+    outputText,
   });
 
   const { instanceId, groupNum, answeredByUserId, retriesRequired } = req.body || {};
@@ -702,7 +692,7 @@ async function evaluatePythonCode(req, res) {
     answeredByUserId: Number(answeredByUserId),
     retriesRequired: Number(retriesRequired),
     accepted: result.accepted === true,
-    submissionString: groupSubmissionString ?? studentAnswer,
+    submissionString: req.body?.submissionString ?? "",
   });
 
   return sendAI(res, { ...result, ...gate });
@@ -837,6 +827,7 @@ async function evaluateCode({
   sampleResponse = "",
   followupPrompt = "",
   lang,
+  outputText = "",
 }) {
   // Default: fail-open (don’t block if AI fails)
   const base = { accepted: true, feedback: null };
@@ -882,14 +873,27 @@ async function evaluateCode({
   const prompt = `
 You are a ${langLabel} tutor facilitating an UNGRADED collaborative learning activity.
 
+Decide whether the student's code correctly satisfies the task.
+
+The sample response is ONLY an example.
+Do NOT require the student to match the sample's exact method, syntax, indices, structure, variable names, or style.
+If multiple correct implementations exist, accept ANY correct one.
+Do NOT invent extra requirements that are not explicitly stated in the task or instructor guidance.
+
+Most important rule:
+If the observed output or behavior is consistent with the task, strongly prefer accepted=true unless the code clearly violates an explicit requirement.
+
 Task:
 ${stripHtml(questionText)}
 
-Acceptance envelope (do not quote):
+Instructor acceptance guidance (highest priority, do not quote verbatim):
+${qGuide || "(none)"}
+
+Sample response (example only, not required):
 ${stripHtml(sampleResponse || "(none)")}
 
-Instructor feedbackprompt (meta; do not quote):
-${qGuide || "(none)"}
+${outputText ? `Observed program output:
+${stripHtml(outputText)}` : "Observed program output:\n(none provided)"}
 
 Student's code (v${codeVersion}):
 \`\`\`${fence}
@@ -900,8 +904,12 @@ Return STRICT JSON with exactly these keys:
 {"accepted":true|false,"feedback":string|null}
 
 Rules:
-- accepted=true if it meets the task; feedback may be null OR brief encouragement (no nitpicks).
-- accepted=false if incomplete/off-prompt; feedback = ONE actionable hint.
+- accepted=true if the code correctly satisfies the task, even if it uses a different approach than the sample.
+- accepted=false only if the code is incorrect, incomplete, off-task, or clearly fails an explicit requirement.
+- Do NOT reject a correct solution just because it uses positive indices instead of negative indices, or vice versa, unless the task explicitly requires one style.
+- When output is provided and it matches the requested result, strongly prefer accepted=true.
+- feedback must be null or brief encouragement when accepted.
+- if rejected, feedback must be ONE short actionable hint.
 - No style/naming/formatting nits. No extra features beyond the prompt.
 ${rules ? "\n" + rules : ""}
 `.trim();
@@ -915,7 +923,14 @@ ${rules ? "\n" + rules : ""}
   try {
     chat = await openai.chat.completions.create({
       model: MODEL,
-      messages: [{ role: "user", content: prompt }],
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a careful code-evaluation assistant. Accept any correct solution that satisfies the task. Do not overfit to the sample response.",
+        },
+        { role: "user", content: prompt },
+      ],
       temperature: 0.2,
       max_tokens: 220,
     });
@@ -969,6 +984,7 @@ async function evaluateCppCode(req, res) {
     feedbackPrompt = "",
     sampleResponse = "",
     followupPrompt = "",
+    outputText = "",
   } = req.body || {};
 
   if (!questionText || !studentCode) {
@@ -985,6 +1001,7 @@ async function evaluateCppCode(req, res) {
     sampleResponse,
     followupPrompt,
     lang: "cpp",
+    outputText,
   });
 
   const { instanceId, groupNum, answeredByUserId, retriesRequired } = req.body || {};

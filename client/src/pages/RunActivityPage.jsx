@@ -29,7 +29,7 @@ function RUNTRACE(tag, obj) {
 const DEBUG_FILES = false;
 const PAGE_TAG = 'RUN';
 
-let globalRetriesRequired = 0;
+let globalRetriesRequired = 1;
 
 
 // Map short role keys to full names
@@ -1350,7 +1350,7 @@ export default function RunActivityPage({
     {
       forceFollowup = false,
       groupNum,                 // REQUIRED: runtime group number (completed_groups+1)
-      retriesRequired = 0,      // OPTIONAL: global retry count
+      retriesRequired = 1,      // OPTIONAL: global retry count
       submissionString = "",    // REQUIRED: stable per-click fingerprint
       answeredByUserId,         // OPTIONAL: user.id
     } = {}
@@ -1401,7 +1401,7 @@ export default function RunActivityPage({
       instanceId: instanceIdNum,
       groupNum: Number(groupNum),
       answeredByUserId: Number(answeredByUserId ?? user?.id),
-      retriesRequired: Number(retriesRequired) || 0,
+      retriesRequired: Number(retriesRequired) || 1,
       submissionString: String(submissionString || ""),
     };
 
@@ -1460,6 +1460,16 @@ export default function RunActivityPage({
       const retriesRequiredOut = Number.isFinite(Number(data?.retriesRequired))
         ? Number(data.retriesRequired)
         : null;
+
+      console.log('[****EVAL RESULT]', {
+        qid,
+        accepted,
+        feedback,
+        canContinue,
+        retryCount,
+        retriesRequiredOut,
+        latencyMs: Math.round(performance.now() - t0),
+      });
 
       return {
         accepted,
@@ -1746,7 +1756,7 @@ export default function RunActivityPage({
 
   async function handleSubmit(forceOverride = false) {
     const attemptParts = [];
-    let retriesRequired = 0;
+    let retriesRequired = 1;
     let groupNum;
     if (isSubmitting) return;
     setIsSubmitting(true);
@@ -1819,7 +1829,7 @@ export default function RunActivityPage({
       groupNum = completedCount + 1; // ✅ 1-based, ALWAYS
 
       retriesRequired =
-        Number(currentGroup?.intro?.retriesRequired ?? 0) || 0;
+        Number(currentGroup?.intro?.retriesRequired ?? 1) || 1;
 
       blocks = [currentGroup.intro, ...currentGroup.content];
 
@@ -2049,11 +2059,6 @@ export default function RunActivityPage({
 
         codeCells.forEach(({ key, code }) => (answers[key] = code));
 
-        // this send all code, remove
-        /*const studentCode = codeCells
-          .map((c) => c.code || '')
-          .join('\n\n')
-          .trim();*/
         // ✅ AI should evaluate ONLY the most recent code block (last one)
         const lastCell = codeCells[codeCells.length - 1];
         const studentCode = String(lastCell?.code ?? '').trim();
@@ -2062,11 +2067,12 @@ export default function RunActivityPage({
           pickLangForBlock(block, studentCode) ||
           detectLanguageFromCode(studentCode) ||
           'python';
+
         attemptParts.push({
           qid,
           type: 'code',
           lang,
-          v: studentCode, // you said eval only the last cell — fine
+          v: studentCode,
         });
 
         if (!studentCode) {
@@ -2079,6 +2085,22 @@ export default function RunActivityPage({
           continue;
         }
 
+        // ✅ collect observed output for this question
+        const outputEls = container.querySelectorAll(
+          `[data-output-key^="${qid}output"]`
+        );
+
+        let combinedOutput = '';
+        outputEls.forEach((el) => {
+          const text = (el.textContent || '').trim();
+          if (text) {
+            combinedOutput += (combinedOutput ? '\n' : '') + text;
+          }
+        });
+
+        const outputText =
+          combinedOutput ||
+          String(existingAnswers?.[`${qid}output`]?.response ?? '').trim();
 
         try {
           console.log('[EVAL1] BEFORE FETCH', {
@@ -2087,7 +2109,10 @@ export default function RunActivityPage({
             hasLeft45: studentCode.includes('left(45)'),
             first120: studentCode.slice(0, 120),
             codeLen: studentCode.length,
+            outputLen: outputText.length,
+            outputPreview: outputText.slice(0, 120),
           });
+
           const evalUrl = `${API_BASE_URL}/api/ai/evaluate-code`;
 
           const payload = {
@@ -2097,19 +2122,23 @@ export default function RunActivityPage({
             lang,
             isCodeOnly: true,
 
-            // question-level metadata (separate fields)
+            // question-level metadata
             feedbackPrompt: block.feedback?.[0] || '',
             sampleResponse: block.samples?.[0] || '',
             followupPrompt: block.followups?.[0] || '',
 
-            // activity-level policy only
+            // activity-level policy
             guidance: activity?.aicodeguidance || '',
             instanceId: Number(instanceId),
             groupNum,
             answeredByUserId: Number(user?.id),
             retriesRequired,
             submissionString: groupSubmissionString,
+
+            // ✅ new
+            outputText,
           };
+
           const t0 = performance.now();
           console.log('[EVAL1] FETCH start', {
             qid,
@@ -2117,6 +2146,7 @@ export default function RunActivityPage({
             apiBase: API_BASE_URL,
             payloadKeys: Object.keys(payload),
             codeLen: studentCode?.length,
+            outputLen: outputText.length,
           });
 
           const controller = new AbortController();
@@ -2131,18 +2161,8 @@ export default function RunActivityPage({
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload),
               signal: controller.signal,
-
-              // IMPORTANT if your server uses cookies/sessions:
               credentials: 'include',
             });
-
-            /*console.log('[EVAL1] FETCH response', {
-              qid,
-              status: aiRes.status,
-              ok: aiRes.ok,
-              ct: aiRes.headers.get('content-type'),
-              ms: Math.round(performance.now() - t0),
-            });*/
 
             rawText = await aiRes.text();
             console.log('[EVAL1] FETCH raw (first 300)', {
@@ -2154,8 +2174,6 @@ export default function RunActivityPage({
               throw new Error(`evaluate-code ${aiRes.status}: ${(rawText || '').slice(0, 200)}`);
             }
 
-
-            // Parse JSON *from text* so you can see what was returned if parsing fails
             try {
               data = rawText ? JSON.parse(rawText) : null;
             } catch (e) {
@@ -2167,7 +2185,6 @@ export default function RunActivityPage({
               throw e;
             }
 
-            // 🔧 Normalize evaluate-code response shape so client uses consistent fields
             if (data && typeof data === 'object') {
               const feedback =
                 (typeof data.feedback === 'string' && data.feedback.trim()) ? data.feedback.trim()
@@ -2187,7 +2204,6 @@ export default function RunActivityPage({
                 feedback,
                 followup,
               };
-
             }
 
             console.log('[EVAL1] PARSED+NORMALIZED', {
@@ -2195,30 +2211,15 @@ export default function RunActivityPage({
               accepted: data?.accepted,
               feedbackLen: data?.feedback?.length || 0,
               feedbackPreview: (data?.feedback || '').slice(0, 120),
-              hasComment: !!data?.comment,
-              hasFollowupQuestion: !!data?.followupQuestion,
+              hasComment: false,
+              hasFollowupQuestion: false,
             });
 
-
-          } catch (err) {
-            console.error('[EVAL1] FETCH ERROR', {
-              qid,
-              name: err?.name,
-              msg: err?.message,
-              aborted: err?.name === 'AbortError',
-              ms: Math.round(performance.now() - t0),
-            });
-
-            // Do NOT deadlock the activity. Pick a policy:
-            // (1) Treat AI as unavailable but continue:
-            data = { feedback: '(AI unavailable; continuing)', followup: '' };
-
-            // OR (2) Treat as incomplete and block progression:
-            // unanswered.push(`${qid} (AI eval failed)`);
-            // continue;
+            if (data?.canContinue === true) {
+              setCanBypassGroups((prev) => ({ ...prev, [currentGroupIndex]: true }));
+            }
           } finally {
             clearTimeout(timeoutId);
-            console.log('[EVAL1] FETCH done', { qid, ms: Math.round(performance.now() - t0) });
           }
 
           const accepted = data?.accepted !== false;
@@ -2620,6 +2621,13 @@ export default function RunActivityPage({
         //console.log('[RUNDBG] after submit, about to reload', { loading: loadingRef.current, t: Date.now() });
         await loadActivity();
         //console.log('[RUNDBG] after submit, reload done');
+        // ✅ CLEAR BYPASS STATE AFTER SUCCESSFUL SUBMIT
+        setCanBypassGroups((prev) => {
+          const next = { ...prev };
+          delete next[currentGroupIndex];   // cleaner than setting false
+          return next;
+        });
+
         if (!isTestMode && overrideThisGroup) {
           // Clear any lingering AI suggestions for this group on the client side
           const qBlocksForGroup = blocks.filter((b) => b.type === 'question');
@@ -3228,7 +3236,7 @@ export default function RunActivityPage({
                   </Button>
 
                   {/* Let students bypass AI gating in learning mode */}
-                  {hasAIGuidanceForGroup && canBypassGroups[index] === true && (
+                  {canBypassGroups[index] === true && (
                     <Button
                       variant="outline-secondary"
                       size="sm"

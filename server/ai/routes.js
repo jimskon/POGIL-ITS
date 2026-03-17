@@ -28,13 +28,14 @@ router.post('/evaluate-python-code', evaluatePythonCode);
 // Generic code (Python/C++/etc.)
 router.post('/evaluate-code', async (req, res) => {
   console.error('[AI!!!!!] /api/ai/evaluate-code');
-  try {
-    const result = await evaluateCode(req.body);
-    return res.json(result);
-  } catch (err) {
-    console.error('❌ /api/ai/evaluate-code failed:', err);
-    return res.status(500).json({ feedback: null, followup: null });
+
+  const lang = String(req.body?.lang || '').toLowerCase();
+
+  if (lang === 'cpp' || lang === 'c++') {
+    return evaluateCppCode(req, res);
   }
+
+  return evaluatePythonCode(req, res);
 });
 
 // C++ wrapper (if you’re using it)
