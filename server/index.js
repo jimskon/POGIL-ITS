@@ -31,7 +31,7 @@ const allowedOrigins = new Set([
   "https://www.colearn-ai.com",
   "https://jimskon.com",
   "https://csits.kenyon.edu",
-  "https://csdev.kenyon.edu"
+    "https://csdev.kenyon.edu",
   "https://snhu.colearn-ai.com"
 ]);
 
