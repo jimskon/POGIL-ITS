@@ -124,18 +124,25 @@ export default function CourseActivitiesPage() {
                     {user?.role === 'student' && activity.instance_id && !activity.hidden ? (
 
                       (() => {
-                        //const isSubmitted = !!activity.submitted_at;
-                        const isComplete = !!activity.is_complete;
+                        const status = activity.student_status;
+
+                        let label = 'Start';
+                        let variant = 'success';
+
+                        if (status === 'in_progress') {
+                          label = 'Resume';
+                          variant = 'warning';
+                        } else if (status === 'complete') {
+                          label = 'Review';
+                          variant = 'primary';
+                        }
 
                         return (
                           <Button
-                            //variant={isSubmitted ? 'primary' : 'success'}
-                            variant={isComplete ? 'primary' : 'success'}
-
+                            variant={variant}
                             onClick={() => handleDoActivity(activity)}
                           >
-                            {/* {isSubmitted ? 'Review' : 'Start'} */}
-                            {isComplete ? 'Review' : 'Start'}
+                            {label}
                           </Button>
                         );
                       })()

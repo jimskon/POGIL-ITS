@@ -163,6 +163,7 @@ async function getCourseActivities(req, res) {
     a.order_index AS activity_index,
     a.is_test AS is_test,
 
+    -- instance id
     (
       SELECT ai2.id
       FROM activity_instances ai2
@@ -173,6 +174,7 @@ async function getCourseActivities(req, res) {
       LIMIT 1
     ) AS instance_id,
 
+    -- submitted_at
     (
       SELECT ai2.submitted_at
       FROM activity_instances ai2
@@ -183,6 +185,7 @@ async function getCourseActivities(req, res) {
       LIMIT 1
     ) AS submitted_at,
 
+    -- instance_status (keep for now, but no longer primary)
     (
       SELECT ai2.status
       FROM activity_instances ai2
@@ -192,6 +195,39 @@ async function getCourseActivities(req, res) {
         AND gm.student_id = ?
       LIMIT 1
     ) AS instance_status,
+
+    -- 🔥 NEW: progress_status (source of truth)
+    (
+      SELECT ai2.progress_status
+      FROM activity_instances ai2
+      JOIN group_members gm ON gm.activity_instance_id = ai2.id
+      WHERE ai2.activity_id = a.id
+        AND ai2.course_id = c.id
+        AND gm.student_id = ?
+      LIMIT 1
+    ) AS progress_status,
+
+    -- 🔥 NEW: completed_groups
+    (
+      SELECT ai2.completed_groups
+      FROM activity_instances ai2
+      JOIN group_members gm ON gm.activity_instance_id = ai2.id
+      WHERE ai2.activity_id = a.id
+        AND ai2.course_id = c.id
+        AND gm.student_id = ?
+      LIMIT 1
+    ) AS completed_groups,
+
+    -- 🔥 NEW: total_groups
+    (
+      SELECT ai2.total_groups
+      FROM activity_instances ai2
+      JOIN group_members gm ON gm.activity_instance_id = ai2.id
+      WHERE ai2.activity_id = a.id
+        AND ai2.course_id = c.id
+        AND gm.student_id = ?
+      LIMIT 1
+    ) AS total_groups,
 
     COUNT(ai.id) AS group_count,
     MAX(ai.status = 'in_progress') AS is_ready,
@@ -207,11 +243,33 @@ async function getCourseActivities(req, res) {
   ${studentHaving}
   ORDER BY a.order_index ASC
   `,
-      [userId, userId, userId, courseId]
+      [
+        userId, // instance_id
+        userId, // submitted_at
+        userId, // instance_status
+        userId, // progress_status
+        userId, // completed_groups
+        userId, // total_groups
+        courseId
+      ]
     );
 
     const activities = rows.map((row) => {
       const is_test = row.is_test; // 1 / 0 / null
+      const status = (row.progress_status || '').toLowerCase();
+      const tg = Number(row.total_groups || 0);
+      const cg = Number(row.completed_groups || 0);
+
+      let student_status = 'not_started';
+
+      if (status === 'completed' || (tg > 0 && cg >= tg)) {
+        student_status = 'complete';
+      } else if (status === 'not_started' || (!status && cg === 0)) {
+        student_status = 'not_started';
+      } else {
+        student_status = 'in_progress';
+      }
+      const isComplete = student_status === 'complete';
 
       return {
         activity_id: row.activity_id,
@@ -219,18 +277,16 @@ async function getCourseActivities(req, res) {
         title: row.activity_title || row.activity_name,
         order_index: row.activity_index,
 
-        is_test,                    // raw (can be null)
-        isTest: is_test === 1,      // true only when explicitly test
+        is_test,
+        isTest: is_test === 1,
         isTestKnown: is_test !== null && is_test !== undefined,
 
         instance_id: row.instance_id || null,
         submitted_at: row.submitted_at || null,
-
         instance_status: row.instance_status || null,
-        is_complete:
-          row.instance_status === 'complete' ||
-          row.instance_status === 'completed' ||
-          !!row.submitted_at,
+
+        student_status,
+        is_complete: isComplete,
 
         is_ready: !!row.is_ready,
         has_groups: row.group_count > 0,
