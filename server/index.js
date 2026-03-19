@@ -32,6 +32,7 @@ const allowedOrigins = new Set([
   "https://jimskon.com",
   "https://csits.kenyon.edu",
   "https://csdev.kenyon.edu"
+  "https://snhu.colearn-ai.com"
 ]);
 
 app.use(cors({
