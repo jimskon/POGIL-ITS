@@ -63,7 +63,7 @@ CREATE TABLE `activity_instances` (
   CONSTRAINT `activity_instances_ibfk_2` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`),
   CONSTRAINT `activity_instances_ibfk_3` FOREIGN KEY (`active_student_id`) REFERENCES `users` (`id`),
   CONSTRAINT `fk_ai_submitted_by_user` FOREIGN KEY (`submitted_by_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=493 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=506 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `course_enrollments`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -128,7 +128,7 @@ CREATE TABLE `feedback` (
   PRIMARY KEY (`id`),
   KEY `idx_feedback_response` (`response_id`),
   CONSTRAINT `fk_feedback_response` FOREIGN KEY (`response_id`) REFERENCES `responses` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=7 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `followups`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -159,7 +159,7 @@ CREATE TABLE `group_members` (
   KEY `student_id` (`student_id`),
   CONSTRAINT `group_members_ibfk_1` FOREIGN KEY (`activity_instance_id`) REFERENCES `activity_instances` (`id`) ON DELETE CASCADE,
   CONSTRAINT `group_members_ibfk_2` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=915 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=940 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `pending_users`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -227,7 +227,7 @@ CREATE TABLE `responses` (
   KEY `idx_answered_by` (`answered_by_user_id`),
   CONSTRAINT `fk_responses_ai` FOREIGN KEY (`activity_instance_id`) REFERENCES `activity_instances` (`id`) ON DELETE CASCADE,
   CONSTRAINT `fk_responses_user` FOREIGN KEY (`answered_by_user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=1172027 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=2667828 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `users`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
