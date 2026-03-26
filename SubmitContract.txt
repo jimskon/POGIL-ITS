@@ -1,0 +1,28 @@
+Submit COntract:
+{
+  studentId: user.id,
+  groupNum,
+  retriesRequired,
+  advanceRequested: !forceOverride,
+  forceOverride: !!forceOverride,
+
+  attempt: {
+    submissionString: groupSubmissionString,
+    blocked: computedState === 'inprogress',
+    canAdvance: computedState === 'complete',
+    unanswered,
+    answers
+  }
+}
+
+
+attempt marker:
+
+{
+  "kind": "group_attempt",
+  "groupNum": 1,
+  "blocked": true,
+  "forceOverride": false,
+  "canAdvance": false,
+  "submissionString": "..."
+}

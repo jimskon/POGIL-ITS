@@ -1042,7 +1042,7 @@ export default function RunActivityPage({
   }
 
   async function saveResponse(instanceId, key, value) {
-    await fetch(`${API_BASE_URL}/api/responses/bulk-save`, {
+    await fetch(`${API_BASE_URL}/api/responses/draft-bulk`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -2051,6 +2051,12 @@ export default function RunActivityPage({
           answers[`${qid}S`] = 'inprogress';
           unanswered.push(`${qid} (code not changed)`);
           unansweredMap[qid] = 'Unanswered: modify the code before submitting.';
+          answers[`${qid}CodeFeedback`] = msg;
+          answers[`${qid}CodeAccepted`] = 'false';
+          answers[`${qid}CodeCanContinue`] = 'false';
+          answers[`${qid}CodeRetryCount`] = '';
+          answers[`${qid}CodeRetriesRequired`] = '';
+          answers[`${qid}CodeSubmissionString`] = groupSubmissionString;
 
           codeCells.forEach(({ key, code }) => (answers[key] = code));
           continue;
@@ -2082,6 +2088,13 @@ export default function RunActivityPage({
           answers[`${qid}S`] = 'inprogress';
           unanswered.push(`${qid} (no code)`);
           unansweredMap[qid] = 'Unanswered: add or modify code before submitting.';
+          answers[`${qid}CodeFeedback`] = msg;
+          answers[`${qid}CodeAccepted`] = 'false';
+          answers[`${qid}CodeCanContinue`] = 'false';
+          answers[`${qid}CodeRetryCount`] = '';
+          answers[`${qid}CodeRetriesRequired`] = '';
+          answers[`${qid}CodeSubmissionString`] = groupSubmissionString;
+
           continue;
         }
 
@@ -2226,6 +2239,18 @@ export default function RunActivityPage({
 
           let feedback = String(data?.feedback ?? '').trim();
           let followup = String(data?.followup ?? '').trim();
+
+          // ---- PERSIST CODE AI STATE INTO ANSWERS (FOR HISTORY) ----
+          answers[`${qid}CodeFeedback`] = feedback || '';
+          answers[`${qid}CodeAccepted`] = accepted ? 'true' : 'false';
+          answers[`${qid}CodeCanContinue`] = data?.canContinue ? 'true' : 'false';
+
+          answers[`${qid}CodeRetryCount`] =
+            data?.retryCount != null ? String(data.retryCount) : '';
+
+          answers[`${qid}CodeRetriesRequired`] =
+            data?.retriesRequired != null ? String(data.retriesRequired) : '';
+          answers[`${qid}CodeSubmissionString`] = groupSubmissionString;
 
           if (!feedback && followup) {
             feedback = followup;
@@ -2556,27 +2581,87 @@ export default function RunActivityPage({
     });*/
 
     setUnansweredShown(unansweredMap);
-    if (computedState === 'inprogress') {
-      /*console.warn('[RUNDBG] BLOCKING GROUP ADVANCE', {
-        pendingBase,
-        pendingByStatus,
-        unanswered,
-        overrideThisGroup,
-        statuses: qBlocks.map(b => {
-          const qid = `${b.groupId}${b.id}`;
-          return {
-            qid,
-            S_new: answers[`${qid}S`],
-            S_old: existingAnswers[`${qid}S`]?.response,
-            hasAnswer: String(answers[qid] ?? '').trim().length > 0,
-          };
-        }),
-      });*/
 
+    const blocked = computedState === 'inprogress';
+    const canAdvance = computedState === 'complete';
+
+    const attempt = {
+      submissionString: groupSubmissionString,
+      blocked,
+      canAdvance,
+      unanswered,
+      answers,
+    };
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            studentId: user.id,
+            groupNum,
+            retriesRequired,
+            forceOverride: !!forceOverride,
+            attempt,
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        alert(`Submission failed: ${errorData.error || 'Unknown error'}`);
+        setIsSubmitting(false);
+        return;
+      }
+
+      const result = await response.json().catch(() => ({}));
+
+      await loadActivity();
+
+      if (blocked) {
+        alert(
+          `Your attempt was saved, but this group cannot advance yet.\n\n` +
+          `Open the instructor history later to review the full attempt transcript.`
+        );
+        setIsSubmitting(false);
+        return;
+      }
+
+      setCanBypassGroups((prev) => {
+        const next = { ...prev };
+        delete next[currentGroupIndex];
+        return next;
+      });
+
+      if (!isTestMode && forceOverride) {
+        const qBlocksForGroup = blocks.filter((b) => b.type === 'question');
+        setTextFeedbackShown((prev) => {
+          const next = { ...prev };
+          qBlocksForGroup.forEach((b) => {
+            const qid = `${b.groupId}${b.id}`;
+            delete next[qid];
+          });
+          return next;
+        });
+      }
+
+      if (currentGroupIndex + 1 === groups.length) {
+        await fetch(`${API_BASE_URL}/api/responses/mark-complete`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ instanceId }),
+        });
+      }
+    } catch (err) {
+      console.error('❌ Submission failed:', err);
+      alert('An error occurred during submission.');
+    } finally {
       setIsSubmitting(false);
-      return;
     }
-
 
     if (computedState === 'complete' && overrideThisGroup && pendingBase) {
       alert(
@@ -2588,15 +2673,25 @@ export default function RunActivityPage({
 
 
     try {
-      //console.log('[RUNDBG] retries for group', { groupNum, retriesRequired });
-
-      /*console.log('[RUNDBG] ABOUT TO SUBMIT-GROUP', {
+      console.log('[ABOUT TO SUBMIT GROUP]', {
+        instanceId,
         groupNum,
         retriesRequired,
-        computedState,
-        stateKey,
-        stateVal: answers[stateKey]
-      });*/
+        answersKeys: Object.keys(answers || {}).sort(),
+        answersPreview: Object.fromEntries(
+          Object.entries(answers || {}).map(([k, v]) => [k, String(v).slice(0, 120)])
+        ),
+      });
+      const blocked = computedState === 'inprogress';
+      const canAdvance = computedState === 'complete';
+
+      const attempt = {
+        submissionString: groupSubmissionString,
+        blocked,
+        canAdvance,
+        unanswered,
+        answers,
+      };
       const response = await fetch(
         `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`,
         {
@@ -2607,7 +2702,8 @@ export default function RunActivityPage({
             studentId: user.id,
             groupNum,
             retriesRequired,
-            answers,
+            forceOverride: !!forceOverride,
+            attempt,
           })
         }
       );
@@ -2867,21 +2963,23 @@ export default function RunActivityPage({
     }));
 
     // ✅ Always save to DB (THIS fixes “revert on refresh”)
-    try {
-      await fetch(`${API_BASE_URL}/api/responses/code`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include', // keep if you use cookies/sessions
-        body: JSON.stringify({
-          question_id: responseKey,
-          activity_instance_id: instanceId,
-          user_id: user?.id,
-          response: updatedCode,
-        }),
-      });
-      dirtyKeysRef.current.delete(responseKey);
-    } catch (err) {
-      console.error('handleCodeChange failed:', err);
+    if (isActive) {
+      try {
+        await fetch(`${API_BASE_URL}/api/responses/draft`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            question_id: responseKey,
+            activity_instance_id: instanceId,
+            user_id: user?.id,
+            response: updatedCode,
+          }),
+        });
+        dirtyKeysRef.current.delete(responseKey);
+      } catch (err) {
+        console.error('handleCodeChange failed:', err);
+      }
     }
 
     // ✅ Only broadcast if active (THIS fixes observer lag behavior)

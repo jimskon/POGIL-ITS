@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/db.sh"
+
+# Enable append-only response history and add draft storage.
+# DEV CLEANUP VERSION:
+# - adds submit_id
+# - drops legacy unique_response constraint
+# - adds history-oriented indexes
+# - adds response_drafts for latest in-progress values
+#
+# Do not rewrite this migration once it has been applied to production.
+
+cd "$(dirname "$0")/.."
+
+ENV_FILE="server/.env"
+
+if [ ! -f "$ENV_FILE" ]; then
+  echo "ERROR: Could not find $ENV_FILE"
+  exit 1
+fi
+
+export $(grep -E '^(DB_HOST|DB_PORT|DB_USER|DB_PASSWORD|DB_NAME)=' "$ENV_FILE" | xargs)
+
+: "${DB_HOST:?DB_HOST not set in server/.env}"
+: "${DB_USER:?DB_USER not set in server/.env}"
+: "${DB_PASSWORD:?DB_PASSWORD not set in server/.env}"
+: "${DB_NAME:?DB_NAME not set in server/.env}"
+DB_PORT="${DB_PORT:-3306}"
+
+echo "Running migration on ${DB_NAME} at ${DB_HOST}:${DB_PORT} ..."
+
+MYSQL_CMD=(mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" "-p${DB_PASSWORD}" "$DB_NAME")
+
+"${MYSQL_CMD[@]}" <<'SQL'
+-- Add submit_id for grouping rows created by a single submit
+ALTER TABLE responses
+  ADD COLUMN IF NOT EXISTS submit_id CHAR(36) NULL AFTER question_id;
+
+-- Drop old overwrite-model uniqueness so responses can be append-only
+ALTER TABLE responses
+  DROP INDEX IF EXISTS unique_response;
+
+-- Helpful indexes for transcript/history queries
+ALTER TABLE responses
+  ADD INDEX IF NOT EXISTS idx_responses_ai_submit_id (activity_instance_id, submit_id, id),
+  ADD INDEX IF NOT EXISTS idx_responses_ai_qid_id (activity_instance_id, question_id, id),
+  ADD INDEX IF NOT EXISTS idx_responses_submit_id (submit_id);
+
+-- Separate table for latest in-progress draft values
+CREATE TABLE IF NOT EXISTS response_drafts (
+  id INT(11) NOT NULL AUTO_INCREMENT,
+  activity_instance_id INT(11) NOT NULL,
+  question_id VARCHAR(64) NOT NULL,
+  response_type ENUM('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
+  response MEDIUMTEXT DEFAULT NULL,
+  answered_by_user_id INT(11) NOT NULL,
+  updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_draft (activity_instance_id, question_id),
+  KEY idx_draft_instance (activity_instance_id),
+  KEY idx_draft_answered_by (answered_by_user_id),
+  CONSTRAINT fk_response_drafts_ai
+    FOREIGN KEY (activity_instance_id) REFERENCES activity_instances(id) ON DELETE CASCADE,
+  CONSTRAINT fk_response_drafts_user
+    FOREIGN KEY (answered_by_user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+SQL
+
+echo "Migration completed successfully."
