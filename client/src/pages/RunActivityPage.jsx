@@ -241,23 +241,23 @@ export default function RunActivityPage({
       });
     }
 
-    if (fm !== undefined) {
+    /*if (fm !== undefined) {
       socket.emit('response:update', {
         instanceId,
         responseKey: `${qid}FM`,
         value: fm ?? '',
         answeredBy: user.id,
       });
-    }
+    }*/
 
-    if (af !== undefined) {
+    /*if (af !== undefined) {
       socket.emit('response:update', {
         instanceId,
         responseKey: `${qid}AF`,
         value: af ?? '',
         answeredBy: user.id,
       });
-    }
+    }*/
   }
   function baseQidFromResponseKey(key) {
     const k = String(key || '').toLowerCase();
@@ -2425,8 +2425,8 @@ export default function RunActivityPage({
         existingAnswers
       );
 
-      const prevAF = lowerResp(existingAnswers, `${qid}AF`); // "active" or "resolved"
-      const prevFM = lowerResp(existingAnswers, `${qid}FM`); // "accepted" or "needsrevision"
+      //const prevAF = lowerResp(existingAnswers, `${qid}AF`); // "active" or "resolved"
+      //const prevFM = lowerResp(existingAnswers, `${qid}FM`); // "accepted" or "needsrevision"
 
       // ✅ Clear old AI comment ONLY on submit (before re-evaluating)
       setTextFeedbackShown((prev) => {
@@ -2436,8 +2436,8 @@ export default function RunActivityPage({
       });
 
       answers[`${qid}F1`] = '';
-      answers[`${qid}FM`] = 'accepted';   // default; may flip to needsRevision
-      answers[`${qid}AF`] = 'resolved';   // default; may flip to active
+      //answers[`${qid}FM`] = 'accepted';   // default; may flip to needsRevision
+      //answers[`${qid}AF`] = 'resolved';   // default; may flip to active
 
       // Tell observers to clear the yellow box too
       emitTextAIState(qid, { f1: '', fm: 'accepted', af: 'resolved' });
@@ -2499,7 +2499,7 @@ export default function RunActivityPage({
           setTextFeedbackShown((prev) => ({ ...prev, [qid]: f }));
 
           answers[`${qid}F1`] = f;
-          answers[`${qid}FM`] = accepted ? 'accepted' : 'needsRevision';
+          //answers[`${qid}FM`] = accepted ? 'accepted' : 'needsRevision';
         } else {
           if (becomingAccepted && prevFM === 'needsrevision') {
             setTextFeedbackShown((prev) => {
@@ -2509,16 +2509,16 @@ export default function RunActivityPage({
             });
 
             answers[`${qid}F1`] = '';
-            answers[`${qid}FM`] = 'accepted';
+            //answers[`${qid}FM`] = 'accepted';
           }
         }
 
-        answers[`${qid}AF`] = accepted ? 'resolved' : 'active';
+        //answers[`${qid}AF`] = accepted ? 'resolved' : 'active';
 
         emitTextAIState(qid, {
-          af: answers[`${qid}AF`],
+          //af: answers[`${qid}AF`],
           f1: answers[`${qid}F1`],
-          fm: answers[`${qid}FM`],
+          //fm: answers[`${qid}FM`],
         });
       }
 
@@ -2670,88 +2670,6 @@ export default function RunActivityPage({
       );
     }
 
-
-
-    try {
-      console.log('[ABOUT TO SUBMIT GROUP]', {
-        instanceId,
-        groupNum,
-        retriesRequired,
-        answersKeys: Object.keys(answers || {}).sort(),
-        answersPreview: Object.fromEntries(
-          Object.entries(answers || {}).map(([k, v]) => [k, String(v).slice(0, 120)])
-        ),
-      });
-      const blocked = computedState === 'inprogress';
-      const canAdvance = computedState === 'complete';
-
-      const attempt = {
-        submissionString: groupSubmissionString,
-        blocked,
-        canAdvance,
-        unanswered,
-        answers,
-      };
-      const response = await fetch(
-        `${API_BASE_URL}/api/activity-instances/${instanceId}/submit-group`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({
-            studentId: user.id,
-            groupNum,
-            retriesRequired,
-            forceOverride: !!forceOverride,
-            attempt,
-          })
-        }
-      );
-      //console.log('[RUNDBG] submit-group response', { ok: response.ok, status: response.status });
-
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        alert(`Submission failed: ${errorData.error || 'Unknown error'}`);
-      } else {
-        //console.log('[RUNDBG] after submit, about to reload', { loading: loadingRef.current, t: Date.now() });
-        await loadActivity();
-        //console.log('[RUNDBG] after submit, reload done');
-        // ✅ CLEAR BYPASS STATE AFTER SUCCESSFUL SUBMIT
-        setCanBypassGroups((prev) => {
-          const next = { ...prev };
-          delete next[currentGroupIndex];   // cleaner than setting false
-          return next;
-        });
-
-        if (!isTestMode && overrideThisGroup) {
-          // Clear any lingering AI suggestions for this group on the client side
-          const qBlocksForGroup = blocks.filter((b) => b.type === 'question');
-          setTextFeedbackShown((prev) => {
-            const next = { ...prev };
-            qBlocksForGroup.forEach((b) => {
-              const qid = `${b.groupId}${b.id}`;
-              delete next[qid];
-            });
-            return next;
-          });
-        }
-
-        if (currentGroupIndex + 1 === groups.length) {
-          await fetch(`${API_BASE_URL}/api/responses/mark-complete`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({ instanceId }),
-          });
-        }
-      }
-    } catch (err) {
-      console.error('❌ Submission failed:', err);
-      alert('An error occurred during submission.');
-    } finally {
-      setIsSubmitting(false);
-    }
   } // END handleSubmit
 
   async function handleRegradeTest() {

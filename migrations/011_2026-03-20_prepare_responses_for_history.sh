@@ -8,7 +8,8 @@ source "$SCRIPT_DIR/db.sh"
 # Enable append-only response history and add draft storage.
 # DEV CLEANUP VERSION:
 # - adds submit_id
-# - drops legacy unique_response constraint
+# - drops legacy unique constraints on responses(activity_instance_id, question_id)
+# - drops legacy uniqueness on responses(activity_instance_id, question_id, response_type)
 # - adds history-oriented indexes
 # - adds response_drafts for latest in-progress values
 #
@@ -40,15 +41,67 @@ MYSQL_CMD=(mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" "-p${DB_PASSWORD}" "$
 ALTER TABLE responses
   ADD COLUMN IF NOT EXISTS submit_id CHAR(36) NULL AFTER question_id;
 
--- Drop old overwrite-model uniqueness so responses can be append-only
-ALTER TABLE responses
-  DROP INDEX IF EXISTS unique_response;
+-- Robust, idempotent removal of legacy uniqueness indexes.
+-- Different environments may have different legacy names.
+SET @db := DATABASE();
+
+SET @drop_idx := (
+  SELECT IF(
+    EXISTS (
+      SELECT 1
+      FROM information_schema.statistics
+      WHERE table_schema = @db
+        AND table_name = 'responses'
+        AND index_name = 'unique_response'
+    ),
+    'ALTER TABLE responses DROP INDEX unique_response',
+    'SELECT ''responses.unique_response not present; skipping'' AS msg'
+  )
+);
+PREPARE stmt FROM @drop_idx;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @drop_idx := (
+  SELECT IF(
+    EXISTS (
+      SELECT 1
+      FROM information_schema.statistics
+      WHERE table_schema = @db
+        AND table_name = 'responses'
+        AND index_name = 'uq_responses_instance_question'
+    ),
+    'ALTER TABLE responses DROP INDEX uq_responses_instance_question',
+    'SELECT ''responses.uq_responses_instance_question not present; skipping'' AS msg'
+  )
+);
+PREPARE stmt FROM @drop_idx;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
+
+SET @drop_idx := (
+  SELECT IF(
+    EXISTS (
+      SELECT 1
+      FROM information_schema.statistics
+      WHERE table_schema = @db
+        AND table_name = 'responses'
+        AND index_name = 'uniq_resp'
+    ),
+    'ALTER TABLE responses DROP INDEX uniq_resp',
+    'SELECT ''responses.uniq_resp not present; skipping'' AS msg'
+  )
+);
+PREPARE stmt FROM @drop_idx;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- Helpful indexes for transcript/history queries
 ALTER TABLE responses
   ADD INDEX IF NOT EXISTS idx_responses_ai_submit_id (activity_instance_id, submit_id, id),
   ADD INDEX IF NOT EXISTS idx_responses_ai_qid_id (activity_instance_id, question_id, id),
-  ADD INDEX IF NOT EXISTS idx_responses_submit_id (submit_id);
+  ADD INDEX IF NOT EXISTS idx_responses_submit_id (submit_id),
+  ADD INDEX IF NOT EXISTS idx_responses_ai_id (activity_instance_id, id);
 
 -- Separate table for latest in-progress draft values
 CREATE TABLE IF NOT EXISTS response_drafts (
