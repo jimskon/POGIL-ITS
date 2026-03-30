@@ -526,16 +526,17 @@ async function evaluateStudentResponse(req, res) {
     const sampleWords = words(sample);
     const overlaps = (arr) => arr.some((w) => s.includes(w));
 
-    const hasEvidence =
-      overlaps(qWords) ||
-      overlaps(sampleWords) ||
-      /\d+\.\s+\S+/.test(answerRaw);
-
-    if (!hasEvidence) {
+    // Only reject truly bad answers
+    if (!answerRaw || looksGibberish(answerRaw)) {
       accepted = false;
       feedback = followupQ;
       return await applyGateAndSend();
     }
+
+    // Otherwise accept — do NOT enforce keyword overlap
+    accepted = true;
+    feedback = null;
+    return await applyGateAndSend();
 
     accepted = true;
     feedback = null;
