@@ -688,8 +688,7 @@ async function submitGroupResponses(req, res) {
       const qid = String(qidRaw || '').trim();
       if (!qid) continue;
 
-      const value = valueRaw == null ? '' : String(valueRaw);
-      if (!value.trim()) continue;
+      const value = valueRaw == null
 
       await appendResponse(conn, instanceId, submitId, qid, value, {
         type: 'text',
@@ -1825,31 +1824,15 @@ async function getInstanceResponseHistory(req, res) {
          r.response_type,
          r.response,
          r.answered_by_user_id,
-         r.submitted_at
+         r.submitted_at,
+         r.updated_at
        FROM responses r
        WHERE r.activity_instance_id = ?
        ORDER BY r.id ASC`,
       [instanceId]
     );
 
-    const submits = [];
-    const bySubmit = new Map();
-
-    for (const row of rows) {
-      const sid = row.submit_id || `legacy:${row.id}`;
-      if (!bySubmit.has(sid)) {
-        bySubmit.set(sid, {
-          submit_id: sid,
-          submitted_at: row.submitted_at,
-          answered_by_user_id: row.answered_by_user_id,
-          rows: [],
-        });
-        submits.push(bySubmit.get(sid));
-      }
-      bySubmit.get(sid).rows.push(row);
-    }
-
-    res.json({ submits });
+    res.json({ rows });
   } catch (err) {
     console.error('❌ getInstanceResponseHistory error:', err);
     res.status(500).json({ error: 'Failed to fetch response history' });

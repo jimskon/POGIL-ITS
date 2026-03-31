@@ -1,7 +1,7 @@
 // client/src/pages/RunActivityPage.jsx
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
-import { Container, Alert, Button, Spinner } from 'react-bootstrap';
+import { Container, Alert, Button, ButtonGroup, Spinner } from 'react-bootstrap';
 import Prism from 'prismjs';
 import 'prismjs/themes/prism.css';
 import 'prismjs/components/prism-python';
@@ -15,6 +15,8 @@ import { parseUtcDbDatetime } from '../utils/time';
 import RunActivityTestStatusBanner from '../components/RunActivityTestStatusBanner';
 import RunActivityFloatingTimer from '../components/RunActivityFloatingTimer';
 import QuestionScorePanel from '../components/QuestionScorePanel';
+import RunActivityHistoryView from '../components/RunActivityHistoryView';
+
 
 function lowerResp(obj, key) {
   return String(obj?.[key]?.response ?? '').trim().toLowerCase();
@@ -223,9 +225,22 @@ export default function RunActivityPage({
   activeStudentId,
   setActiveStudentId,
 }) {
+  const [viewMode, setViewMode] = useState('latest');
+  const { user, loading } = useUser();
+
+  const canViewHistory =
+    user?.role === 'root' ||
+    user?.role === 'creator' ||
+    user?.role === 'instructor';
+
+  const [historyRows, setHistoryRows] = useState([]);
+
+  const effectiveViewMode = canViewHistory ? viewMode : 'latest';
+
   const codeByKeyRef = useRef(Object.create(null));
 
   const dirtyKeysRef = useRef(new Set());
+
   // Tracks which base questions have been edited since last AI evaluation.
   // Prevents loadActivity() from rehydrating stale suggestions while student is revising.
   const dirtyTextQidsRef = useRef(new Set());
@@ -312,7 +327,6 @@ export default function RunActivityPage({
   const { instanceId } = useParams();
   const location = useLocation();
   const courseName = location.state?.courseName;
-  const { user, loading } = useUser();
   const [followupsShown, setFollowupsShown] = useState({});
   const [followupAnswers, setFollowupAnswers] = useState({});
 
@@ -330,13 +344,13 @@ export default function RunActivityPage({
 
 
   const [unansweredShown, setUnansweredShown] = useState({}); // { "1e": "Unanswered: ..." }
-
-
+  const [submitAlert, setSubmitAlert] = useState(null);
 
   const [groups, setGroups] = useState([]);
   const [activeStudentName, setActiveStudentName] = useState('');
   const [preamble, setPreamble] = useState([]);
   const [existingAnswers, setExistingAnswers] = useState({});
+
   const getLatestCode = (key) => {
     // IMPORTANT: return null/undefined when missing, not ''
     if (Object.prototype.hasOwnProperty.call(codeByKeyRef.current, key)) {
@@ -657,6 +671,7 @@ export default function RunActivityPage({
   }, [isTestMode, groups, existingAnswers]);
 
   const handleUpdateFileContents = (updaterFn) => {
+    setSubmitAlert(null);
     setLastEditTs(Date.now()); // ✅ prevents periodic loadActivity() from clobbering local file edits
     setFileContents((prev) => {
       const updated = updaterFn(prev);
@@ -669,8 +684,8 @@ export default function RunActivityPage({
 
   // For manual edits in <FileBlock> textareas
   const handleFileChange = (fileKey, newText, meta = {}) => {
+    setSubmitAlert(null);
     setLastEditTs(Date.now()); // ✅ prevents periodic loadActivity() from clobbering local file edits
-
     const raw = meta.filename || fileKey || '';
     const filename = raw.startsWith('file:') ? raw.slice('file:'.length) : raw;
 
@@ -770,6 +785,13 @@ export default function RunActivityPage({
       loadActivity();
     }
   }, [user?.id, instanceId]);
+
+
+  useEffect(() => {
+    if (effectiveViewMode === 'history' && canViewHistory && instanceId) {
+      loadHistory();
+    }
+  }, [effectiveViewMode, canViewHistory, instanceId]);
 
   // NOTE: findQuestionBlockByQid moved inside component so it can see `groups`
   function findQuestionBlockByQid(qid) {
@@ -1344,6 +1366,50 @@ export default function RunActivityPage({
     }
   }
 
+  async function loadHistory() {
+    try {
+      const url = `${API_BASE_URL}/api/activity-instances/${instanceId}/responses/history`;
+      console.log('[HISTORY] fetching', { url, instanceId });
+
+      const res = await fetch(url, {
+        credentials: 'include',
+      });
+
+      const raw = await res.text();
+      console.log('[HISTORY] response', {
+        ok: res.ok,
+        status: res.status,
+        rawHead: raw.slice(0, 500),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Failed to load history: ${res.status}`);
+      }
+
+      let data = null;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch (e) {
+        console.error('[HISTORY] JSON parse failed', e);
+        throw e;
+      }
+
+      console.log('[HISTORY] parsed', data);
+
+      if (Array.isArray(data)) {
+        setHistoryRows(data);
+      } else if (Array.isArray(data?.rows)) {
+        setHistoryRows(data.rows);
+      } else {
+        console.warn('[HISTORY] unexpected payload shape', data);
+        setHistoryRows([]);
+      }
+    } catch (err) {
+      console.error('Failed to load response history', err);
+      setHistoryRows([]);
+    }
+  }
+
   async function evaluateResponseWithAI(
     questionBlock,
     studentAnswer,
@@ -1759,6 +1825,7 @@ export default function RunActivityPage({
     let retriesRequired = 1;
     let groupNum;
     if (isSubmitting) return;
+    setSubmitAlert(null);
     setIsSubmitting(true);
 
     let groupSubmissionString = null;
@@ -1904,9 +1971,10 @@ export default function RunActivityPage({
     }
 
     // ---------- ORIGINAL LEARNING-MODE PATH ----------
-    const answers = {};
-    const unanswered = [];
-    const unansweredMap = {};
+const answers = {};
+const missingRequired = [];
+const missingRequiredMap = {};
+const pendingRevision = [];
 
     for (let block of blocks) {
       if (block.type !== 'question') continue;
@@ -2049,8 +2117,8 @@ export default function RunActivityPage({
           }
 
           answers[`${qid}S`] = 'inprogress';
-          unanswered.push(`${qid} (code not changed)`);
-          unansweredMap[qid] = 'Unanswered: modify the code before submitting.';
+missingRequired.push(`${qid} (code not changed)`);
+missingRequiredMap[qid] = 'Unanswered: modify the code before submitting.';
           answers[`${qid}CodeFeedback`] = msg;
           answers[`${qid}CodeAccepted`] = 'false';
           answers[`${qid}CodeCanContinue`] = 'false';
@@ -2086,8 +2154,8 @@ export default function RunActivityPage({
             'Please write or modify the starter code, then submit again.';
           setFollowupsShown((prev) => ({ ...prev, [qid]: msg }));
           answers[`${qid}S`] = 'inprogress';
-          unanswered.push(`${qid} (no code)`);
-          unansweredMap[qid] = 'Unanswered: add or modify code before submitting.';
+missingRequired.push(`${qid} (no code)`);
+missingRequiredMap[qid] = 'Unanswered: add or modify code before submitting.';
           answers[`${qid}CodeFeedback`] = msg;
           answers[`${qid}CodeAccepted`] = 'false';
           answers[`${qid}CodeCanContinue`] = 'false';
@@ -2287,7 +2355,7 @@ export default function RunActivityPage({
           // ✅ compute !accepted even if server returns only accepted/comment
           if (!accepted) {
             answers[`${qid}S`] = 'inprogress';
-            unanswered.push(`${qid} (needs revision)`);
+pendingRevision.push(`${qid} (needs revision)`);
           } else {
             answers[`${qid}S`] = 'complete';
 
@@ -2326,7 +2394,7 @@ export default function RunActivityPage({
           const msg = 'Couldn’t check your program. Try again.';
           setFollowupsShown((prev) => ({ ...prev, [qid]: msg }));
           answers[`${qid}S`] = 'inprogress';
-          unanswered.push(`${qid} (evaluation error)`);
+          pendingRevision.push(`${qid} (evaluation error)`);
         }
 
         continue;
@@ -2397,8 +2465,8 @@ export default function RunActivityPage({
 
       // If nothing at all was entered → required
       if (!aiInput) {
-        unanswered.push(`${qid} (base)`);
-        unansweredMap[qid] = 'Unanswered: enter a response before submitting.';
+missingRequired.push(`${qid} (base)`);
+missingRequiredMap[qid] = 'Unanswered: enter a response before submitting.';
         answers[`${qid}S`] = 'inprogress';
 
         setTextFeedbackShown((prev) => {
@@ -2425,8 +2493,8 @@ export default function RunActivityPage({
         existingAnswers
       );
 
-      //const prevAF = lowerResp(existingAnswers, `${qid}AF`); // "active" or "resolved"
-      //const prevFM = lowerResp(existingAnswers, `${qid}FM`); // "accepted" or "needsrevision"
+      const prevAF = lowerResp(existingAnswers, `${qid}AF`); // "active" or "resolved"
+      const prevFM = lowerResp(existingAnswers, `${qid}FM`); // "accepted" or "needsrevision"
 
       // ✅ Clear old AI comment ONLY on submit (before re-evaluating)
       setTextFeedbackShown((prev) => {
@@ -2436,8 +2504,8 @@ export default function RunActivityPage({
       });
 
       answers[`${qid}F1`] = '';
-      //answers[`${qid}FM`] = 'accepted';   // default; may flip to needsRevision
-      //answers[`${qid}AF`] = 'resolved';   // default; may flip to active
+      answers[`${qid}FM`] = 'accepted';   // default; may flip to needsRevision
+      answers[`${qid}AF`] = 'resolved';   // default; may flip to active
 
       // Tell observers to clear the yellow box too
       emitTextAIState(qid, { f1: '', fm: 'accepted', af: 'resolved' });
@@ -2464,7 +2532,7 @@ export default function RunActivityPage({
         answers[`${qid}S`] = progressAllowed ? 'complete' : 'inprogress';
 
         if (!progressAllowed) {
-          unanswered.push(`${qid} (AI)`);
+pendingRevision.push(`${qid} (AI)`);
         }
 
         // If backend says retries threshold reached for this group, enable bypass button
@@ -2479,7 +2547,7 @@ export default function RunActivityPage({
         });*/
 
         if (!progressAllowed) {
-          unanswered.push(`${qid} (AI)`);
+          pendingRevision.push(`${qid} (AI)`);
         }
         // If backend says retries threshold reached for this group, enable bypass button
         if (ai?.canContinue === true) {
@@ -2540,7 +2608,7 @@ export default function RunActivityPage({
       })
     );
 
-    const pendingBase = unanswered.length > 0;
+    const pendingBase = missingRequired.length > 0;
 
     // ✅ Group number is derived only from instance progress
     const completedCount = Number(activity?.completed_groups ?? 0);
@@ -2580,18 +2648,32 @@ export default function RunActivityPage({
       }),
     });*/
 
-    setUnansweredShown(unansweredMap);
+    setUnansweredShown(missingRequiredMap);
+
+if (pendingBase) {
+  const missingList = Object.keys(missingRequiredMap).length
+    ? Object.keys(missingRequiredMap).join(', ')
+    : missingRequired.join(', ');
+
+  setSubmitAlert(
+    `You cannot continue yet. Please answer all required questions before submitting. Missing: ${missingList}`
+  );
+  setIsSubmitting(false);
+  return;
+}
 
     const blocked = computedState === 'inprogress';
     const canAdvance = computedState === 'complete';
 
-    const attempt = {
-      submissionString: groupSubmissionString,
-      blocked,
-      canAdvance,
-      unanswered,
-      answers,
-    };
+const attempt = {
+  submissionString: groupSubmissionString,
+  blocked,
+  canAdvance,
+  unanswered: [...missingRequired, ...pendingRevision],
+  missingRequired,
+  pendingRevision,
+  answers,
+};
 
     try {
       const response = await fetch(
@@ -2622,10 +2704,10 @@ export default function RunActivityPage({
       await loadActivity();
 
       if (blocked) {
-        alert(
-          `Your attempt was saved, but this group cannot advance yet.\n\n` +
-          `Open the instructor history later to review the full attempt transcript.`
-        );
+        //alert(
+        //  `Your attempt was saved, but this group cannot advance yet.\n\n` +
+        //  `Open the instructor history later to review the full attempt transcript.`
+        //);
         setIsSubmitting(false);
         return;
       }
@@ -2843,6 +2925,8 @@ export default function RunActivityPage({
 
   async function handleCodeChange(responseKey, updatedCode, meta = {}) {
 
+    setSubmitAlert(null);
+
     console.log('[CODECHANGE] fired', {
       responseKey,
       len: (updatedCode || '').length,
@@ -3019,315 +3103,305 @@ export default function RunActivityPage({
           formatRemainingSeconds={formatRemainingSeconds}
         />
 
+        {canViewHistory && (
+          <div className="d-flex align-items-center justify-content-between mb-3">
+            <div>
+              <strong>View:</strong>
+            </div>
+            <ButtonGroup size="sm">
+              <Button
+                variant={viewMode === 'latest' ? 'primary' : 'outline-primary'}
+                onClick={() => setViewMode('latest')}
+              >
+                Current View
+              </Button>
+              <Button
+                variant={viewMode === 'history' ? 'primary' : 'outline-primary'}
+                onClick={() => setViewMode('history')}
+              >
+                History View
+              </Button>
+            </ButtonGroup>
+          </div>
+        )}
+        {submitAlert && (
+          <Alert
+            variant="warning"
+            dismissible
+            onClose={() => setSubmitAlert(null)}
+            className="mt-3"
+          >
+            {submitAlert}
+          </Alert>
+        )}
+        {effectiveViewMode === 'history' ? (
+          <RunActivityHistoryView
+            historyRows={historyRows}
+            groups={groups}
+            userNameById={Object.fromEntries(
+              (groupMembers || []).map((m) => [m.student_id, m.name])
+            )}
+            title="Full Submission History"
+          />
+        ) : (
+          <>
+            {renderBlocks(preamble, {
+              editable: false,
+              isActive: false,
+              mode: 'run',
+              codeFeedbackShown,
+              isInstructor,
+              allowLocalToggle: true,
+              isObserver: !isActive,
+              codeViewMode,
+              onToggleViewMode: toggleCodeViewMode,
+              localCode,
+              onLocalCodeChange: updateLocalCode,
+              prefill: existingAnswers,
+              fileContents,
+              setFileContents: handleUpdateFileContents,
+              onFileChange: handleFileChange,
+            })}
 
-        {renderBlocks(preamble, {
-          editable: false,
-          isActive: false,
-          mode: 'run',
-          codeFeedbackShown,
-          isInstructor,
-          allowLocalToggle: true,
-          isObserver: !isActive,
-          codeViewMode,
-          onToggleViewMode: toggleCodeViewMode,
-          localCode,
-          onLocalCodeChange: updateLocalCode,
-          prefill: existingAnswers,
-          fileContents,
-          setFileContents: handleUpdateFileContents,
-          onFileChange: handleFileChange,
-        })}
+            {groups.map((group, index) => {
+              const completedCount = Number(activity?.completed_groups ?? 0);
+              const isComplete = index < completedCount;
+              const isCurrent = index === completedCount;
 
-        {groups.map((group, index) => {
-          const completedCount = Number(activity?.completed_groups ?? 0);
-          const isComplete = index < completedCount;
-          const isCurrent = index === completedCount;
+              const testEditable =
+                isTestMode &&
+                isStudent &&
+                !isSubmitted &&
+                !timeExpired &&
+                !testLockState.lockedBefore;
 
-          // In test mode: editable only when window is open and not submitted/locked
-          const testEditable =
-            isTestMode &&
-            isStudent &&
-            !isSubmitted &&
-            !timeExpired &&
-            !testLockState.lockedBefore;
+              const editable = isTestMode
+                ? testEditable
+                : (isActive && isCurrent && !isComplete);
 
+              const showGroup =
+                isTestMode
+                  ? true
+                  : (isInstructor || isComplete || isCurrent);
 
+              if (!showGroup) return null;
 
-          const editable = isTestMode
-            ? testEditable
-            : (isActive && isCurrent && !isComplete);
+              return (
+                <div
+                  key={`group-${index}`}
+                  className="mb-4"
+                  data-current-group={editable ? 'true' : undefined}
+                >
+                  {group.prelude?.length > 0 &&
+                    renderBlocks(group.prelude, {
+                      editable: false,
+                      isActive: false,
+                      mode: 'run',
+                      prefill: existingAnswers,
+                      currentGroupIndex: index,
+                      codeFeedbackShown,
+                    })}
 
+                  <p>
+                    <strong>{index + 1}.</strong> {group.intro.content}
+                  </p>
 
-          /*console.log('[RUN] group', index, {
-            stateKey,
-            rawState,
-            isComplete,
-            isCurrent,
-            isTestMode,
-            isSubmitted,
-            isActive,
-            editable,
-          });*/
-          // For students before start, hide groups completely
-          //if (isTestMode && isStudent && testLockState.lockedBefore && !isInstructor) {
-          //  return null;
-          //}
-          const showGroup =
-            isTestMode
-              ? true
-              : (isInstructor || isComplete || isCurrent);
+                  {DEBUG_FILES &&
+                    console.debug(
+                      `[${PAGE_TAG}] renderBlocks(group ${index + 1}) file sizes:`,
+                      Object.fromEntries(
+                        Object.entries(fileContents).map(([k, v]) => [
+                          k,
+                          (v ?? '').length,
+                        ])
+                      )
+                    )}
 
-          if (!showGroup) return null;
+                  {group.content.map((block, bIndex) => {
+                    const renderedBlock = renderBlocks([block], {
+                      editable,
+                      isActive,
+                      mode: 'run',
+                      prefill: existingAnswers,
+                      currentGroupIndex: index,
+                      textFeedbackShown,
+                      socket,
+                      instanceId,
+                      answeredBy: user?.id,
+                      fileContents,
+                      setFileContents: handleUpdateFileContents,
+                      onFileChange: handleFileChange,
+                      onCodeChange: handleCodeChange,
+                      codeFeedbackShown,
+                      isInstructor,
+                      allowLocalToggle: true,
+                      isObserver,
+                      codeViewMode,
+                      onToggleViewMode: toggleCodeViewMode,
+                      localCode,
+                      onLocalCodeChange: updateLocalCode,
+                      onTextChange: (responseKey, value) => {
+                        setSubmitAlert(null);
+                        dirtyKeysRef.current.add(responseKey);
+                        const qid = baseQidFromResponseKey(responseKey);
+                        if (qid) {
+                          setUnansweredShown((prev) => {
+                            if (!prev[qid]) return prev;
+                            const next = { ...prev };
+                            delete next[qid];
+                            return next;
+                          });
+                        }
 
+                        if (qid) dirtyTextQidsRef.current.add(qid);
 
-          // does this group currently have AI feedback/guidance?
-          const hasAIGuidanceForGroup = (group.content || [])
-            .filter((b) => b.type === 'question')
-            .some((b) => {
-              const qid = `${b.groupId}${b.id}`;
-              const hasTextSuggestion = !!textFeedbackShown[qid];
-              //const hasFU = !!followupsShown[qid];
+                        setExistingAnswers((prev) => ({
+                          ...prev,
+                          [responseKey]: {
+                            ...(prev[responseKey] || {}),
+                            response: value,
+                            type: 'text',
+                          },
+                        }));
 
-              // any code feedback for cells like "1acode1", "1acode2", ...
-              const hasCodeFb = Object.entries(codeFeedbackShown || {}).some(
-                ([key, fb]) =>
-                  key.startsWith(`${qid}code`) && fb && String(fb).trim() !== ''
-              );
+                        if (isActive && socket) {
+                          socket.emit('response:update', {
+                            instanceId,
+                            responseKey,
+                            value,
+                            answeredBy: user.id,
+                          });
+                        }
 
-              //return hasTextSuggestion || hasFU || hasCodeFb;
-              return hasTextSuggestion || hasCodeFb;
-            });
-
-          return (
-            <div
-              key={`group-${index}`}
-              className="mb-4"
-              data-current-group={editable ? 'true' : undefined}
-            >
-              {group.prelude?.length > 0 &&
-                renderBlocks(group.prelude, {
-                  editable: false,
-                  isActive: false,
-                  mode: 'run',
-                  prefill: existingAnswers,
-                  currentGroupIndex: index,
-                  codeFeedbackShown,
-                })}
-
-              <p>
-                <strong>{index + 1}.</strong> {group.intro.content}
-              </p>
-
-              {DEBUG_FILES &&
-                console.debug(
-                  `[${PAGE_TAG}] renderBlocks(group ${index + 1}) file sizes:`,
-                  Object.fromEntries(
-                    Object.entries(fileContents).map(([k, v]) => [
-                      k,
-                      (v ?? '').length,
-                    ])
-                  )
-                )}
-
-              {group.content.map((block, bIndex) => {
-
-                // Render this block as usual
-                const renderedBlock = renderBlocks([block], {
-                  editable,
-                  isActive,
-                  mode: 'run',
-                  prefill: existingAnswers,
-                  currentGroupIndex: index,
-                  //followupsShown,
-                  textFeedbackShown,
-                  socket,
-                  instanceId,
-                  answeredBy: user?.id,
-                  fileContents,
-                  setFileContents: handleUpdateFileContents,
-                  onFileChange: handleFileChange,
-                  onCodeChange: handleCodeChange,
-                  codeFeedbackShown,
-                  isInstructor,
-                  allowLocalToggle: true,
-                  isObserver,
-                  codeViewMode,
-                  onToggleViewMode: toggleCodeViewMode,
-                  localCode,
-                  onLocalCodeChange: updateLocalCode,
-                  onTextChange: (responseKey, value) => {
-                    dirtyKeysRef.current.add(responseKey);
-                    const qid = baseQidFromResponseKey(responseKey);
-                    if (qid) {
-                      setUnansweredShown((prev) => {
-                        if (!prev[qid]) return prev;
-                        const next = { ...prev };
-                        delete next[qid];
-                        return next;
-                      });
-                    }
-
-
-                    // Mark this question as "being revised" so loadActivity won't rehydrate stale F1
-                    if (qid) dirtyTextQidsRef.current.add(qid);
-
-                    // Immediately hide the old AI suggestion when they start addressing it
-                    //if (qid) clearTextSuggestionForQid(qid);
-
-                    setExistingAnswers((prev) => ({
-                      ...prev,
-                      [responseKey]: {
-                        ...(prev[responseKey] || {}),
-                        response: value,
-                        type: 'text',
+                        setLastEditTs(Date.now());
                       },
-                    }));
+                    });
 
-                    if (isActive && socket) {
-                      socket.emit('response:update', {
-                        instanceId,
-                        responseKey,
-                        value,
-                        answeredBy: user.id,
-                      });
+                    if (!isTestMode || block.type !== 'question') {
+                      return (
+                        <div key={`group-${index}-block-${bIndex}`}>
+                          {renderedBlock}
+                        </div>
+                      );
                     }
 
-                    setLastEditTs(Date.now());
-                  },
+                    const qid = `${block.groupId}${block.id}`;
+                    globalQuestionCounter += 1;
+                    const scores = getQuestionScores(qid, block);
 
-                });
+                    const allowEdit = isTestMode && isInstructor && isSubmitted;
+                    const showScorePanel =
+                      isTestMode &&
+                      (isInstructor || isSubmitted);
+                    const displayNumber = nonLegacyForUI ? qid : globalQuestionCounter;
 
-                // If not test mode or not a question block, just return it
-                if (!isTestMode || block.type !== 'question') {
-                  return (
-                    <div key={`group-${index}-block-${bIndex}`}>
-                      {renderedBlock}
+                    return (
+                      <div key={`group-${index}-block-${bIndex}`} className="mb-2">
+                        {renderedBlock}
+
+                        {showScorePanel && (
+                          <QuestionScorePanel
+                            qid={qid}
+                            displayNumber={displayNumber}
+                            scores={scores}
+                            allowEdit={allowEdit}
+                            onSave={handleSaveQuestionScores}
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {editable && !isTestMode && (
+                    <div className="mt-2">
+                      <Button onClick={() => handleSubmit(false)} disabled={isSubmitting}>
+                        {isSubmitting ? (
+                          <>
+                            <Spinner animation="border" size="sm" className="me-2" />
+                            Loading...
+                          </>
+                        ) : (
+                          'Submit and Continue'
+                        )}
+                      </Button>
+
+                      {canBypassGroups[index] === true && (
+                        <Button
+                          variant="outline-secondary"
+                          size="sm"
+                          className="ms-2"
+                          onClick={() => handleSubmit(true)}
+                        >
+                          Continue without addressing AI feedback
+                        </Button>
+                      )}
                     </div>
-                  );
-                }
-
-                // Question block in test mode: attach scores panel right under it
-                const qid = `${block.groupId}${block.id}`;
-                globalQuestionCounter += 1;
-                const scores = getQuestionScores(qid, block);
-
-                const allowEdit = isTestMode && isInstructor && isSubmitted;
-
-                // show panel only after submission for students
-                const showScorePanel =
-                  isTestMode &&
-                  (isInstructor || isSubmitted);   // <- the key gating fix
-                const displayNumber = nonLegacyForUI ? qid : globalQuestionCounter;
-                return (
-                  <div key={`group-${index}-block-${bIndex}`} className="mb-2">
-                    {renderedBlock}
-
-                    {showScorePanel && (
-                      <QuestionScorePanel
-                        qid={qid}
-                        displayNumber={displayNumber}
-                        scores={scores}
-                        allowEdit={allowEdit}
-                        onSave={handleSaveQuestionScores}
-                      />
-                    )}
-                  </div>
-                );
-
-              })}
-
-
-              {/* ✅ Per-group buttons ONLY in non-test mode */}
-              {editable && !isTestMode && (
-                <div className="mt-2">
-                  <Button onClick={() => handleSubmit(false)} disabled={isSubmitting}>
-                    {isSubmitting ? (
-                      <>
-                        <Spinner animation="border" size="sm" className="me-2" />
-                        Loading...
-                      </>
-                    ) : (
-                      'Submit and Continue'
-                    )}
-                  </Button>
-
-                  {/* Let students bypass AI gating in learning mode */}
-                  {canBypassGroups[index] === true && (
-                    <Button
-                      variant="outline-secondary"
-                      size="sm"
-                      className="ms-2"
-                      onClick={() => handleSubmit(true)}
-                    >
-                      Continue without addressing AI feedback
-                    </Button>
                   )}
                 </div>
-              )}
-            </div>
-          );
-        })}
-        {isTestMode && isStudent && timeExpired && !isSubmitted && (
-          <Alert variant="warning" className="mt-3">
-            <div className="d-flex justify-content-between align-items-center">
-              <div>
-                <strong>Time is up.</strong> Your test is now locked. Press Submit to record your answers.
+              );
+            })}
+
+            {isTestMode && isStudent && timeExpired && !isSubmitted && (
+              <Alert variant="warning" className="mt-3">
+                <div className="d-flex justify-content-between align-items-center">
+                  <div>
+                    <strong>Time is up.</strong> Your test is now locked. Press Submit to record your answers.
+                  </div>
+                  <Button onClick={() => handleSubmit(false)} disabled={isSubmitting}>
+                    {isSubmitting ? 'Submitting…' : 'Submit Test'}
+                  </Button>
+                </div>
+              </Alert>
+            )}
+
+            {isTestMode && isStudent && !timeExpired && !isSubmitted && (
+              <div className="mt-3">
+                <Button onClick={() => handleSubmit(false)} disabled={isSubmitting}>
+                  {isSubmitting ? (
+                    <>
+                      <Spinner animation="border" size="sm" className="me-2" />
+                      Submitting...
+                    </>
+                  ) : (
+                    'Submit Test'
+                  )}
+                </Button>
               </div>
-              <Button onClick={() => handleSubmit(false)} disabled={isSubmitting}>
-                {isSubmitting ? 'Submitting…' : 'Submit Test'}
-              </Button>
-            </div>
-          </Alert>
-        )}
+            )}
 
-        {/* ✅ Single Submit Test button (ONLY once, after all groups) */}
-        {isTestMode && isStudent && !timeExpired && !isSubmitted && (
-          <div className="mt-3">
-            <Button onClick={() => handleSubmit(false)} disabled={isSubmitting}>
-              {isSubmitting ? (
-                <>
-                  <Spinner animation="border" size="sm" className="me-2" />
-                  Submitting...
-                </>
-              ) : (
-                'Submit Test'
-              )}
-            </Button>
-          </div>
-        )}
+            {isTestMode && isInstructor && isSubmitted && (
+              <div className="mt-3 d-flex gap-2">
+                <Button
+                  variant="warning"
+                  onClick={() => handleRegradeTest()}
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? 'Regrading…' : 'Regrade Test'}
+                </Button>
+              </div>
+            )}
 
-        {isTestMode && isInstructor && isSubmitted && (
-          <div className="mt-3 d-flex gap-2">
-            <Button
-              variant="warning"
-              onClick={() => handleRegradeTest()}
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? 'Regrading…' : 'Regrade Test'}
-            </Button>
-          </div>
-        )}
+            {groups.length > 0 && Number(activity?.completed_groups ?? 0) >= groups.length && (
+              <Alert variant="success" className="mt-3">
+                Activity is complete! Review your responses above.
+              </Alert>
+            )}
 
-        {groups.length > 0 && Number(activity?.completed_groups ?? 0) >= groups.length && (
-          <Alert variant="success" className="mt-3">
-            Activity is complete! Review your responses above.
-          </Alert>
-        )}
-
-
-        {isTestMode && overallTestTotals.max > 0 && (isInstructor || isSubmitted) && (
-          <Alert variant="info" className="mt-3">
-            Overall test score:{' '}
-            <strong>
-              {overallTestTotals.earned}/{overallTestTotals.max}
-            </strong>{' '}
-            (
-            {(
-              (overallTestTotals.earned / overallTestTotals.max) *
-              100
-            ).toFixed(1)}
-            %)
-          </Alert>
+            {isTestMode && overallTestTotals.max > 0 && (isInstructor || isSubmitted) && (
+              <Alert variant="info" className="mt-3">
+                Overall test score:{' '}
+                <strong>
+                  {overallTestTotals.earned}/{overallTestTotals.max}
+                </strong>{' '}
+                (
+                {(
+                  (overallTestTotals.earned / overallTestTotals.max) *
+                  100
+                ).toFixed(1)}
+                %)
+              </Alert>
+            )}
+          </>
         )}
       </Container>
 
