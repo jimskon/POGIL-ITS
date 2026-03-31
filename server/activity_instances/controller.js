@@ -688,11 +688,12 @@ async function submitGroupResponses(req, res) {
       const qid = String(qidRaw || '').trim();
       if (!qid) continue;
 
-      const value = valueRaw == null
+      const value = valueRaw == null ? '' : String(valueRaw);
 
       await appendResponse(conn, instanceId, submitId, qid, value, {
         type: 'text',
-        answeredBy: studentId
+        answeredBy: studentId,
+        allowEmpty: true,
       });
     }
     // ---- 1a) append one marker row for this attempt click ----

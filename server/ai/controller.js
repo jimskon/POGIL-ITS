@@ -541,30 +541,16 @@ async function evaluateStudentResponse(req, res) {
       return await applyGateAndSend();
     }
 
-    const q = stripHtml(questionText || "").toLowerCase();
-    const s = stripHtml(answerRaw).toLowerCase();
-    const sample = stripHtml(sampleResponse || "").toLowerCase();
+    console.log("[REQ_ONLY]", {
+      qidHint,
+      answerRaw,
+      requirementsOnly: true,
+      looksGibberish: looksGibberish(answerRaw),
+      mode: "use-ai",
+    });
 
-    const words = (t) => t.split(/\W+/).filter((w) => w.length >= 5);
-    const qWords = words(q);
-    const sampleWords = words(sample);
-    const overlaps = (arr) => arr.some((w) => s.includes(w));
-
-    // Only reject truly bad answers
-    if (!answerRaw || looksGibberish(answerRaw)) {
-      accepted = false;
-      feedback = followupQ;
-      return await applyGateAndSend();
-    }
-
-    // Otherwise accept — do NOT enforce keyword overlap
-    accepted = true;
-    feedback = null;
-    return await applyGateAndSend();
-
-    accepted = true;
-    feedback = null;
-    return await applyGateAndSend();
+    // For requirements-only questions, still let AI judge the meaning.
+    // We only short-circuit obvious blank/gibberish answers locally.
   }
 
   const obviouslyBad = !answerRaw || looksGibberish(answerRaw);
@@ -577,6 +563,7 @@ async function evaluateStudentResponse(req, res) {
     "If the submission is off-topic, incoherent, or too thin/vague, set accepted=false.",
     "If accepted=false, feedback MUST be a short actionable hint (1–2 sentences).",
     "If accepted=true, feedback must be null unless positive feedback is enabled.",
+    "If instructor guidance is requirements-only, reject answers that are grammatically coherent but unrelated to the actual code, output, or requested behavior.",
     "Do NOT mention grading, points, rubrics, or scoring.",
   ].join("\n");
 
@@ -710,7 +697,23 @@ async function evaluatePythonCode(req, res) {
     outputText,
   });
 
+  // ✅ ADD THIS (Step 2 already, but keep it)
+  console.log("[EVAL_CODE RESULT]", result);
+
+  // ---- EXISTING LINE ----
   const { instanceId, groupNum, answeredByUserId, retriesRequired } = req.body || {};
+
+  // ✅ ADD THIS → Step 3 INPUT LOG (RIGHT HERE)
+  console.log("[RETRY_GATE INPUT]", {
+    instanceId,
+    groupNum,
+    answeredByUserId,
+    retriesRequired,
+    acceptedFromEvaluator: result.accepted === true,
+    submissionString: String(req.body?.submissionString ?? "").slice(0, 200),
+  });
+
+  // ---- EXISTING CALL ----
   const gate = await applyGroupRetryGate({
     instanceId: Number(instanceId),
     groupNum: Number(groupNum),
@@ -720,7 +723,16 @@ async function evaluatePythonCode(req, res) {
     submissionString: req.body?.submissionString ?? "",
   });
 
-  return sendAI(res, { ...result, ...gate });
+  // ✅ ADD THIS → Step 3 OUTPUT LOG (RIGHT AFTER CALL)
+  console.log("[RETRY_GATE RESULT]", gate);
+
+  // ---- FINAL RETURN ----
+  const finalPayload = { ...result, ...gate };
+
+  // (optional but VERY useful)
+  console.log("[FINAL PAYLOAD]", finalPayload);
+
+  return sendAI(res, finalPayload);
 }
 
 
@@ -1016,6 +1028,18 @@ async function evaluateCppCode(req, res) {
     return res.status(400).json({ error: "Missing question text or student code" });
   }
 
+  console.log("[EVAL_CODE INPUT]", {
+    questionText: String(questionText || "").slice(0, 300),
+    studentCode: String(studentCode || "").slice(0, 300),
+    codeVersion,
+    guidance: String(guidance || "").slice(0, 200),
+    isCodeOnly,
+    feedbackPrompt: String(feedbackPrompt || "").slice(0, 200),
+    sampleResponse: String(sampleResponse || "").slice(0, 200),
+    followupPrompt: String(followupPrompt || "").slice(0, 200),
+    outputText: String(outputText || "").slice(0, 200),
+  });
+
   const result = await evaluateCode({
     questionText,
     studentCode,
@@ -1028,6 +1052,7 @@ async function evaluateCppCode(req, res) {
     lang: "cpp",
     outputText,
   });
+
 
   const { instanceId, groupNum, answeredByUserId, retriesRequired } = req.body || {};
   const groupSubmissionString = req.body?.groupSubmissionString ?? null;
