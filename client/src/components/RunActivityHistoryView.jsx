@@ -1,5 +1,7 @@
 import React, { useMemo } from 'react';
 import { Alert, Card } from 'react-bootstrap';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 function asString(value) {
   return value == null ? '' : String(value);
@@ -20,7 +22,6 @@ function getBaseQid(questionIdRaw) {
   const qid = String(questionIdRaw || '').trim();
   if (!qid) return null;
 
-  if (/^\d+[a-z]+$/i.test(qid)) return qid;
   if (/^\d+[a-z]+f\d+$/i.test(qid)) return qid.replace(/f\d+$/i, '');
   if (/^\d+[a-z]+fa\d+$/i.test(qid)) return qid.replace(/fa\d+$/i, '');
   if (/^\d+[a-z]+code\d+$/i.test(qid)) return qid.replace(/code\d+$/i, '');
@@ -36,7 +37,25 @@ function getBaseQid(questionIdRaw) {
   if (/^\d+[a-z]+AF$/i.test(qid)) return qid.replace(/AF$/i, '');
   if (/^\d+[a-z]+FM$/i.test(qid)) return qid.replace(/FM$/i, '');
 
+  if (/^\d+[a-z]+$/i.test(qid)) return qid;
+
   return null;
+}
+
+
+function groupTranscriptRowsBySubmit(rows = []) {
+  const groups = new Map();
+
+  for (const row of rows) {
+    const submitId = row?.submit_id || `row-${row.id}`;
+    if (!groups.has(submitId)) groups.set(submitId, []);
+    groups.get(submitId).push(row);
+  }
+
+  return Array.from(groups.entries()).map(([submitId, rows]) => ({
+    submitId,
+    rows: rows.sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0)),
+  }));
 }
 
 function isHiddenMetadataKey(questionIdRaw) {
@@ -68,9 +87,8 @@ function classifyRow(row) {
   }
 
   if (/^\d+[a-z]+CodeFeedback$/i.test(key)) {
-    return { type: 'ai_feedback', label: 'AI' };
+    return { type: 'code_feedback', label: 'AI' };
   }
-
   if (/^\d+[a-z]+RunFeedback$/i.test(key)) {
     return { type: 'ai_feedback', label: 'AI' };
   }
@@ -151,7 +169,6 @@ function uniqueOriginalCode(block) {
 
   return out;
 }
-
 function buildRowsByQuestion(historyRows = []) {
   const map = new Map();
   const sorted = [...historyRows].sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
@@ -163,12 +180,15 @@ function buildRowsByQuestion(historyRows = []) {
     const c = classifyRow(row);
     if (!c) continue;
 
+    const value = asString(row.response).trim();
+    if (!value) continue;
+
     if (!map.has(baseQid)) map.set(baseQid, []);
     map.get(baseQid).push({
       ...row,
       transcriptType: c.type,
       transcriptLabel: c.label,
-      value: asString(row.response).trim(),
+      value,
     });
   }
 
@@ -236,11 +256,26 @@ function TranscriptEntry({ row, userNameById = {} }) {
     );
   }
 
+  if (row.transcriptType === 'code_feedback') {
+    return (
+      <div className="mb-3">
+        <div className="fw-semibold">AI (code feedback):</div>
+        <div className="small text-muted mb-1">
+          {row.submitted_at || row.updated_at || ''}
+        </div>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          {row.value}
+        </ReactMarkdown>
+      </div>
+    );
+  }
   return (
     <div className="mb-3">
       <div className="fw-semibold">{who}:</div>
       <div className="small text-muted mb-1">{row.submitted_at || row.updated_at || ''}</div>
-      <div style={{ whiteSpace: 'pre-wrap' }}>{row.value}</div>
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+        {row.value}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -273,6 +308,7 @@ export default function RunActivityHistoryView({
           rowsByQuestion.get(qid) || [],
           originalCode
         );
+        const transcriptAttempts = groupTranscriptRowsBySubmit(transcriptRows);
 
         return (
           <Card key={qid} className="mb-4">
@@ -298,12 +334,20 @@ export default function RunActivityHistoryView({
 
               {transcriptRows.length > 0 ? (
                 <div>
-                  {transcriptRows.map((row) => (
-                    <TranscriptEntry
-                      key={row.id}
-                      row={row}
-                      userNameById={userNameById}
-                    />
+                  {transcriptAttempts.map((attempt, index) => (
+                    <div key={attempt.submitId} className="mb-4">
+                      <div className="fw-semibold mb-2">
+                        Attempt {index + 1}
+                      </div>
+
+                      {attempt.rows.map((row) => (
+                        <TranscriptEntry
+                          key={row.id}
+                          row={row}
+                          userNameById={userNameById}
+                        />
+                      ))}
+                    </div>
                   ))}
                 </div>
               ) : (

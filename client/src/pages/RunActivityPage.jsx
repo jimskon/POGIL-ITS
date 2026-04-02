@@ -256,23 +256,23 @@ export default function RunActivityPage({
       });
     }
 
-    /*if (fm !== undefined) {
+    if (fm !== undefined) {
       socket.emit('response:update', {
         instanceId,
         responseKey: `${qid}FM`,
         value: fm ?? '',
         answeredBy: user.id,
       });
-    }*/
+    }
 
-    /*if (af !== undefined) {
+    if (af !== undefined) {
       socket.emit('response:update', {
         instanceId,
         responseKey: `${qid}AF`,
         value: af ?? '',
         answeredBy: user.id,
       });
-    }*/
+    }
   }
   function baseQidFromResponseKey(key) {
     const k = String(key || '').toLowerCase();
@@ -1186,24 +1186,22 @@ export default function RunActivityPage({
       });
 
       // 3) Restore per-question feedback (F1) for BOTH accepted and not-accepted
-      if (!isRequirementsOnly) {
-        const restoredTextFeedback = {};
 
-        for (const [key, entry] of Object.entries(answersData || {})) {
-          if (!key.endsWith('F1')) continue;        // "2aF1"
-          const qid = key.slice(0, -2);             // "2a"
+      const restoredTextFeedback = {};
 
-          // Don’t resurrect while they’re actively revising locally
-          if (dirtyTextQidsRef.current.has(qid)) continue;
+      for (const [key, entry] of Object.entries(answersData || {})) {
+        if (!key.endsWith('F1')) continue;
+        const qid = key.slice(0, -2);
 
-          const text = (entry?.response || '').trim();
-          if (!text) continue;
+        if (dirtyTextQidsRef.current.has(qid)) continue;
 
-          restoredTextFeedback[qid] = text;
-        }
+        const text = (entry?.response || '').trim();
+        if (!text) continue;
 
-        setTextFeedbackShown((prev) => ({ ...prev, ...restoredTextFeedback }));
+        restoredTextFeedback[qid] = text;
       }
+
+      setTextFeedbackShown((prev) => ({ ...prev, ...restoredTextFeedback }));
 
 
       // 4) Restore stored follow-up *answers* (e.g., "2aFA1"), if you ever use them
@@ -1395,6 +1393,12 @@ export default function RunActivityPage({
       }
 
       console.log('[HISTORY] parsed', data);
+      const rows = Array.isArray(data) ? data : data?.rows || [];
+
+      console.log(
+        '[HISTORY rows for 2a]',
+        rows.filter((r) => String(r.question_id || '').startsWith('2a'))
+      );
 
       if (Array.isArray(data)) {
         setHistoryRows(data);
@@ -1971,10 +1975,10 @@ export default function RunActivityPage({
     }
 
     // ---------- ORIGINAL LEARNING-MODE PATH ----------
-const answers = {};
-const missingRequired = [];
-const missingRequiredMap = {};
-const pendingRevision = [];
+    const answers = {};
+    const missingRequired = [];
+    const missingRequiredMap = {};
+    const pendingRevision = [];
 
     for (let block of blocks) {
       if (block.type !== 'question') continue;
@@ -2117,8 +2121,8 @@ const pendingRevision = [];
           }
 
           answers[`${qid}S`] = 'inprogress';
-missingRequired.push(`${qid} (code not changed)`);
-missingRequiredMap[qid] = 'Unanswered: modify the code before submitting.';
+          missingRequired.push(`${qid} (code not changed)`);
+          missingRequiredMap[qid] = 'Unanswered: modify the code before submitting.';
           answers[`${qid}CodeFeedback`] = msg;
           answers[`${qid}CodeAccepted`] = 'false';
           answers[`${qid}CodeCanContinue`] = 'false';
@@ -2154,8 +2158,8 @@ missingRequiredMap[qid] = 'Unanswered: modify the code before submitting.';
             'Please write or modify the starter code, then submit again.';
           setFollowupsShown((prev) => ({ ...prev, [qid]: msg }));
           answers[`${qid}S`] = 'inprogress';
-missingRequired.push(`${qid} (no code)`);
-missingRequiredMap[qid] = 'Unanswered: add or modify code before submitting.';
+          missingRequired.push(`${qid} (no code)`);
+          missingRequiredMap[qid] = 'Unanswered: add or modify code before submitting.';
           answers[`${qid}CodeFeedback`] = msg;
           answers[`${qid}CodeAccepted`] = 'false';
           answers[`${qid}CodeCanContinue`] = 'false';
@@ -2355,7 +2359,7 @@ missingRequiredMap[qid] = 'Unanswered: add or modify code before submitting.';
           // ✅ compute !accepted even if server returns only accepted/comment
           if (!accepted) {
             answers[`${qid}S`] = 'inprogress';
-pendingRevision.push(`${qid} (needs revision)`);
+            pendingRevision.push(`${qid} (needs revision)`);
           } else {
             answers[`${qid}S`] = 'complete';
 
@@ -2465,8 +2469,8 @@ pendingRevision.push(`${qid} (needs revision)`);
 
       // If nothing at all was entered → required
       if (!aiInput) {
-missingRequired.push(`${qid} (base)`);
-missingRequiredMap[qid] = 'Unanswered: enter a response before submitting.';
+        missingRequired.push(`${qid} (base)`);
+        missingRequiredMap[qid] = 'Unanswered: enter a response before submitting.';
         answers[`${qid}S`] = 'inprogress';
 
         setTextFeedbackShown((prev) => {
@@ -2504,11 +2508,11 @@ missingRequiredMap[qid] = 'Unanswered: enter a response before submitting.';
       });
 
       answers[`${qid}F1`] = '';
-      answers[`${qid}FM`] = 'accepted';   // default; may flip to needsRevision
-      answers[`${qid}AF`] = 'resolved';   // default; may flip to active
+      delete answers[`${qid}FM`];
+      delete answers[`${qid}AF`];
 
-      // Tell observers to clear the yellow box too
-      emitTextAIState(qid, { f1: '', fm: 'accepted', af: 'resolved' });
+      // Only clear the visible feedback box before re-eval
+      emitTextAIState(qid, { f1: '' });
       if (!looksCodeOnlyNow && !isTestMode) {
         const dbgInput = String(aiInput ?? '').trim();
         /*console.log('[EVALDBG]', {
@@ -2532,7 +2536,7 @@ missingRequiredMap[qid] = 'Unanswered: enter a response before submitting.';
         answers[`${qid}S`] = progressAllowed ? 'complete' : 'inprogress';
 
         if (!progressAllowed) {
-pendingRevision.push(`${qid} (AI)`);
+          pendingRevision.push(`${qid} (AI)`);
         }
 
         // If backend says retries threshold reached for this group, enable bypass button
@@ -2546,9 +2550,6 @@ pendingRevision.push(`${qid} (AI)`);
           progressAllowed,
         });*/
 
-        if (!progressAllowed) {
-          pendingRevision.push(`${qid} (AI)`);
-        }
         // If backend says retries threshold reached for this group, enable bypass button
         if (ai?.canContinue === true) {
           setCanBypassGroups((prev) => ({ ...prev, [currentGroupIndex]: true }));
@@ -2561,32 +2562,26 @@ pendingRevision.push(`${qid} (AI)`);
         const newHasFeedback = typeof feedback === 'string' && feedback.trim().length > 0;
         const becomingAccepted = (prevAF === 'active') && accepted;
 
-        if (newHasFeedback) {
+        answers[`${qid}AF`] = accepted ? 'resolved' : 'active';
+        answers[`${qid}FM`] = accepted ? 'accepted' : 'needsRevision';
+
+        if (feedback && feedback.trim()) {
           const f = feedback.trim();
-
-          setTextFeedbackShown((prev) => ({ ...prev, [qid]: f }));
-
           answers[`${qid}F1`] = f;
-          //answers[`${qid}FM`] = accepted ? 'accepted' : 'needsRevision';
+          setTextFeedbackShown((prev) => ({ ...prev, [qid]: f }));
         } else {
-          if (becomingAccepted && prevFM === 'needsrevision') {
-            setTextFeedbackShown((prev) => {
-              const next = { ...prev };
-              delete next[qid];
-              return next;
-            });
-
-            answers[`${qid}F1`] = '';
-            //answers[`${qid}FM`] = 'accepted';
-          }
+          answers[`${qid}F1`] = '';
+          setTextFeedbackShown((prev) => {
+            const next = { ...prev };
+            delete next[qid];
+            return next;
+          });
         }
 
-        //answers[`${qid}AF`] = accepted ? 'resolved' : 'active';
-
         emitTextAIState(qid, {
-          //af: answers[`${qid}AF`],
+          af: answers[`${qid}AF`],
           f1: answers[`${qid}F1`],
-          //fm: answers[`${qid}FM`],
+          fm: answers[`${qid}FM`],
         });
       }
 
@@ -2650,30 +2645,30 @@ pendingRevision.push(`${qid} (AI)`);
 
     setUnansweredShown(missingRequiredMap);
 
-if (pendingBase) {
-  const missingList = Object.keys(missingRequiredMap).length
-    ? Object.keys(missingRequiredMap).join(', ')
-    : missingRequired.join(', ');
+    if (pendingBase) {
+      const missingList = Object.keys(missingRequiredMap).length
+        ? Object.keys(missingRequiredMap).join(', ')
+        : missingRequired.join(', ');
 
-  setSubmitAlert(
-    `You cannot continue yet. Please answer all required questions before submitting. Missing: ${missingList}`
-  );
-  setIsSubmitting(false);
-  return;
-}
+      setSubmitAlert(
+        `You cannot continue yet. Please answer all required questions before submitting. Missing: ${missingList}`
+      );
+      setIsSubmitting(false);
+      return;
+    }
 
     const blocked = computedState === 'inprogress';
     const canAdvance = computedState === 'complete';
 
-const attempt = {
-  submissionString: groupSubmissionString,
-  blocked,
-  canAdvance,
-  unanswered: [...missingRequired, ...pendingRevision],
-  missingRequired,
-  pendingRevision,
-  answers,
-};
+    const attempt = {
+      submissionString: groupSubmissionString,
+      blocked,
+      canAdvance,
+      unanswered: [...missingRequired, ...pendingRevision],
+      missingRequired,
+      pendingRevision,
+      answers,
+    };
 
     try {
       const response = await fetch(

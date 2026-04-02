@@ -2031,19 +2031,6 @@ export function renderBlocks(blocks, options = {}) {
                       options.onTextChange?.(responseKey, val, meta);
                     }}
                   />
-
-
-                  {/* 🔶 AI Guidance: visible to active student, observers, and instructor */}
-                  {guidance && (
-                    <Alert
-                      variant="warning"
-                      className="mt-2"
-                      style={{ whiteSpace: 'pre-wrap' }}
-                    >
-                      <strong>AI Guidance</strong>
-                      <div>{guidance}</div>
-                    </Alert>
-                  )}
                 </>
               );
             })()
@@ -2058,6 +2045,18 @@ export function renderBlocks(blocks, options = {}) {
               {block.feedback?.length > 0 && <p className="text-muted"><em>Feedback: {block.feedback.join('; ')}</em></p>}
               {block.followups?.length > 0 && <p className="text-muted"><em>Follow-up: {block.followups.join('; ')}</em></p>}
             </>
+          )}
+
+          {/* 🔶 AI Guidance (ALL question types) */}
+          {textFeedbackShown?.[responseKey] && (
+            <Alert
+              variant="warning"
+              className="mt-2"
+              style={{ whiteSpace: 'pre-wrap' }}
+            >
+              <strong>AI Guidance</strong>
+              <div>{textFeedbackShown[responseKey]}</div>
+            </Alert>
           )}
 
           {/* Show saved followup Q&A in read-only format */}
