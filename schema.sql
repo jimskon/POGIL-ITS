@@ -63,7 +63,52 @@ CREATE TABLE `activity_instances` (
   CONSTRAINT `activity_instances_ibfk_2` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`),
   CONSTRAINT `activity_instances_ibfk_3` FOREIGN KEY (`active_student_id`) REFERENCES `users` (`id`),
   CONSTRAINT `fk_ai_submitted_by_user` FOREIGN KEY (`submitted_by_user_id`) REFERENCES `users` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=1953 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=2633 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `activity_instances_backup`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `activity_instances_backup` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `activity_id` int(11) NOT NULL,
+  `is_test` tinyint(1) NOT NULL DEFAULT 0,
+  `course_id` int(11) NOT NULL,
+  `status` enum('in_progress','completed') DEFAULT 'in_progress',
+  `active_student_id` int(11) DEFAULT NULL,
+  `group_number` int(11) DEFAULT NULL,
+  `start_time` timestamp NULL DEFAULT current_timestamp(),
+  `total_groups` int(11) DEFAULT NULL,
+  `completed_groups` int(11) NOT NULL DEFAULT 0,
+  `progress_status` enum('not_started','in_progress','completed') NOT NULL DEFAULT 'not_started',
+  `points_earned` int(11) DEFAULT NULL,
+  `points_possible` int(11) DEFAULT NULL,
+  `test_start_at` datetime DEFAULT NULL COMMENT 'Scheduled start time for timed tests',
+  `test_duration_minutes` int(10) unsigned NOT NULL DEFAULT 0 COMMENT 'Time limit in minutes (0 = no limit)',
+  `test_reopen_until` datetime DEFAULT NULL COMMENT 'Optional reopen-until time for this instance',
+  `submitted_at` datetime DEFAULT NULL COMMENT 'When the instance was finally submitted',
+  `graded_at` datetime DEFAULT NULL,
+  `review_complete` tinyint(1) NOT NULL DEFAULT 0,
+  `reviewed_at` datetime DEFAULT NULL,
+  `hidden` tinyint(1) NOT NULL DEFAULT 0 COMMENT 'If 1, students cannot Start or Review this activity instance',
+  PRIMARY KEY (`id`),
+  KEY `activity_id` (`activity_id`),
+  KEY `active_student_id` (`active_student_id`),
+  KEY `idx_activity_instances_test_start` (`test_start_at`),
+  KEY `idx_ai_course_activity_test` (`course_id`,`activity_id`,`is_test`),
+  KEY `idx_ai_progress_status` (`progress_status`)
+) ENGINE=InnoDB AUTO_INCREMENT=1642 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `code_alias_backup_1622_1626`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `code_alias_backup_1622_1626` (
+  `id` int(11) NOT NULL DEFAULT 0,
+  `activity_instance_id` int(11) NOT NULL,
+  `question_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
+  `response` text NOT NULL,
+  `answered_by_user_id` int(11) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `course_enrollments`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -77,7 +122,7 @@ CREATE TABLE `course_enrollments` (
   KEY `student_id` (`student_id`),
   CONSTRAINT `course_enrollments_ibfk_1` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`) ON DELETE CASCADE,
   CONSTRAINT `course_enrollments_ibfk_2` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=973 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=957 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `courses`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -98,7 +143,15 @@ CREATE TABLE `courses` (
   KEY `class_id` (`class_id`),
   CONSTRAINT `courses_ibfk_1` FOREIGN KEY (`instructor_id`) REFERENCES `users` (`id`) ON DELETE SET NULL,
   CONSTRAINT `courses_ibfk_2` FOREIGN KEY (`class_id`) REFERENCES `pogil_classes` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=65 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=63 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `dash_state_backup`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `dash_state_backup` (
+  `id` int(11) NOT NULL DEFAULT 0,
+  `question_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `event_log`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -128,7 +181,31 @@ CREATE TABLE `feedback` (
   PRIMARY KEY (`id`),
   KEY `feedback_fk_response` (`response_id`),
   CONSTRAINT `feedback_fk_response` FOREIGN KEY (`response_id`) REFERENCES `responses` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=4420 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=4450 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `feedback_bak_009`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `feedback_bak_009` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `response_id` int(11) DEFAULT NULL,
+  `feedback_text` text NOT NULL,
+  `generated_at` timestamp NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `feedback_ibfk_1` (`response_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=3472 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `feedback_bak_011`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `feedback_bak_011` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `response_id` int(11) DEFAULT NULL,
+  `feedback_text` text NOT NULL,
+  `generated_at` timestamp NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `feedback_ibfk_1` (`response_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=3472 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `followups`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -159,7 +236,7 @@ CREATE TABLE `group_members` (
   KEY `student_id` (`student_id`),
   CONSTRAINT `group_members_ibfk_1` FOREIGN KEY (`activity_instance_id`) REFERENCES `activity_instances` (`id`) ON DELETE CASCADE,
   CONSTRAINT `group_members_ibfk_2` FOREIGN KEY (`student_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=4115 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=5065 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `pending_users`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -173,7 +250,7 @@ CREATE TABLE `pending_users` (
   `created_at` timestamp NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
   UNIQUE KEY `email` (`email`)
-) ENGINE=InnoDB AUTO_INCREMENT=100 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=131 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `pogil_activities`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -193,7 +270,7 @@ CREATE TABLE `pogil_activities` (
   KEY `created_by` (`created_by`),
   CONSTRAINT `pogil_activities_ibfk_1` FOREIGN KEY (`class_id`) REFERENCES `pogil_classes` (`id`) ON DELETE CASCADE,
   CONSTRAINT `pogil_activities_ibfk_2` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=354 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=349 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `pogil_classes`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -207,7 +284,7 @@ CREATE TABLE `pogil_classes` (
   UNIQUE KEY `name` (`name`),
   KEY `created_by` (`created_by`),
   CONSTRAINT `pogil_classes_ibfk_1` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=35 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `response_qid_map`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -237,7 +314,143 @@ CREATE TABLE `responses` (
   UNIQUE KEY `uq_responses_instance_question` (`activity_instance_id`,`question_id`),
   UNIQUE KEY `uniq_resp` (`activity_instance_id`,`question_id`,`response_type`),
   KEY `answered_by_user_id` (`answered_by_user_id`)
-) ENGINE=InnoDB AUTO_INCREMENT=43422849 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=56224041 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `responses_backup`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `responses_backup` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `activity_instance_id` int(11) NOT NULL,
+  `question_id` varchar(255) NOT NULL,
+  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
+  `response` text NOT NULL,
+  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `answered_by_user_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_responses_instance_question` (`activity_instance_id`,`question_id`),
+  KEY `answered_by_user_id` (`answered_by_user_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=32187126 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `responses_backup_1377`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `responses_backup_1377` (
+  `id` int(11) NOT NULL DEFAULT 0,
+  `activity_instance_id` int(11) NOT NULL,
+  `question_id` varchar(255) NOT NULL,
+  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
+  `response` text NOT NULL,
+  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `answered_by_user_id` int(11) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `responses_backup_1626`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `responses_backup_1626` (
+  `id` int(11) NOT NULL DEFAULT 0,
+  `activity_instance_id` int(11) NOT NULL,
+  `question_id` varchar(255) NOT NULL,
+  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
+  `response` text NOT NULL,
+  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `answered_by_user_id` int(11) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `responses_backup_1636`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `responses_backup_1636` (
+  `id` int(11) NOT NULL DEFAULT 0,
+  `activity_instance_id` int(11) NOT NULL,
+  `question_id` varchar(255) NOT NULL,
+  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
+  `response` text NOT NULL,
+  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `answered_by_user_id` int(11) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `responses_backup_2025_12_18`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `responses_backup_2025_12_18` (
+  `id` int(11) NOT NULL DEFAULT 0,
+  `activity_instance_id` int(11) NOT NULL,
+  `question_id` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
+  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
+  `response` text NOT NULL,
+  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `answered_by_user_id` int(11) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `responses_bak_008`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `responses_bak_008` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `activity_instance_id` int(11) NOT NULL,
+  `question_id` text NOT NULL,
+  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
+  `response` text NOT NULL,
+  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `answered_by_user_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uniq_instance_question` (`activity_instance_id`,`question_id`) USING HASH,
+  KEY `activity_instance_id` (`activity_instance_id`),
+  KEY `answered_by_user_id` (`answered_by_user_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=30727889 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `responses_bak_1635`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `responses_bak_1635` (
+  `id` int(11) NOT NULL DEFAULT 0,
+  `activity_instance_id` int(11) NOT NULL,
+  `question_id` text NOT NULL,
+  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
+  `response` text NOT NULL,
+  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `answered_by_user_id` int(11) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `responses_bak_20251218_134431`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `responses_bak_20251218_134431` (
+  `id` int(11) NOT NULL DEFAULT 0,
+  `activity_instance_id` int(11) NOT NULL,
+  `question_id` text NOT NULL,
+  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
+  `response` text NOT NULL,
+  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `answered_by_user_id` int(11) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+DROP TABLE IF EXISTS `responses_legacy_backup`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8mb4 */;
+CREATE TABLE `responses_legacy_backup` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `activity_instance_id` int(11) NOT NULL,
+  `question_id` varchar(255) NOT NULL,
+  `response_type` enum('text','code','python','cpp','run_output') NOT NULL DEFAULT 'text',
+  `response` text NOT NULL,
+  `submitted_at` timestamp NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  `answered_by_user_id` int(11) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_responses_instance_question` (`activity_instance_id`,`question_id`),
+  KEY `answered_by_user_id` (`answered_by_user_id`)
+) ENGINE=InnoDB AUTO_INCREMENT=32078315 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 DROP TABLE IF EXISTS `users`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -254,7 +467,7 @@ CREATE TABLE `users` (
   UNIQUE KEY `email` (`email`) USING HASH,
   KEY `created_by` (`created_by`),
   CONSTRAINT `users_ibfk_1` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
-) ENGINE=InnoDB AUTO_INCREMENT=268 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=302 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
 

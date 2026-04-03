@@ -11,16 +11,19 @@ This markup defines how to author interactive activities for coLearn-AI.
 The system supports:
 
 - Collaborative learning mode (AI-guided)
+- Playground mode (no AI blocking, "Next" progression)
 - Test / quiz mode (graded)
-- Runnable Python blocks (with optional timeout)
+- Runnable Python blocks (with optional timeout and imports)
 - Runnable C++ blocks (with optional timeout)
 - Runnable Python Turtle blocks (with window size + timeout)
-- Editable and readonly file blocks
+- Editable file blocks
 - Structured AI feedback directives
 - Structured scoring rubrics
+- Retry policies at sheet or group level
 - Tables with editable cells
 - Images (with captions and width control)
 - Hyperlinks
+- Included support files for code execution
 
 All interactive content must appear inside a `\questiongroup`.
 
@@ -35,13 +38,17 @@ All interactive content must appear inside a `\questiongroup`.
 | `\studentlevel{...}` | Target audience | `\studentlevel{Second Year}` |
 | `\activitycontext{...}` | Introductory paragraph | `\activitycontext{This activity explores...}` |
 | `\aicodeguidance{...}` | Global AI behavior rules | See AI Guidance section below |
+| `\mode{normal\|playground\|test}` | Activity mode | `\mode{playground}` |
 | `\test` | Marks activity as graded assessment | `\test` |
+| `\retries{n}` | Default retry policy for all groups | `\retries{3}` |
 | `\section{...}` | Structural heading (non-interactive) | `\section{Introduction}` |
 
 Notes:
 
-- `\test` switches the activity into grading mode.
-- `\aicodeguidance` controls follow-ups, scope restrictions, checker tolerance, etc.
+- `\mode{playground}` enables playground behavior.
+- Valid modes are `normal`, `playground`, and `test`.
+- `\mode{test}` and `\test` are equivalent.
+- `\retries{n}` outside groups sets the sheet-wide default retry count.
 - `\section` is structural only.
 
 ---
@@ -58,8 +65,13 @@ Notes:
 |--------|-------------|---------|
 | `\questiongroup{...}` | Starts a group of related questions | `\questiongroup{Greedy Algorithms}` |
 | `\endquestiongroup` | Ends the group | `\endquestiongroup` |
+| `\retries{n}` | Overrides retry count for this group (must appear before questions) | `\retries{2}` |
 
-All answerable items (`\question`, `\textresponse`, code blocks, file blocks) must be inside a `\questiongroup`.
+Notes:
+
+- All answerable items (`\question`, `\textresponse`, code blocks, file blocks, tables) must be inside a `\questiongroup`.
+- A group-level `\retries{n}` overrides the sheet default.
+- `\retries{n}` inside a question is ignored.
 
 ---
 
@@ -109,9 +121,11 @@ Every `\question` must explicitly end with `\endquestion`.
 | `response` | Written answer | `\score{6,response}` |
 | `code` | Student-written code | `\score{10,code}` |
 | `output` | Program output | `\score{4,output}` |
-| custom | Custom metadata | `\score{5,analysis}` |
 
-Scoring is controlled only by `\score{}` blocks.
+Notes:
+
+- Scoring is controlled only by `\score{}` blocks.
+- Used primarily in test mode.
 
 ---
 
@@ -129,7 +143,7 @@ Scoring is controlled only by `\score{}` blocks.
 \end{enumerate}
 ```
 
-Nested lists are discouraged in current sheet rendering.
+Nested lists are not supported reliably in current sheet rendering.
 
 ---
 
@@ -137,9 +151,11 @@ Nested lists are discouraged in current sheet rendering.
 
 | Syntax | Description | Example |
 |--------|-------------|---------|
-| `\text{...}` | Paragraph | `\text{This is a paragraph.}` |
+| `\text{...}` | Paragraph text | `\text{This is a paragraph.}` |
 | `\textbf{...}` | Bold text | `\textbf{Important}` |
 | `\textit{...}` | Italic text | `\textit{Optional}` |
+| `\texttt{...}` | Monospace inline text | `\texttt{count++}` |
+| `\mono{...}` | Monospace formatted text | `\mono{for i in range(5):}` |
 
 ---
 
@@ -162,11 +178,50 @@ Nested lists are discouraged in current sheet rendering.
 
 ---
 
-## 8. Code Blocks
+## 8. File Blocks
+
+```text
+\file{sports.txt}
+Lions
+Tigers
+Bears
+\endfile
+```
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `\file{filename}` | Begins an editable file block | `\file{input.txt}` |
+| `\endfile` | Ends the file block | `\endfile` |
+
+Notes:
+
+- File blocks should be inside question groups.
+- These integrate with code execution environments.
+
+---
+
+## 9. Included Support Files
+
+```text
+\include{helper.py,data.txt}
+\python
+print("hello")
+\endpython
+```
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `\include{file1,file2,...}` | Attaches support files to the next code block | `\include{helper.py,data.csv}` |
+
+Notes:
+
+- Applies to the next code block only.
+
+---
+
+## 10. Code Blocks
 
 ### Python
-
-Supports optional timeout: `\python{50000}`
 
 ```text
 \python
@@ -174,9 +229,28 @@ Supports optional timeout: `\python{50000}`
 \endpython
 ```
 
-### C++
+```text
+\python{50000}
+# code here
+\endpython
+```
 
-Supports optional timeout: `\cpp{50000}`
+```text
+\python{50000,imports=math,random}
+# code here
+\endpython
+```
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `\python` | Default Python block | |
+| `\python{timeout}` | Timeout in ms | `\python{50000}` |
+| `\python{timeout,imports=...}` | Timeout + imports | |
+| `\endpython` | Ends Python block | |
+
+---
+
+### C++
 
 ```text
 \cpp
@@ -185,11 +259,22 @@ int main() { }
 \endcpp
 ```
 
+```text
+\cpp{50000}
+#include <iostream>
+int main() { }
+\endcpp
+```
+
+| Syntax | Description |
+|--------|------------|
+| `\cpp` | Default C++ block |
+| `\cpp{timeout}` | Timeout in ms |
+| `\endcpp` | Ends block |
+
 ---
 
-## 9. Python Turtle
-
-Supports window size + timeout:
+## 11. Python Turtle
 
 ```text
 \pythonturtle{900x600,50000}
@@ -197,14 +282,14 @@ Supports window size + timeout:
 \endpythonturtle
 ```
 
-| Syntax | Description | Example |
-|--------|-------------|---------|
-| `\pythonturtle{WxH,timeout}` | Turtle window size + timeout | `\pythonturtle{900x600,50000}` |
-| `\endpythonturtle` | Ends turtle block | `\endpythonturtle` |
+| Syntax | Description |
+|--------|------------|
+| `\pythonturtle{WxH,timeout}` | Window size + timeout |
+| `\endpythonturtle` | Ends block |
 
 ---
 
-## 10. Images
+## 12. Images
 
 ```text
 \image{URL}
@@ -212,23 +297,13 @@ Supports window size + timeout:
 \image{URL}{Caption}{50%}
 ```
 
-| Syntax | Description | Example |
-|--------|-------------|---------|
-| `\image{URL}` | Image only | `\image{https://...}` |
-| `\image{URL}{Caption}` | Image with caption | `\image{...}{Example}` |
-| `\image{URL}{Caption}{Width}` | Image with width | `\image{...}{Example}{50%}` |
-
 ---
 
-## 11. Hyperlinks
+## 13. Hyperlinks
 
 ```text
 \link{URL}{Text}
 ```
-
-| Syntax | Description | Example |
-|--------|-------------|---------|
-| `\link{URL}{Text}` | Hyperlink | `\link{https://...}{Read more}` |
 
 ---
 
@@ -236,8 +311,10 @@ Supports window size + timeout:
 
 1. All interactive content must be inside `\questiongroup`.
 2. Every `\question` must end with `\endquestion`.
-3. Learning tags never grade.
-4. Grading is controlled only by `\score{}`.
-5. AI must respond only to what students actually submit.
-6. No scope creep beyond stated requirements.
-7. Python Turtle is a first-class execution environment.
+3. Learning mode uses AI guidance.
+4. Playground mode removes blocking and AI enforcement.
+5. Test mode is strictly graded.
+6. Retry behavior is controlled by `\retries{n}`.
+7. AI responds only to student submissions.
+8. Python Turtle is a first-class environment.
+9. Avoid nested lists.

@@ -89,6 +89,8 @@ function getLangForResponseKey(responseKey, groups) {
   }
 }*/
 
+
+
 function buildGroupSubmissionString({ groupNum, blocks, container, existingAnswers }) {
   const parts = [];
 
@@ -244,6 +246,7 @@ export default function RunActivityPage({
   // Tracks which base questions have been edited since last AI evaluation.
   // Prevents loadActivity() from rehydrating stale suggestions while student is revising.
   const dirtyTextQidsRef = useRef(new Set());
+
   function emitTextAIState(qid, { f1, fm, af }) {
     if (!socket || !instanceId || !user?.id) return;
 
@@ -341,6 +344,8 @@ export default function RunActivityPage({
   const [localCode, setLocalCode] = useState({});
 
   const [activity, setActivity] = useState(null);
+  const activityMode = activity?.meta?.mode || activity?.mode || 'normal';
+  const isPlaygroundMode = activityMode === 'playground';
 
 
   const [unansweredShown, setUnansweredShown] = useState({}); // { "1e": "Unanswered: ..." }
@@ -447,6 +452,8 @@ export default function RunActivityPage({
 
 
   const isTestMode = useMemo(() => {
+    if (activityMode === 'test') return true;
+
     // Primary: any instance with a time window is a test
     if (
       activity?.test_start_at &&
@@ -455,13 +462,11 @@ export default function RunActivityPage({
       return true;
     }
 
-    // Secondary: explicit DB flag (tri-state: 1/0/NULL)
+    // Secondary: explicit DB flag
     if (activity?.is_test === 1) return true;
-
-    // If we *know* it's not a test, don't use heuristics
     if (activity?.is_test === 0) return false;
 
-    // Fallback heuristic (only if we *really* don't know)
+    // Fallback heuristic
     if (!groups || groups.length !== 1) return false;
     return groups.some((g) =>
       (g.content || []).some(
@@ -471,8 +476,7 @@ export default function RunActivityPage({
           Object.keys(b.scores).length > 0
       )
     );
-  }, [activity, groups]);
-
+  }, [activityMode, activity, groups]);
   // ✅ Non-legacy test if its test_start_at is on/after 2026-01-01 UTC
   const isNonLegacyTest = useMemo(() => {
     if (!isTestMode) return false;
@@ -734,6 +738,9 @@ export default function RunActivityPage({
     return () => clearInterval(interval);
   }, [instanceId, isTestMode]);
 
+  useEffect(() => {
+    console.log('[MODE DEBUG]', activity);
+  }, [activity]);
 
   useEffect(() => {
     const sendHeartbeat = async () => {
@@ -1253,9 +1260,13 @@ export default function RunActivityPage({
         });
         setNonLegacyForUI(!!isNonLegacyNow);
 
-        const blocks = parseSheetToBlocks(lines, {
+        const parsed = parseSheetToBlocks(lines, {
           legacyTestNumbering: !isNonLegacyNow,
+          returnIssues: true,
         });
+
+        const blocks = parsed.blocks;
+        const meta = parsed.meta || {};
 
         const activityContextBlock = blocks.find(
           (b) => b.type === 'header' && b.tag === 'activitycontext'
@@ -1277,6 +1288,7 @@ export default function RunActivityPage({
           activitycontext,
           studentlevel,
           aicodeguidance,
+          meta,
         }));
 
 
@@ -1823,12 +1835,74 @@ export default function RunActivityPage({
     return hasAnyCode;
   }
 
+  function collectAllVisibleAnswers() {
+    const answers = {};
 
+    document
+      .querySelectorAll('[data-response-key]')
+      .forEach((el) => {
+        const key = el.getAttribute('data-response-key');
+
+        if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') {
+          answers[key] = el.value || '';
+        } else {
+          answers[key] = el.textContent || '';
+        }
+      });
+
+    return answers;
+  }
+  function collectVisibleAnswersFromContainer(container) {
+    const answers = {};
+    container.querySelectorAll('[data-response-key]').forEach((el) => {
+      const key = el.getAttribute('data-response-key');
+      if (!key) return;
+      answers[key] = 'value' in el ? (el.value ?? '') : (el.textContent ?? '');
+    });
+    return answers;
+  }
   async function handleSubmit(forceOverride = false) {
     const attemptParts = [];
     let retriesRequired = 1;
     let groupNum;
     if (isSubmitting) return;
+    // ✅ PLAYGROUND MODE: skip ALL evaluation logic
+    if (isSubmitting) return;
+    setSubmitAlert(null);
+    setIsSubmitting(true);
+
+    if (isPlaygroundMode) {
+      try {
+        const container = document.querySelector('[data-current-group="true"]');
+        if (!container) return;
+
+        const answers = collectVisibleAnswersFromContainer(container);
+
+        await fetch(`${API_BASE_URL}/api/responses/bulk-save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            instanceId,
+            userId: user.id,
+            answers,
+          }),
+        });
+
+        // do NOT call setCurrentGroupIndex(...)
+        // instead update the activity state that actually drives progression
+        setActivity((prev) =>
+          prev
+            ? { ...prev, completed_groups: Number(prev.completed_groups ?? 0) + 1 }
+            : prev
+        );
+      } catch (e) {
+        console.error('Playground submit failed:', e);
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
     setSubmitAlert(null);
     setIsSubmitting(true);
 
@@ -3315,12 +3389,14 @@ export default function RunActivityPage({
                             <Spinner animation="border" size="sm" className="me-2" />
                             Loading...
                           </>
+                        ) : isPlaygroundMode ? (
+                          'Next'
                         ) : (
                           'Submit and Continue'
                         )}
                       </Button>
 
-                      {canBypassGroups[index] === true && (
+                      {!isPlaygroundMode && canBypassGroups[index] === true && (
                         <Button
                           variant="outline-secondary"
                           size="sm"

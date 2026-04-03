@@ -79,7 +79,7 @@ function ImgWithFallback({ src, alt, widthStyle, captionHtml }) {
 // Keeps everything else as-is. Works for any \SomeTag{ ... } (including section*, link, image, etc.)
 function collapseBracedCommands(rawLines) {
   const startsTag = (s) =>
-    /^\s*\\(?:title|name|activitycontext|studentlevel|aicodeguidance|section\*?|questiongroup|question|sampleresponses|feedbackprompt|followupprompt|table|image|link|file|pythonturtle|cpp|include)\{/.test(s);
+    /^\s*\\(?:title|name|activitycontext|studentlevel|aicodeguidance|mode|section\*?|questiongroup|question|sampleresponses|feedbackprompt|followupprompt|table|image|link|file|pythonturtle|cpp|include)\{/.test(s);
   const out = [];
   let buf = null;
   let depth = 0;
@@ -273,6 +273,7 @@ export default function FileBlock({
 export function parseSheetToBlocks(lines, options = {}) {
   //console.log("🧑‍💻 parseSheetToBlocks invoked");
   lines = collapseBracedCommands(lines);
+
   const issues = [];
   const pushIssue = (severity, line, message, context) => {
     issues.push({
@@ -282,6 +283,7 @@ export function parseSheetToBlocks(lines, options = {}) {
       context: context || null
     });
   };
+  const VALID_MODES = new Set(['normal', 'playground', 'test']);
   let isTest = false;
   const legacyTestNumbering = options.legacyTestNumbering === true;
   // default true unless explicitly set to false
@@ -295,7 +297,8 @@ export function parseSheetToBlocks(lines, options = {}) {
   const meta = {
     isTest: false,
     retriesDefault: 0,
-    groupRetries: {}
+    groupRetries: {},
+    mode: 'normal',
   };
   let currentQuestion = null;
   let currentField = 'prompt';
@@ -413,6 +416,7 @@ export function parseSheetToBlocks(lines, options = {}) {
     if (trimmed === '\\test') {
       isTest = true;
       meta.isTest = true;
+      meta.mode = 'test';
       continue;
     }
     // --- inside a \score ... \endscore block ---
@@ -776,11 +780,24 @@ export function parseSheetToBlocks(lines, options = {}) {
     }
 
     // Start of a header (now always single logical line thanks to collapseBracedCommands)
-    const headerStart = trimmed.match(/^\\(title|name|activitycontext|studentlevel|aicodeguidance)\{([\s\S]*?)\}$/);
+    const headerStart = trimmed.match(/^\\(title|name|activitycontext|studentlevel|aicodeguidance|mode)\{([\s\S]*?)\}$/);
     if (headerStart) {
       flushCurrentBlock();
       const tag = headerStart[1];
       const content = headerStart[2];
+
+      if (tag === 'mode') {
+        const parsedMode = content.trim().toLowerCase();
+        meta.mode = VALID_MODES.has(parsedMode) ? parsedMode : 'normal';
+
+        if (meta.mode === 'test') {
+          meta.isTest = true;
+        }
+
+        blocks.push({ type: 'header', tag, content: format(meta.mode) });
+        continue;
+      }
+
       blocks.push({ type: 'header', tag, content: format(content) });
       continue;
     }
@@ -1148,6 +1165,7 @@ const HIDE_FROM_STUDENTS_HEADERS = new Set([
   'aicodeguidance',
   'activitycontext',
   'studentlevel',
+  'mode',
 ]);
 
 export function renderBlocks(blocks, options = {}) {
