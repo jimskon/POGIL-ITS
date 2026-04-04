@@ -13,6 +13,7 @@ import {
 } from 'react-bootstrap';
 import { API_BASE_URL } from '../config';
 import { FaUserCheck, FaLaptop } from 'react-icons/fa';
+import QuestionGroupProgressBars from '../components/QuestionGroupProgressBars';
 
 function progressLabelFromInstanceRow(g) {
   const tg = Number(g.total_groups || 0);
@@ -330,6 +331,8 @@ export default function ViewGroupsPage() {
                         </li>
                       ))}
                     </ul>
+
+                    <QuestionGroupProgressBars instanceId={group.instance_id} />
                   </Card.Body>
                 </Card>
               </Col>

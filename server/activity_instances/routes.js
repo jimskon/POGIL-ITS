@@ -23,6 +23,9 @@ router.post('/:instanceId/test-settings', controller.updateTestSettings);
 // ✅ Submit a test for this instance
 router.post('/:instanceId/submit-test', controller.submitTest);   
 
+// ✅ Get per-question-group stats (for mini progress bars)
+router.get('/:instanceId/question-group-stats', controller.getQuestionGroupStats);
+
 // ✅ Get activity instance details
 router.get('/:id', controller.getActivityInstanceById);
 
@@ -58,6 +61,7 @@ router.get('/by-activity/:courseId/:activityId', controller.getInstancesForActiv
 
 // ✅ Refresh total_groups by parsing the linked Google Doc
 router.get('/:instanceId/refresh-groups', controller.refreshTotalGroups);
+
 
 router.post('/:instanceId/recompute-test-totals', controller.recomputeTestTotals);
 

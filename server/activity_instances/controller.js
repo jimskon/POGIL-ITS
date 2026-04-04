@@ -1840,6 +1840,100 @@ async function getInstanceResponseHistory(req, res) {
   }
 }
 
+async function getQuestionGroupStats(req, res) {
+  const { instanceId } = req.params;
+
+  try {
+    // ---- 1) get total_groups + completed_groups ----
+    const [[inst]] = await db.query(
+      `SELECT total_groups, completed_groups, progress_status
+       FROM activity_instances
+       WHERE id = ?`,
+      [instanceId]
+    );
+
+    if (!inst) {
+      return res.status(404).json({ error: 'Instance not found' });
+    }
+
+    const totalGroups = Number(inst.total_groups || 0);
+
+    // ---- 2) count submits per group (attempt:n rows) ----
+    const [attemptRows] = await db.query(
+      `SELECT question_id, COUNT(*) AS submits
+       FROM responses
+       WHERE activity_instance_id = ?
+         AND question_id LIKE 'attempt:%'
+       GROUP BY question_id`,
+      [instanceId]
+    );
+
+    const submitMap = new Map();
+    for (const r of attemptRows) {
+      const match = String(r.question_id).match(/^attempt:(\d+)$/);
+      if (!match) continue;
+      submitMap.set(Number(match[1]), Number(r.submits));
+    }
+
+    // ---- 3) get latest state per group (nstate rows) ----
+    const [stateRows] = await db.query(
+      `SELECT r.question_id, r.response
+       FROM responses r
+       JOIN (
+         SELECT question_id, MAX(id) AS max_id
+         FROM responses
+         WHERE activity_instance_id = ?
+           AND question_id REGEXP '^[0-9]+state$'
+         GROUP BY question_id
+       ) latest
+         ON r.question_id = latest.question_id AND r.id = latest.max_id
+       WHERE r.activity_instance_id = ?`,
+      [instanceId, instanceId]
+    );
+
+    const stateMap = new Map();
+    for (const r of stateRows) {
+      const match = String(r.question_id).match(/^(\d+)state$/);
+      if (!match) continue;
+      stateMap.set(Number(match[1]), String(r.response || '').toLowerCase());
+    }
+
+    // ---- 4) build result ----
+    const questionGroups = [];
+
+    for (let i = 1; i <= totalGroups; i++) {
+      const submits = submitMap.get(i) || 0;
+      const rawState = stateMap.get(i);
+
+      let state = 'not_started';
+
+      if (submits === 0) {
+        state = 'not_started';
+      } else if (rawState === 'complete') {
+        // NOTE: you can refine this later for bypass detection
+        state = 'complete';
+      } else {
+        state = 'active';
+      }
+
+      questionGroups.push({
+        groupNum: i,
+        submits,
+        state,
+      });
+    }
+
+    return res.json({
+      instanceId: Number(instanceId),
+      totalQuestionGroups: totalGroups,
+      questionGroups,
+    });
+  } catch (err) {
+    console.error('❌ getQuestionGroupStats error:', err);
+    return res.status(500).json({ error: 'Failed to fetch question group stats' });
+  }
+}
+
 // Export it as part of the module
 module.exports = {
   clearResponsesForInstance,
@@ -1861,4 +1955,5 @@ module.exports = {
   updateTestSettings,
   recomputeTestTotals,
   getInstanceResponseHistory,
+  getQuestionGroupStats,
 };
