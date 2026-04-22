@@ -2630,7 +2630,11 @@ export default function RunActivityPage({
         }
 
         // ✅ Default accept unless AI explicitly rejects
-        accepted = ai.accepted !== false;
+        const accepted = ai.accepted === true;
+
+        if (typeof ai.accepted === 'undefined') {
+          console.warn('[AI CONTRACT ERROR] accepted missing', { qid, ai });
+        }
         feedback = typeof ai.feedback === 'string' ? ai.feedback : '';
 
         const newHasFeedback = typeof feedback === 'string' && feedback.trim().length > 0;
