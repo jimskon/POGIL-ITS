@@ -658,6 +658,11 @@ async function submitGroupResponses(req, res) {
   const retriesRequired = Number(req.body?.retriesRequired || 1);
   const forceOverride = !!req.body?.forceOverride;
 
+  // TEMP: later this should come from parsed activity metadata
+  // 'questiongroup' = rotate only when advancing to next question group
+  // 'submission'    = rotate after every submit attempt
+  const ROTATION_MODE = 'questiongroup';
+
   const attempt = req.body?.attempt || {};
   const submissionString = String(attempt?.submissionString || '');
   const blocked = !!attempt?.blocked;
@@ -781,27 +786,32 @@ async function submitGroupResponses(req, res) {
     emitPatch = { completed_groups: completedGroups, progress_status: progressStatus };
 
 
-    // ---- 5) Rotate active student among connected members ----
-    const [connected] = await conn.query(
-      `SELECT student_id
-       FROM group_members
-       WHERE activity_instance_id = ? AND connected = TRUE`,
-      [instanceId]
-    );
+      // ---- 5) Rotate active student based on rotation mode ----
+    const shouldRotate =
+      ROTATION_MODE === 'submission' ||
+      (ROTATION_MODE === 'questiongroup' && shouldAdvance);
 
-    if (connected.length > 0) {
-      const eligible = connected.filter(m => Number(m.student_id) !== studentId);
-      const pickFrom = eligible.length ? eligible : connected;
-      const next = pickFrom[Math.floor(Math.random() * pickFrom.length)].student_id;
-
-      await conn.query(
-        `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
-        [next, instanceId]
+    if (shouldRotate) {
+      const [connected] = await conn.query(
+        `SELECT student_id
+         FROM group_members
+         WHERE activity_instance_id = ? AND connected = TRUE`,
+        [instanceId]
       );
 
-      emitPatch = { ...(emitPatch || {}), activeStudentId: next };
-    }
+      if (connected.length > 0) {
+        const eligible = connected.filter(m => Number(m.student_id) !== studentId);
+        const pickFrom = eligible.length ? eligible : connected;
+        const next = pickFrom[Math.floor(Math.random() * pickFrom.length)].student_id;
 
+        await conn.query(
+          `UPDATE activity_instances SET active_student_id = ? WHERE id = ?`,
+          [next, instanceId]
+        );
+
+        emitPatch = { ...(emitPatch || {}), activeStudentId: next };
+      }
+    }
     await conn.commit();
 
     // 🔥 NEW: clear drafts after successful submit
